@@ -28,8 +28,40 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build all flavors (release, unsigned)
+      - name: Build all flavors (release)
         run: ./gradlew assembleRelease -P "version=${{ inputs.version }}"
+
+      # 配置了签名 secret 时自动签名；未配置则保留未签名产物（仅供编译验证，无法安装）
+      - name: Sign release APKs (if signing secrets configured)
+        env:
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "${ANDROID_SIGNING_KEY:-}" ]; then
+            echo "::warning::未配置签名密钥，输出未签名包（仅供编译验证，无法安装）"
+            exit 0
+          fi
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          BT_DIR=$(ls -d "$SDK_ROOT"/build-tools/* | sort -V | tail -n 1)
+          echo "Using build-tools: $BT_DIR"
+          echo "${ANDROID_SIGNING_KEY}" | base64 -d > "$RUNNER_TEMP/wqhui-sign.jks"
+          for flavor in normal compatible legacy; do
+            APK_DIR="app/build/outputs/apk/$flavor/release"
+            APK_FILE=$(find "$APK_DIR" -name "*.apk" | head -n 1)
+            [ -n "$APK_FILE" ] || { echo "No APK in $APK_DIR"; continue; }
+            echo "Signing $(basename "$APK_FILE")"
+            "$BT_DIR/zipalign" -f 4 "$APK_FILE" "$RUNNER_TEMP/aligned.apk"
+            "$BT_DIR/apksigner" sign \
+              --ks "$RUNNER_TEMP/wqhui-sign.jks" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass "pass:${ANDROID_KEYSTORE_PASSWORD}" \
+              --key-pass "pass:${ANDROID_KEY_PASSWORD}" \
+              --out "$APK_FILE" \
+              "$RUNNER_TEMP/aligned.apk"
+          done
 
       - name: List APK outputs
         run: |
