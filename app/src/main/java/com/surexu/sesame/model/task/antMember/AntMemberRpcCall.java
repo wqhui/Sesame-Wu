@@ -607,15 +607,15 @@ public class AntMemberRpcCall {
      * 芝麻炼金 - 执行炼金动作
      */
     public static String doAlchemy() {
-        return ApplicationHook.requestString("com.antgroup.zmxy.zmmemberop.biz.rpc.AlchemyRpcManager.alchemy", "[null]");
+        return ApplicationHook.requestString("com.antgroup.zmxy.zmmemberop.biz.rpc.AlchemyRpcManager.alchemy", "[{}]");
     }
 
     /**
-     * 芝麻炼金 - 完成攒粒任务（taskFeedback, scene=alchemy）
+     * 广告任务完成上报（芝麻炼金攒粒广告任务等）
+     * @param bizId logExtMap.bizId
      */
-    public static String alchemyTaskFeedback(String taskTemplateId) {
-        String requestData = "[{\"actionType\":\"TO_COMPLETE\",\"bizType\":\"LIFE_RECORD\",\"sceneCode\":\"alchemy\",\"templateId\":\"" + taskTemplateId + "\",\"version\":\"alchemy\"}]";
-        return ApplicationHook.requestString("com.antgroup.zmxy.zmmemberop.biz.rpc.creditaccumulate.CreditAccumulateStrategyRpcManager.taskFeedback", requestData);
+    public static String taskFinish(String bizId) {
+        return ApplicationHook.requestString("com.alipay.adtask.biz.mobilegw.service.task.finish", "[{\"bizId\":\"" + bizId + "\"}]");
     }
 
     /**
