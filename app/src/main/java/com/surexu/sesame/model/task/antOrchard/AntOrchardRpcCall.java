@@ -4,6 +4,9 @@ import android.util.Base64;
 
 import java.util.List;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import com.surexu.sesame.hook.ApplicationHook;
 import com.surexu.sesame.util.RandomUtil;
 import com.surexu.sesame.util.idMap.UserIdMap;
@@ -51,6 +54,91 @@ public class AntOrchardRpcCall {
     /* 七日礼包 */
     public static String drawLottery() {
         return ApplicationHook.requestString("com.alipay.antorchard.drawLottery", "[{\"lotteryScene\":\"receiveLotteryPlus\",\"requestType\":\"NORMAL\",\"sceneCode\":\"ORCHARD\",\"source\":\"ch_appcenter__chsub_9patch\",\"version\":\"" + VERSION + "\"}]");
+    }
+
+    /* ================= 农场抽抽乐 ================= */
+
+    public static String enterDrawActivity(String activityId) {
+        try {
+            JSONObject args = new JSONObject();
+            args.put("activityId", activityId);
+            args.put("context", new JSONObject().put("appMode", "normal"));
+            args.put("requestType", "RPC");
+            args.put("sceneCode", "ANTORCHARD_DRAW_TIMES");
+            args.put("source", "antorchard");
+            return ApplicationHook.requestString("com.alipay.antiepdrawprod.enterDrawActivityantorchard", new JSONArray().put(args).toString());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public static String listDrawTasks() {
+        try {
+            JSONObject args = new JSONObject();
+            args.put("extend", new JSONObject().put("appMode", "normal"));
+            args.put("requestType", "RPC");
+            args.put("sceneCode", "ANTORCHARD_DRAW_TIMES_TASK");
+            args.put("source", "antorchard");
+            return ApplicationHook.requestString("com.alipay.antieptask.listTaskantorchard", new JSONArray().put(args).toString());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public static String finishDrawTask(String sceneCode, String taskType) {
+        try {
+            JSONObject args = new JSONObject();
+            args.put("outBizNo", taskType + "_" + System.currentTimeMillis() + "_" + RandomUtil.getRandomString(8));
+            args.put("sceneCode", sceneCode);
+            args.put("source", "antorchard");
+            args.put("taskType", taskType);
+            return ApplicationHook.requestString("com.alipay.antieptask.finishTaskantorchard", new JSONArray().put(args).toString());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public static String receiveDrawTaskAward(String sceneCode, String taskType) {
+        try {
+            JSONObject args = new JSONObject();
+            args.put("ignoreLimit", true);
+            args.put("requestType", "RPC");
+            args.put("sceneCode", sceneCode);
+            args.put("source", "antorchard");
+            args.put("taskType", taskType);
+            return ApplicationHook.requestString("com.alipay.antieptask.receiveTaskAwardantorchard", new JSONArray().put(args).toString());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public static String syncDrawBalance(String activityId) {
+        try {
+            JSONObject args = new JSONObject();
+            args.put("activityId", activityId);
+            args.put("context", new JSONObject().put("appMode", "normal"));
+            args.put("requestType", "RPC");
+            args.put("sceneCode", "ANTORCHARD_DRAW_TIMES");
+            args.put("source", "taskaward");
+            return ApplicationHook.requestString("com.alipay.antiepdrawprod.drawSyncantorchard", new JSONArray().put(args).toString());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    public static String batchDraw(String activityId, int times, String userId) {
+        try {
+            JSONObject args = new JSONObject();
+            args.put("activityId", activityId);
+            args.put("requestType", "RPC");
+            args.put("sceneCode", "ANTORCHARD_DRAW_TIMES");
+            args.put("source", "antorchard");
+            args.put("times", times);
+            args.put("userId", userId);
+            return ApplicationHook.requestString("com.alipay.antiepdrawprod.batchDrawantorchard", new JSONArray().put(args).toString());
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public static String orchardSyncIndex() {

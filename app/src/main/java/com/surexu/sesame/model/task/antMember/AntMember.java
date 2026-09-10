@@ -641,23 +641,26 @@ public class AntMember extends ModelTask {
             String targetBusiness = taskConfigInfo.getJSONArray("targetBusiness").getString(0);
             for (int i = left; i <= right; i++) {
                 JSONObject jo = new JSONObject(AntMemberRpcCall.applyTask(name, id));
-                TimeUtil.sleep(300);
+                sleepWithJitter(300);
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
                     continue;
                 }
                 String[] targetBusinessArray = targetBusiness.split("#");
+                String bizType;
                 String bizParam;
                 String bizSubType;
                 if (targetBusinessArray.length > 2) {
-                    bizParam = targetBusinessArray[2];
+                    bizType = targetBusinessArray[0];
                     bizSubType = targetBusinessArray[1];
+                    bizParam = targetBusinessArray[2];
                 }
                 else {
-                    bizParam = targetBusinessArray[1];
+                    bizType = "BROWSE";
                     bizSubType = targetBusinessArray[0];
+                    bizParam = targetBusinessArray[1];
                 }
-                jo = new JSONObject(AntMemberRpcCall.executeTask(bizParam, bizSubType));
-                TimeUtil.sleep(300);
+                jo = new JSONObject(AntMemberRpcCall.executeTask(bizParam, bizSubType, bizType));
+                sleepWithJitter(300);
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
                     continue;
                 }
@@ -1390,6 +1393,11 @@ public class AntMember extends ModelTask {
     // 随机毫秒延迟：模拟人工、降低风控。区间 [min, max)
     private static void randomSleep(int minMillis, int maxMillis) {
         TimeUtil.sleep(RandomUtil.nextInt(minMillis, maxMillis));
+    }
+
+    // 固定延迟基础上叠加 0~60ms 随机抖动，避免触发时间过于规整
+    private static void sleepWithJitter(int baseMillis) {
+        TimeUtil.sleep(baseMillis + RandomUtil.nextInt(0, 61));
     }
 
     /**
