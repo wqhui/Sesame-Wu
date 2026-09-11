@@ -61,6 +61,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.surexu.sesame.R
 import com.surexu.sesame.data.AppConfig
+import com.surexu.sesame.data.ConfigPreload
+import com.surexu.sesame.data.Model
 import com.surexu.sesame.data.ModelGroup
 import com.surexu.sesame.data.RunType
 import com.surexu.sesame.data.ViewAppInfo
@@ -839,6 +841,47 @@ fun ConfigTab(activity: MiuixMainActivity) {
     // 账号选择弹窗状态:右上角账号图标点击后弹出,页面主体只保留配置分组
     var showAccountDialog by remember { mutableStateOf(false) }
 
+    // 导入/导出当前账号配置
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
+        if (uri != null) {
+            val file = ConfigPreload.getConfigFile(selectedUserId)
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { os ->
+                    file.inputStream().use { it.copyTo(os) }
+                }
+                ToastUtil.show(context, "导出成功！")
+            } catch (e: Exception) {
+                Log.printStackTrace(e)
+                ToastUtil.show(context, "导出失败！")
+            }
+        }
+    }
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            val file = ConfigPreload.getConfigFile(selectedUserId)
+            try {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    file.outputStream().use { input.copyTo(it) }
+                }
+                if (!StringUtil.isEmpty(selectedUserId)) {
+                    try {
+                        val intent = Intent("com.eg.android.AlipayGphone.sesame.restart")
+                        intent.putExtra("userId", selectedUserId)
+                        context.sendBroadcast(intent)
+                    } catch (th: Throwable) {
+                        Log.printStackTrace(th)
+                    }
+                }
+                Model.initAllModel()
+                ConfigPreload.prepare(selectedUserId)
+                ToastUtil.show(context, "导入成功！")
+            } catch (e: Exception) {
+                Log.printStackTrace(e)
+                ToastUtil.show(context, "导入失败！")
+            }
+        }
+    }
+
     val currentName = items.firstOrNull { it.first == selectedUserId }?.second ?: "默认"
 
     // 标题行:左侧大标题「配置」,右侧账号头像图标(点击弹出账号选择弹窗)
@@ -855,28 +898,33 @@ fun ConfigTab(activity: MiuixMainActivity) {
             fontWeight = FontWeight.Bold,
             color = MiuixTheme.colorScheme.onBackground
         )
-        // 账号头像按钮:默认显示人像图标;已选账号显示账号名首字符
-        IconButton(onClick = { showAccountDialog = true }) {
-            Box(
-                Modifier
-                    .size(38.dp)
-                    .neuPressed(CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                if (selectedUserId == null) {
-                    Icon(
-                        imageVector = Icons.Filled.Person,
-                        contentDescription = "选择账号",
-                        modifier = Modifier.size(22.dp),
-                        tint = MiuixTheme.colorScheme.primary
-                    )
-                } else {
-                    Text(
-                        text = currentName.take(1),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MiuixTheme.colorScheme.primary
-                    )
+        // 导入/导出当前账号配置 + 账号头像按钮
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(text = "导入", onClick = { importLauncher.launch("*/*") })
+            TextButton(text = "导出", onClick = { exportLauncher.launch("[" + (selectedUserId ?: "默认") + "]-config_v2.json") })
+            // 账号头像按钮:默认显示人像图标;已选账号显示账号名首字符
+            IconButton(onClick = { showAccountDialog = true }) {
+                Box(
+                    Modifier
+                        .size(38.dp)
+                        .neuPressed(CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selectedUserId == null) {
+                        Icon(
+                            imageVector = Icons.Filled.Person,
+                            contentDescription = "选择账号",
+                            modifier = Modifier.size(22.dp),
+                            tint = MiuixTheme.colorScheme.primary
+                        )
+                    } else {
+                        Text(
+                            text = currentName.take(1),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MiuixTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
         }
