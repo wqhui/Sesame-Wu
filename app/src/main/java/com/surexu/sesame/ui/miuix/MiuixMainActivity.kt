@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -53,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -900,8 +902,22 @@ fun ConfigTab(activity: MiuixMainActivity) {
         )
         // 导入/导出当前账号配置 + 账号头像按钮
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(text = "导入", onClick = { importLauncher.launch("*/*") })
-            TextButton(text = "导出", onClick = { exportLauncher.launch("[" + (selectedUserId ?: "默认") + "]-config_v2.json") })
+            IconButton(onClick = { importLauncher.launch("*/*") }) {
+                // 导入图标:把 Upload 旋转 180°(朝下)与导出(朝上)区分
+                Icon(
+                    imageVector = Icons.Filled.Upload,
+                    contentDescription = "导入",
+                    tint = MiuixTheme.colorScheme.onBackground,
+                    modifier = Modifier.rotate(180f)
+                )
+            }
+            IconButton(onClick = { exportLauncher.launch("[" + (selectedUserId ?: "默认") + "]-config_v2.json") }) {
+                Icon(
+                    imageVector = Icons.Filled.Upload,
+                    contentDescription = "导出",
+                    tint = MiuixTheme.colorScheme.onBackground
+                )
+            }
             // 账号头像按钮:默认显示人像图标;已选账号显示账号名首字符
             IconButton(onClick = { showAccountDialog = true }) {
                 Box(
