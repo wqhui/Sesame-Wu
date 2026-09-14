@@ -84,6 +84,7 @@ public class AntOrchard extends ModelTask {
 
     private BooleanModelField orchardPlantNew;
     private BooleanModelField drawGameCenterAward;
+    private BooleanModelField orchardChouChouLe;
     private ChoiceModelField driveAnimalType;
     private SelectModelField driveAnimalList;
     private BooleanModelField batchHireAnimal;
@@ -115,6 +116,7 @@ public class AntOrchard extends ModelTask {
         modelFields.addField(useBatchSpread = new BooleanModelField("useBatchSpread", "一键施肥5次", false));
         modelFields.addField(orchardSpreadManureSceneList = new SelectAndCountModelField("orchardSpreadManureSceneList", "农场施肥 | 场景列表", new LinkedHashMap<>(), AlipayPlantScene::getList, "请填写每日施肥次数"));
         modelFields.addField(drawGameCenterAward = new BooleanModelField("drawGameCenterAward", "农场乐园 | 游戏宝箱", true));
+        modelFields.addField(orchardChouChouLe = new BooleanModelField("orchardChouChouLe", "抽抽乐 | 自动完成与抽奖", false));
         //modelFields.addField(driveAnimalType = new ChoiceModelField("driveAnimalType", "驱赶小鸡 | 动作", DriveAnimalType.NONE, DriveAnimalType.nickNames));
         //modelFields.addField(driveAnimalList = new SelectModelField("driveAnimalList", "驱赶小鸡 | 好友列表", new LinkedHashSet<>(), AlipayUser::getList));
         //modelFields.addField(batchHireAnimal = new BooleanModelField("batchHireAnimal", "捉鸡除草 | 开启", false));
@@ -169,8 +171,141 @@ public class AntOrchard extends ModelTask {
                 orchardAssistFriend();
             }
 
+            // 农场抽抽乐
+            if (orchardChouChouLe.getValue()) {
+                doOrchardChouChouLe();
+            }
+
         } catch (Throwable t) {
             Log.i(TAG, "start.run err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    // 固定延迟基础上叠加 0~60ms 随机抖动，避免触发时间过于规整
+    private static void sleepWithJitter(int baseMillis) {
+        TimeUtil.sleep(baseMillis + RandomUtil.nextInt(0, 61));
+    }
+
+    /**
+     * 农场抽抽乐：自动完成任务 + 批量抽奖
+     */
+    private void doOrchardChouChouLe() {
+        try {
+            if (userId == null || userId.isEmpty()) {
+                return;
+            }
+            JSONObject entry = new JSONObject(AntOrchardRpcCall.enterDrawActivity(""));
+            if (!MessageUtil.checkResultCode(TAG, entry)) {
+                Log.error("农场抽抽乐⚗活动查询失败#" + entry);
+                return;
+            }
+            String activityId = entry.optJSONObject("drawActivity") != null
+                    ? entry.optJSONObject("drawActivity").optString("activityId") : "";
+            if (activityId.isEmpty()) {
+                Log.error("农场抽抽乐⚗缺少 activityId#" + entry);
+                return;
+            }
+
+            // 做任务：列表 → 完成/领奖
+            doOrchardDrawTasks();
+
+            // 同步余额
+            JSONObject synced = new JSONObject(AntOrchardRpcCall.syncDrawBalance(activityId));
+            if (!MessageUtil.checkResultCode(TAG, synced)) {
+                Log.error("农场抽抽乐⚗余额同步失败#" + synced);
+                return;
+            }
+            int balance = synced.optJSONObject("drawAsset") != null
+                    ? synced.optJSONObject("drawAsset").optInt("blance", 0) : 0;
+            while (balance > 0) {
+                sleepWithJitter(executeInterval.getValue());
+                JSONObject response = new JSONObject(AntOrchardRpcCall.batchDraw(activityId, balance, userId));
+                if (!MessageUtil.checkResultCode(TAG, response)) {
+                    Log.error("农场抽抽乐⚗抽奖失败#" + response);
+                    return;
+                }
+                JSONArray prizes = response.optJSONArray("drawResultList");
+                if (prizes != null) {
+                    for (int i = 0; i < prizes.length(); i++) {
+                        JSONObject prizeVO = prizes.optJSONObject(i) != null
+                                ? prizes.optJSONObject(i).optJSONObject("prizeVO") : null;
+                        if (prizeVO != null) {
+                            Log.farm("农场抽抽乐⚗[" + prizeVO.optString("prizeName") + "] × " + prizeVO.optInt("prizeNum", 1));
+                        }
+                    }
+                }
+                balance = response.optJSONObject("drawAsset") != null
+                        ? response.optJSONObject("drawAsset").optInt("blance", 0) : 0;
+                Log.farm("农场抽抽乐⚗剩余次数: " + balance);
+            }
+        }
+        catch (Throwable t) {
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /**
+     * 农场抽抽乐任务：FINISHED 领奖，TODO 完成
+     */
+    private void doOrchardDrawTasks() {
+        try {
+            JSONObject jo = new JSONObject(AntOrchardRpcCall.listDrawTasks());
+            if (!MessageUtil.checkResultCode(TAG, jo)) {
+                Log.error("农场抽抽乐⚗任务查询失败#" + jo);
+                return;
+            }
+            JSONArray taskInfoList = jo.optJSONArray("taskInfoList");
+            if (taskInfoList == null) {
+                return;
+            }
+            for (int i = 0; i < taskInfoList.length(); i++) {
+                JSONObject task = taskInfoList.optJSONObject(i);
+                if (task == null) {
+                    continue;
+                }
+                JSONObject base = task.optJSONObject("taskBaseInfo");
+                if (base == null) {
+                    continue;
+                }
+                String taskType = base.optString("taskType");
+                String sceneCode = base.optString("sceneCode");
+                String taskStatus = base.optString("taskStatus");
+                String actionType = base.optString("taskProdPlayType");
+                if (taskType.isEmpty() || sceneCode.isEmpty()) {
+                    continue;
+                }
+                JSONObject bizInfo = base.optJSONObject("bizInfo");
+                String title = bizInfo != null ? bizInfo.optString("title", taskType) : taskType;
+
+                if ("FINISHED".equals(taskStatus)) {
+                    sleepWithJitter(executeInterval.getValue());
+                    JSONObject recv = new JSONObject(AntOrchardRpcCall.receiveDrawTaskAward(sceneCode, taskType));
+                    if (MessageUtil.checkResultCode(TAG, recv)) {
+                        Log.farm("农场抽抽乐⚗领取奖励[" + title + "] +" + recv.optInt("incAwardCount") + "次机会");
+                    }
+                }
+                else if ("TODO".equals(taskStatus)) {
+                    // 浏览类任务等待时长
+                    if ("VISIT_FLOAT_BALL".equals(actionType)) {
+                        String prodPlayParam = base.optString("prodPlayParam");
+                        if (prodPlayParam != null && !prodPlayParam.isEmpty()) {
+                            JSONObject playParam = new JSONObject(prodPlayParam);
+                            long seconds = playParam.optLong("timeCount", 0);
+                            if (seconds > 0) {
+                                TimeUtil.sleep(seconds * 1000);
+                            }
+                        }
+                    }
+                    sleepWithJitter(executeInterval.getValue());
+                    JSONObject fin = new JSONObject(AntOrchardRpcCall.finishDrawTask(sceneCode, taskType));
+                    if (MessageUtil.checkResultCode(TAG, fin)) {
+                        Log.farm("农场抽抽乐⚗任务完成[" + title + "]");
+                    }
+                }
+            }
+        }
+        catch (Throwable t) {
             Log.printStackTrace(TAG, t);
         }
     }
