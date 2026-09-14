@@ -611,6 +611,14 @@ public class AntMemberRpcCall {
     }
 
     /**
+     * 芝麻炼金 - 完成攒粒任务（taskFeedback, scene=alchemy）
+     */
+    public static String alchemyTaskFeedback(String taskTemplateId) {
+        String requestData = "[{\"actionType\":\"TO_COMPLETE\",\"bizType\":\"LIFE_RECORD\",\"sceneCode\":\"alchemy\",\"templateId\":\"" + taskTemplateId + "\",\"version\":\"alchemy\"}]";
+        return ApplicationHook.requestString("com.antgroup.zmxy.zmmemberop.biz.rpc.creditaccumulate.CreditAccumulateStrategyRpcManager.taskFeedback", requestData);
+    }
+
+    /**
      * 芝麻树通用触发器
      * @param operation 操作类型
      * @param extInfoJson 额外信息JSON字符串

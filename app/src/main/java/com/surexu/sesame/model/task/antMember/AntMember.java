@@ -65,6 +65,7 @@ public class AntMember extends ModelTask {
     private BooleanModelField enableGameCenter;
     private BooleanModelField merchantSignIn;
     private BooleanModelField merchantKMDK;
+    private BooleanModelField enableSesameAlchemy;
     
     @Override
     public ModelFields getFields() {
@@ -78,6 +79,7 @@ public class AntMember extends ModelTask {
         modelFields.addField(collectSesame = new BooleanModelField("collectSesame", "芝麻粒 | 领取", false));
         modelFields.addField(AutoMemberCreditSesameTaskList = new BooleanModelField("AutoMemberCreditSesameTaskList", "芝麻粒任务 | 自动黑白名单", true));
         modelFields.addField(MemberCreditSesameTaskList = new SelectModelField("MemberCreditSesameTaskList", "芝麻粒任务 | 黑名单列表", new LinkedHashSet<>(), AlipayMemberCreditSesameTaskList::getList));
+        modelFields.addField(enableSesameAlchemy = new BooleanModelField("enableSesameAlchemy", "芝麻炼金 | 开启", false));
         modelFields.addField(SesameGrowthBehavior = new BooleanModelField("SesameGrowthBehavior", "攒芝麻分进度", false));
         modelFields.addField(enableGameCenter = new BooleanModelField("enableGameCenter", "游戏中心 | 得乐园豆", false));
         //modelFields.addField(promise = new BooleanModelField("promise", "生活记录 | 坚持做", false));
@@ -126,6 +128,9 @@ public class AntMember extends ModelTask {
             if (collectSesame.getValue()) {
                 CheckInTaskRpcManager();
                 collectSesame();
+            }
+            if (enableSesameAlchemy.getValue()) {
+                doSesameAlchemy();
             }
             
             //芝麻积攒进度
@@ -1381,7 +1386,200 @@ public class AntMember extends ModelTask {
             Log.printStackTrace(TAG + ".doSesameZmlCheckIn", t);
         }
     }
-    
+
+    // 随机毫秒延迟：模拟人工、降低风控。区间 [min, max)
+    private static void randomSleep(int minMillis, int maxMillis) {
+        TimeUtil.sleep(RandomUtil.nextInt(minMillis, maxMillis));
+    }
+
+    private void doSesameAlchemy() {
+        // 限时任务（早/中/晚饭）不纳入每日总 flag：每次 run 都查询，
+        // 服务端只返回当前时段可完成项，饭点窗口内触发即可完成。
+        doSesameAlchemyLimitedTasks();
+
+        if (Status.hasFlagToday("AntMember::sesameAlchemy")) return;
+        try {
+            // 1. 主页探测
+            randomSleep(1200, 2200);
+            JSONObject home = new JSONObject(AntMemberRpcCall.alchemyQueryHome());
+            if (!MessageUtil.checkResultCode(TAG, home)) {
+                Log.record("芝麻炼金⚗主页未开通或接口变化#" + home);
+                return;
+            }
+
+            // 2. 每日签到（照搬 CheckInTaskRpcManager 的 zml 解析，scene 换 alchemy）
+            doSesameAlchemyCheckIn();
+
+            // 3. 攒粒任务：taskFeedback 为主，join+push 兜底
+            doSesameAlchemyDailyTasks();
+
+            // 4. 执行炼金（延迟拉大，模拟人工）
+            randomSleep(1500, 3500);
+            String alchemyRes = AntMemberRpcCall.doAlchemy();
+            Log.record("芝麻炼金⚗执行炼金#" + alchemyRes);
+
+            // 5. 领取奖励
+            randomSleep(1200, 2200);
+            String awardRes = AntMemberRpcCall.alchemyClaimAward();
+            Log.record("芝麻炼金⚗领取奖励#" + awardRes);
+
+            Status.flagToday("AntMember::sesameAlchemy");
+        }
+        catch (Throwable t) {
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    private void doSesameAlchemyCheckIn() {
+        try {
+            randomSleep(1200, 2200);
+            JSONObject jo = new JSONObject(AntMemberRpcCall.alchemyQueryCheckInTasks());
+            if (!MessageUtil.checkResultCode(TAG, jo)) {
+                Log.error("芝麻炼金⚗签到查询异常#" + jo);
+                return;
+            }
+            JSONObject data = jo.optJSONObject("data");
+            if (data == null) {
+                Log.error("芝麻炼金⚗签到[data 缺失]#" + jo);
+                return;
+            }
+            JSONObject currentDay = data.optJSONObject("currentDateCheckInTaskVO");
+            if (currentDay == null) {
+                Log.error("芝麻炼金⚗签到[currentDateCheckInTaskVO 缺失]#" + jo);
+                return;
+            }
+            String status = currentDay.optString("status");
+            String checkInDate = currentDay.optString("checkInDate");
+            if ("CAN_COMPLETE".equals(status) && !checkInDate.isEmpty()) {
+                randomSleep(800, 1800); // 任务执行延迟
+                String completeRes = AntMemberRpcCall.completeAlchemyCheckIn(checkInDate);
+                JSONObject completeJo = new JSONObject(completeRes);
+                if (MessageUtil.checkResultCode(TAG, completeJo)) {
+                    Log.other("芝麻炼金⚗签到成功#" + completeRes);
+                }
+                else {
+                    Log.error("芝麻炼金⚗签到失败#" + completeRes);
+                }
+            }
+        }
+        catch (Throwable t) {
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    private void doSesameAlchemyDailyTasks() {
+        try {
+            randomSleep(1200, 2200);
+            JSONObject jo = new JSONObject(AntMemberRpcCall.alchemyQueryTasks());
+            if (!MessageUtil.checkResultCode(TAG, jo)) {
+                Log.error("芝麻炼金⚗攒粒任务查询异常#" + jo);
+                return;
+            }
+            JSONObject data = jo.optJSONObject("data");
+            if (data == null) {
+                Log.error("芝麻炼金⚗攒粒任务[data 缺失]#" + jo);
+                return;
+            }
+            JSONArray toCompleteVOS = data.optJSONArray("toCompleteVOS");
+            if (toCompleteVOS == null || toCompleteVOS.length() == 0) {
+                Log.record("芝麻炼金⚗攒粒任务[无可完成项]");
+                return;
+            }
+            for (int i = 0; i < toCompleteVOS.length(); i++) {
+                JSONObject vo = toCompleteVOS.optJSONObject(i);
+                if (vo == null || vo.optBoolean("finishFlag", false)) {
+                    continue;
+                }
+                String templateId = vo.optString("templateId");
+                String title = vo.optString("title", "未知任务");
+                if (templateId.isEmpty()) {
+                    Log.error("芝麻炼金⚗攒粒任务[templateId 缺失]#" + vo);
+                    continue;
+                }
+
+                // 主路径：taskFeedback（任务执行延迟）
+                randomSleep(800, 1800);
+                String feedbackRes = AntMemberRpcCall.alchemyTaskFeedback(templateId);
+                JSONObject feedbackJo = new JSONObject(feedbackRes);
+                if (MessageUtil.checkResultCode(TAG, feedbackJo)) {
+                    Log.other("芝麻炼金⚗完成攒粒任务[" + title + "]#" + feedbackRes);
+                    continue;
+                }
+
+                // 兜底路径：joinActivity + pushActivity（zml 已验证，无需 sceneCode）
+                Log.error("芝麻炼金⚗taskFeedback 失败，回退 join+push#" + feedbackRes);
+                randomSleep(800, 1800);
+                String joinRes = AntMemberRpcCall.joinSesameTask(templateId);
+                JSONObject joinJo = new JSONObject(joinRes);
+                if (!MessageUtil.checkResultCode(TAG, joinJo)) {
+                    Log.error("芝麻炼金⚗攒粒任务 join 失败#" + joinRes);
+                    continue;
+                }
+                String recordId = joinJo.optJSONObject("data") != null
+                        ? joinJo.optJSONObject("data").optString("recordId") : "";
+                if (recordId.isEmpty()) {
+                    Log.error("芝麻炼金⚗攒粒任务[recordId 缺失]#" + joinJo);
+                    continue;
+                }
+                randomSleep(800, 1800);
+                String pushRes = AntMemberRpcCall.finishSesameTask(recordId);
+                JSONObject pushJo = new JSONObject(pushRes);
+                if (MessageUtil.checkResultCode(TAG, pushJo)) {
+                    Log.other("芝麻炼金⚗完成攒粒任务[" + title + "]#" + pushRes);
+                }
+                else {
+                    Log.error("芝麻炼金⚗攒粒任务 push 失败#" + pushRes);
+                }
+            }
+        }
+        catch (Throwable t) {
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    private void doSesameAlchemyLimitedTasks() {
+        try {
+            randomSleep(800, 1800);
+            JSONObject jo = new JSONObject(AntMemberRpcCall.alchemyQueryTimeLimitedTask());
+            if (!MessageUtil.checkResultCode(TAG, jo)) {
+                return; // 非饭点时段或无任务，静默返回
+            }
+            // 字段名待真机确认：taskList / toCompleteVOS 二选一，缺失时打原始返回
+            JSONObject data = jo.optJSONObject("data");
+            JSONArray tasks = data == null ? null : data.optJSONArray("taskList");
+            if (tasks == null) {
+                Log.error("芝麻炼金⚗限时任务[taskList 缺失]#" + jo);
+                return;
+            }
+            for (int i = 0; i < tasks.length(); i++) {
+                JSONObject task = tasks.optJSONObject(i);
+                if (task == null) {
+                    continue;
+                }
+                String templateId = task.optString("templateId");
+                String status = task.optString("status", "");
+                if (templateId.isEmpty()) {
+                    Log.error("芝麻炼金⚗限时任务[templateId 缺失]#" + task);
+                    continue;
+                }
+                if ("CAN_COMPLETE".equals(status) || "待完成".equals(status)) {
+                    randomSleep(800, 1800); // 任务执行延迟
+                    String res = AntMemberRpcCall.alchemyCompleteTimeLimitedTask(templateId);
+                    JSONObject resJo = new JSONObject(res);
+                    if (MessageUtil.checkResultCode(TAG, resJo)) {
+                        Log.other("芝麻炼金⚗完成限时任务[" + templateId + "]#" + res);
+                    }
+                    else {
+                        Log.error("芝麻炼金⚗限时任务完成失败#" + res);
+                    }
+                }
+            }
+        }
+        catch (Throwable t) {
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
     // 我的快递任务
     private void RecommendTask() {
         try {
