@@ -187,6 +187,11 @@ public class AntOrchard extends ModelTask {
         TimeUtil.sleep(baseMillis + RandomUtil.nextInt(0, 61));
     }
 
+    // 随机毫秒延迟：模拟人工、降低风控。区间 [min, max)
+    private static void randomSleep(int minMillis, int maxMillis) {
+        TimeUtil.sleep(RandomUtil.nextInt(minMillis, maxMillis));
+    }
+
     /**
      * 农场抽抽乐：自动完成任务 + 批量抽奖
      */
@@ -219,8 +224,10 @@ public class AntOrchard extends ModelTask {
             int balance = synced.optJSONObject("drawAsset") != null
                     ? synced.optJSONObject("drawAsset").optInt("blance", 0) : 0;
             while (balance > 0) {
-                sleepWithJitter(executeInterval.getValue());
-                JSONObject response = new JSONObject(AntOrchardRpcCall.batchDraw(activityId, balance, userId));
+                // 每批随机抽 1~5 次，批间随机停顿 1~3 秒，模拟真人节奏
+                int batch = Math.min(balance, RandomUtil.nextInt(1, 6));
+                randomSleep(1000, 3000);
+                JSONObject response = new JSONObject(AntOrchardRpcCall.batchDraw(activityId, batch, userId));
                 if (!MessageUtil.checkResultCode(TAG, response)) {
                     Log.error("农场抽抽乐⚗抽奖失败#" + response);
                     return;
