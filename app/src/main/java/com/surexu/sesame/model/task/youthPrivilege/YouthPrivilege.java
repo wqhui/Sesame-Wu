@@ -565,13 +565,18 @@ public class YouthPrivilege extends ModelTask {
                     if (!"AVAILABLE".equals(status) || !"CLAIM".equals(actionType)) {
                         continue;
                     }
-                    JSONObject result = new JSONObject(
-                            YouthPrivilegeRpcCall.receiveMonthlyPrivilege(privilegeId, MONTHLY_MODULE_ID));
-                    if (isYouthSuccess(result)) {
-                        Log.forest(PREFIX + "每月理财福利[" + item.optString("title", privilegeId) + "]已领取");
-                        claimed = true;
-                    } else {
-                        Log.error(TAG + " " + "青春每月权益领取失败 id=" + privilegeId + " raw=" + result);
+                    try {
+                        JSONObject result = new JSONObject(
+                                YouthPrivilegeRpcCall.receiveMonthlyPrivilege(privilegeId, MONTHLY_MODULE_ID));
+                        if (isYouthSuccess(result)) {
+                            Log.forest(PREFIX + "每月理财福利[" + item.optString("title", privilegeId) + "]已领取");
+                            claimed = true;
+                        } else {
+                            Log.error(TAG + " " + "青春每月权益领取失败 id=" + privilegeId + " raw=" + result);
+                        }
+                    }
+                    catch (Throwable th) {
+                        Log.printStackTrace(TAG, th);
                     }
                 }
             }
