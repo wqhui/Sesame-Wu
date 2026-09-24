@@ -53,6 +53,12 @@ public class Status {
     // other
     private final Set<String> flagLogList = new HashSet<>();
     
+    /**
+     * 当日整型标记：tag -> 累计值（如金豆夺宝芝麻粒换豆当日已兑换金豆数）。
+     * <p>随 status.json 的每日重置自动清空（updateDay -> unload -> new Status()）。
+     */
+    private final Map<String, Integer> intFlagLogList = new HashMap<>();
+    
     // 保存时间
     private Long saveTime = 0L;
     
@@ -85,6 +91,22 @@ public class Status {
                 save();
             }
         }
+    }
+    
+    /**
+     * 读取当日整型标记（不存在时返回 0）
+     */
+    public static int getIntFlagToday(String tag) {
+        Integer value = INSTANCE.intFlagLogList.get(tag);
+        return value == null ? 0 : value;
+    }
+    
+    /**
+     * 写入当日整型标记（用于累计类额度，如芝麻粒换豆当日已兑换金豆数）
+     */
+    public static void setIntFlagToday(String tag, int value) {
+        INSTANCE.intFlagLogList.put(tag, value);
+        save();
     }
     
     // 清除单个指定Flag

@@ -15,6 +15,7 @@ import com.surexu.sesame.model.task.antOcean.AntOcean;
 import com.surexu.sesame.model.task.antOrchard.AntOrchard;
 import com.surexu.sesame.model.task.antSports.AntSports;
 import com.surexu.sesame.model.task.antStall.AntStall;
+import com.surexu.sesame.model.task.goldenbeans.goldenbeans;
 import com.surexu.sesame.model.task.greenFinance.GreenFinance;
 import com.surexu.sesame.model.task.kbOrchard.KBOrchard;
 import com.surexu.sesame.model.task.protectEcology.ProtectEcology;
@@ -38,6 +39,7 @@ public class ModelOrder {
         clazzList.add(AntSports.class);
         clazzList.add(AntMember.class);
         clazzList.add(GreenFinance.class);
+        clazzList.add(goldenbeans.class);
         clazzList.add(AnswerAI.class);
 
         ExtensionsHandle.handleAlphaRequest("ModelOrder", "addExtensionsClass", clazzList);

@@ -667,6 +667,14 @@ public class FileUtil {
         }
         return file;
     }
+
+    public static File getGoldenBeansTaskListMapFile() {
+        File file = new File(MAIN_DIRECTORY_FILE, "GoldenBeansTask.json");
+        if (file.exists() && file.isDirectory()) {
+            file.delete();
+        }
+        return file;
+    }
     
     public static File getAntMemberTaskListMapFile() {
         File file = new File(MAIN_DIRECTORY_FILE, "AntMemberTask.json");
@@ -830,6 +838,21 @@ public class FileUtil {
             }
         }
         return farmLogFile;
+    }
+    
+    public static File getGoldenBeansLogFile() {
+        File goldenBeansLogFile = new File(LOG_DIRECTORY_FILE, Log.getLogFileName("goldenbeans"));
+        if (goldenBeansLogFile.exists() && goldenBeansLogFile.isDirectory()) {
+            goldenBeansLogFile.delete();
+        }
+        if (!goldenBeansLogFile.exists()) {
+            try {
+                goldenBeansLogFile.createNewFile();
+            }
+            catch (Throwable ignored) {
+            }
+        }
+        return goldenBeansLogFile;
     }
     
     public static File getOtherLogFile() {

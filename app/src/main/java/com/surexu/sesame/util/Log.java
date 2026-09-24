@@ -88,6 +88,14 @@ public class Log {
                     .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
                     .build()).build();
 
+    private static final Logger goldenBeansLogger = XLog.tag("GOLDENBEANS").printers(
+            new FilePrinter.Builder(FileUtil.LOG_DIRECTORY_FILE.getPath())
+                    .fileNameGenerator(new CustomDateFileNameGenerator("goldenbeans"))
+                    .backupStrategy(new NeverBackupStrategy())
+                    .cleanStrategy(new NeverCleanStrategy())
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
+                    .build()).build();
+
     private static final Logger farmLogger = XLog.tag("FARM").printers(
             new FilePrinter.Builder(FileUtil.LOG_DIRECTORY_FILE.getPath())
                     .fileNameGenerator(new CustomDateFileNameGenerator("farm"))
@@ -145,6 +153,14 @@ public class Log {
         }
         record(s);
         forestLogger.i(s);
+    }
+
+    public static void goldenBeans(String s) {
+        if (!com.surexu.sesame.data.AppConfig.INSTANCE.getEnableGoldenBeansLog()) {
+            return;
+        }
+        record(s);
+        goldenBeansLogger.i(s);
     }
 
     public static void farm(String s) {

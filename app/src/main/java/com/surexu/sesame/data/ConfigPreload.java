@@ -18,6 +18,7 @@ import com.surexu.sesame.util.idMap.BeachIdMap;
 import com.surexu.sesame.util.idMap.CooperationIdMap;
 import com.surexu.sesame.util.idMap.FarmOrnamentsIdMap;
 import com.surexu.sesame.util.idMap.GameCenterMallItemMap;
+import com.surexu.sesame.util.idMap.GoldenBeansTaskListMap;
 import com.surexu.sesame.util.idMap.MarathonIdMap;
 import com.surexu.sesame.util.idMap.MemberBenefitIdMap;
 import com.surexu.sesame.util.idMap.MemberCreditSesameTaskListMap;
@@ -73,6 +74,7 @@ public final class ConfigPreload {
         AntSportsTaskListMap.load();
         PathThemeMapListMap.load();
         AntMemberTaskListMap.load();
+        GoldenBeansTaskListMap.load();
         ConfigV2.load(userId);
     }
 

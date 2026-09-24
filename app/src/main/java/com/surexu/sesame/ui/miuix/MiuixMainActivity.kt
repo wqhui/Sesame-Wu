@@ -659,6 +659,14 @@ fun LogsTab(activity: MiuixMainActivity) {
             activity.broadcastReloadConfig()
             if (!it) FileUtil.clearLog("farm")
         }
+        var goldenBeans by remember { mutableStateOf(AppConfig.INSTANCE.enableGoldenBeansLog ?: true) }
+        LogSwitchRow("金豆记录", goldenBeans, onClick = { openLog(activity, LogType.GOLDENBEANS) }) {
+            goldenBeans = it
+            AppConfig.INSTANCE.enableGoldenBeansLog = it
+            AppConfig.save()
+            activity.broadcastReloadConfig()
+            if (!it) FileUtil.clearLog("goldenbeans")
+        }
         var other by remember { mutableStateOf(AppConfig.INSTANCE.enableOtherLog ?: true) }
         LogSwitchRow("其他记录", other, onClick = { openLog(activity, LogType.OTHER) }) {
             other = it
@@ -739,6 +747,7 @@ internal val GROUP_EMOJI: Map<ModelGroup, String> = mapOf(
     ModelGroup.FARM to "🐔",
     ModelGroup.STALL to "🏪",
     ModelGroup.ORCHARD to "🍎",
+    ModelGroup.GOLDENBEANS to "🪙",
     ModelGroup.SPORTS to "🏃",
     ModelGroup.MEMBER to "👑",
     ModelGroup.OTHER to "📦"
@@ -750,6 +759,7 @@ internal val GROUP_DESC: Map<ModelGroup, String> = mapOf(
     ModelGroup.FARM to "蚂蚁庄园收取设置",
     ModelGroup.STALL to "新村摆摊相关设置",
     ModelGroup.ORCHARD to "农场果树相关设置",
+    ModelGroup.GOLDENBEANS to "金豆夺宝相关设置",
     ModelGroup.SPORTS to "运动与步数设置",
     ModelGroup.MEMBER to "会员权益相关设置",
     ModelGroup.OTHER to "扩展与杂项设置"
