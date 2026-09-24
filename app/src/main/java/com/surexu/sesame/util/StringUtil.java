@@ -81,4 +81,39 @@ public class StringUtil {
         return text.substring(leftIndex, rightIndex);
     }
 
+    /**
+     * 取 URL 查询参数值（等价于 android.net.Uri#getQueryParameter，会做 URL 解码）。
+     *
+     * @param url 完整 URL
+     * @param key 参数名
+     * @return 参数值；URL 中不存在该参数时返回 null
+     */
+    public static String getUrlQueryParam(String url, String key) {
+        if (isEmpty(url) || isEmpty(key)) {
+            return null;
+        }
+        int queryIndex = url.indexOf('?');
+        if (queryIndex < 0) {
+            return null;
+        }
+        String query = url.substring(queryIndex + 1);
+        int fragmentIndex = query.indexOf('#');
+        if (fragmentIndex >= 0) {
+            query = query.substring(0, fragmentIndex);
+        }
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq <= 0 || !key.equals(pair.substring(0, eq))) {
+                continue;
+            }
+            String value = pair.substring(eq + 1);
+            try {
+                return java.net.URLDecoder.decode(value, "UTF-8");
+            } catch (Throwable th) {
+                return value;
+            }
+        }
+        return null;
+    }
+
 }

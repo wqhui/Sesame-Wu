@@ -874,4 +874,26 @@ public class AntMemberRpcCall {
             return null;
         }
     }
+
+    /**
+     * 查询会员游戏乐园入口信息（返回 actionUrl，内含 sceneId 与来源信息）
+     */
+    public static String queryGameEntranceInfo() {
+        JSONObject sourcePassMap = new JSONObject();
+        try {
+            sourcePassMap.put("innerSource", "");
+            sourcePassMap.put("source", "mytab");
+            sourcePassMap.put("unid", "");
+        } catch (Throwable ignored) {
+        }
+        JSONObject body = new JSONObject();
+        try {
+            body.put("sourcePassMap", sourcePassMap);
+        } catch (Throwable ignored) {
+        }
+        return ApplicationHook.requestString(
+                "com.alipay.amic.biz.rpc.game.h5.GameCenterQueryFacade.queryGameEntranceInfo",
+                new JSONArray().put(body).toString()
+        );
+    }
 }

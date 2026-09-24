@@ -17,6 +17,7 @@ import com.surexu.sesame.entity.MemberBenefit;
 import com.surexu.sesame.hook.ApplicationHook;
 import com.surexu.sesame.model.base.TaskCommon;
 import com.surexu.sesame.model.extensions.ExtensionsHandle;
+import com.surexu.sesame.model.task.antGame.GameCenterPlayRpcCall;
 import com.surexu.sesame.model.task.antOrchard.AntOrchardRpcCall;
 import com.surexu.sesame.util.*;
 import com.surexu.sesame.util.idMap.AntFarmDoFarmTaskListMap;
@@ -63,6 +64,7 @@ public class AntMember extends ModelTask {
     private BooleanModelField signinCalendar;
     private BooleanModelField enableGoldTicket;
     private BooleanModelField enableGameCenter;
+    private BooleanModelField memberGameParadise;  // 游戏中心 | 会员乐园浏览奖励
     private BooleanModelField merchantSignIn;
     private BooleanModelField merchantKMDK;
     private BooleanModelField enableSesameAlchemy;
@@ -82,6 +84,7 @@ public class AntMember extends ModelTask {
         modelFields.addField(enableSesameAlchemy = new BooleanModelField("enableSesameAlchemy", "芝麻炼金 | 开启", false));
         modelFields.addField(SesameGrowthBehavior = new BooleanModelField("SesameGrowthBehavior", "攒芝麻分进度", false));
         modelFields.addField(enableGameCenter = new BooleanModelField("enableGameCenter", "游戏中心 | 得乐园豆", false));
+        modelFields.addField(memberGameParadise = new BooleanModelField("memberGameParadise", "游戏中心 | 会员乐园浏览奖励", false));
         //modelFields.addField(promise = new BooleanModelField("promise", "生活记录 | 坚持做", false));
         //modelFields.addField(promiseList = new SelectModelField("promiseList", "生活记录 | 坚持做列表", new LinkedHashSet<>(), PromiseSimpleTemplate::getList));
         modelFields.addField(KuaiDiFuLiJia = new BooleanModelField("KuaiDiFuLiJia", "我的快递 | 福利加", false));
@@ -162,6 +165,11 @@ public class AntMember extends ModelTask {
             // 消费金签到
             if (signinCalendar.getValue()) {
                 signinCalendar();
+            }
+
+            // 会员游戏乐园浏览奖励（独立闭环，不走任务流引擎）
+            if (memberGameParadise.getValue()) {
+                memberGameParadiseBrowseReward();
             }
             if (enableGameCenter.getValue()) {
                 //检查并执行签到
@@ -1034,6 +1042,96 @@ public class AntMember extends ModelTask {
         }
     }
     
+    /**
+     * 会员游戏乐园浏览奖励（独立闭环）。
+     * <p>
+     * 流程：查询入口信息 → 解析 sceneId/source → 访问外部游戏中心首页 → 读取浏览任务
+     * → 按服务端下发时长分段等待并上报游戏时长 → 提交浏览奖励 → 回查任务与积分。
+     * 任一步骤缺少必要参数或失败时直接返回，不影响其他模块。
+     */
+    private void memberGameParadiseBrowseReward() {
+        try {
+            JSONObject entrance = new JSONObject(AntMemberRpcCall.queryGameEntranceInfo());
+            if (!GameCenterPlayRpcCall.isAcceptedJson(entrance)) {
+                Log.i(TAG, "会员游戏乐园入口查询失败:" + entrance);
+                return;
+            }
+            String actionUrl = entrance.optString("actionUrl");
+            if (actionUrl.isEmpty()) {
+                Log.i(TAG, "会员游戏乐园入口缺少actionUrl:" + entrance);
+                return;
+            }
+            // actionUrl 内可能再嵌套一层 url 参数，真正的页面在里层
+            String innerUrl = StringUtil.getUrlQueryParam(actionUrl, "url");
+            String pageUrl = innerUrl == null || innerUrl.isEmpty() ? actionUrl : innerUrl;
+            String scene = StringUtil.getUrlQueryParam(pageUrl, "sceneId");
+            String source = StringUtil.getUrlQueryParam(actionUrl, "chInfo");
+            if (scene == null || scene.isEmpty() || source == null || source.isEmpty()) {
+                Log.i(TAG, "会员游戏乐园入口缺少sceneId/source:" + entrance);
+                return;
+            }
+
+            String homeRes = GameCenterPlayRpcCall.queryExternalGameCenter(scene, "", "", source, "");
+            JSONObject home = new JSONObject(homeRes);
+            if (!GameCenterPlayRpcCall.isAcceptedJson(home)) {
+                Log.i(TAG, "会员游戏乐园访问失败:" + homeRes);
+                return;
+            }
+            JSONObject homeData = home.optJSONObject("data");
+            if (homeData == null) {
+                Log.i(TAG, "会员游戏乐园首页缺少data:" + homeRes);
+                return;
+            }
+            String memberSignTaskId = homeData.optString("memberSignTaskId");
+            int memberSignAmount = homeData.optInt("memberSignAmount", 0);
+
+            JSONObject browse = homeData.optJSONObject("browseTaskVO");
+            if (browse == null) {
+                Log.i(TAG, "会员游戏乐园暂无浏览任务");
+                return;
+            }
+            String taskId = browse.optString("taskId");
+            String taskTitle = browse.optString("taskTitle", "游戏浏览奖励");
+            String sceneExtInfo = browse.optString("sceneExtInfo");
+            String appId = browse.optString("appId");
+            String gameJumpUrl = browse.optString("gameJumpUrl");
+            String gameSource = gameJumpUrl.isEmpty() ? null : StringUtil.getUrlQueryParam(gameJumpUrl, "chInfo");
+            JSONObject floatingBall = browse.optJSONObject("floatingBallVO");
+            int timeSeconds = floatingBall == null ? 0 : floatingBall.optInt("timeSeconds", 0);
+
+            if (taskId.isEmpty() || sceneExtInfo.isEmpty() || appId.isEmpty()
+                    || gameSource == null || gameSource.isEmpty() || timeSeconds <= 0) {
+                Log.i(TAG, "会员游戏乐园浏览任务缺少任务标识、场景签名或游戏时长参数:" + browse);
+                return;
+            }
+
+            // 分段等待并上报游戏时长（服务端要求时长 +1 秒，避免边界判定不足）
+            if (!GameCenterPlayRpcCall.reportPlayDurationInChunks(appId, timeSeconds + 1, gameSource)) {
+                Log.i(TAG, "会员游戏乐园浏览时长上报失败，保留待续:" + taskId);
+                return;
+            }
+
+            String completeRes = GameCenterPlayRpcCall.completeExternalBrowseTask(scene, sceneExtInfo);
+            if (!GameCenterPlayRpcCall.isAccepted(completeRes)) {
+                Log.i(TAG, "会员游戏乐园浏览奖励提交失败:" + completeRes);
+                return;
+            }
+            Log.other("会员游戏乐园🎮[" + taskTitle + "]已提交，刷新任务和积分");
+
+            // 回查任务与积分
+            GameCenterPlayRpcCall.isAccepted(
+                    GameCenterPlayRpcCall.queryExternalGameCenter(scene, "", "", source, ""));
+            if (!memberSignTaskId.isEmpty() && memberSignAmount > 0) {
+                JSONObject points = new JSONObject(AntMemberRpcCall.queryPointCert(1, 20));
+                Log.other("会员游戏乐园🎮[入账" + memberSignAmount + "积分] taskId=" + memberSignTaskId
+                        + " 余额=" + JsonUtil.getValueByPath(points, "data.pointBalance"));
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "memberGameParadiseBrowseReward err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
     public static void queryTaskList() {
         try {
             JSONObject jsonObject = new JSONObject(AntMemberRpcCall.queryTaskList());
