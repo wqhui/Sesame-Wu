@@ -39,6 +39,9 @@ import java.util.concurrent.TimeUnit;
 public class AntFarm extends ModelTask {
     private static final String TAG = AntFarm.class.getSimpleName();
 
+    /** 亲密家庭成员上限，满员后不再提交分享邀请 */
+    private static final int FAMILY_MEMBER_LIMIT = 6;
+
     private String ownerFarmId;
     private String ownerUserId;
     private String ownerGroupId;
@@ -124,6 +127,7 @@ public class AntFarm extends ModelTask {
     private BooleanModelField family;
     private SelectModelField familyOptions;
     private SelectModelField notInviteList; // 新增：不邀请列表
+    private ChoiceModelField familyShareMode;  // 好友分享动作：选中邀请/选中不邀请
 
     @Override
     public ModelFields getFields() {
@@ -168,7 +172,8 @@ public class AntFarm extends ModelTask {
         modelFields.addField(stealRankMinutes = new IntegerModelField("stealRankMinutes", "激进模式 | 偷榜提前分钟数(0不偷榜)", 0, 0, 1200));
         modelFields.addField(family = new BooleanModelField("family", "亲密家庭 | 开启", false));
         modelFields.addField(familyOptions = new SelectModelField("familyOptions", "亲密家庭 | 选项", new LinkedHashSet<>(), CustomOption::getAntFarmFamilyOptions));
-        modelFields.addField(notInviteList = new SelectModelField("notInviteList", "亲密家庭 | 不邀请列表", new LinkedHashSet<>(), AlipayUser::getList));
+        modelFields.addField(notInviteList = new SelectModelField("notInviteList", "亲密家庭 | 好友分享名单", new LinkedHashSet<>(), AlipayUser::getList));
+        modelFields.addField(familyShareMode = new ChoiceModelField("familyShareMode", "亲密家庭 | 好友分享动作", FamilyShareMode.INVITE_SELECTED, FamilyShareMode.nickNames));
         modelFields.addField(enableSleep = new BooleanModelField("enableSleep", "小鸡睡觉 | 允许睡觉", false));
         modelFields.addField(sleepTime = new StringModelField("sleepTime", "小鸡睡觉 | 时间", "2001"));
         modelFields.addField(sleepMinutes = new IntegerModelField("sleepMinutes", "小鸡睡觉 | 时长(分钟)", 10 * 59, 1, 10 * 60));
@@ -4095,23 +4100,42 @@ public class AntFarm extends ModelTask {
                 return;
             }
 
-            Set<String> notInviteSet = notInviteList.getValue();
+            Set<String> selectedSet = notInviteList.getValue();
             List<AlipayUser> allUser = AlipayUser.getList();
             if (allUser.isEmpty()) {
                 Log.record("allUser is empty");
                 return;
             }
 
+            // 家庭满员时不再提交邀请
+            if (familyUserIds.size() >= FAMILY_MEMBER_LIMIT) {
+                Log.record("家庭分享🏠家庭已满员(" + familyUserIds.size() + "/" + FAMILY_MEMBER_LIMIT + ")，跳过邀请");
+                return;
+            }
+
+            boolean inviteSelectedOnly = familyShareMode.getValue() == FamilyShareMode.INVITE_SELECTED;
+            if (inviteSelectedOnly && selectedSet.isEmpty()) {
+                Log.record("家庭分享🏠分享动作为「选中邀请」但名单为空，跳过邀请");
+                return;
+            }
+
+            String currentUid = UserIdMap.getCurrentUid();
             // 打乱顺序，实现随机选取
             List<AlipayUser> shuffledUsers = new ArrayList<>(allUser);
             Collections.shuffle(shuffledUsers);
             JSONArray inviteList = new JSONArray();
             for (AlipayUser user : shuffledUsers) {
-                if (!familyUserIds.contains(user.getId()) && !notInviteSet.contains(user.getId()) && (user.getId() != UserIdMap.getCurrentUid())) {
-                    inviteList.put(user.getId());
-                    if (inviteList.length() >= 2) {
-                        break;
-                    }
+                String uid = user.getId();
+                if (uid == null || familyUserIds.contains(uid) || uid.equals(currentUid)) {
+                    continue;
+                }
+                // 「选中邀请」只邀请名单内好友；「选中不邀请」排除名单内好友
+                if (inviteSelectedOnly != selectedSet.contains(uid)) {
+                    continue;
+                }
+                inviteList.put(uid);
+                if (inviteList.length() >= 2) {
+                    break;
                 }
             }
 
@@ -4446,6 +4470,15 @@ public class AntFarm extends ModelTask {
         int ALL = 2;
 
         String[] nickNames = {"不捐赠", "捐赠一个项目", "捐赠所有项目"};
+    }
+
+    /** 家庭好友分享动作：选中邀请 / 选中不邀请 */
+    public interface FamilyShareMode {
+
+        int INVITE_SELECTED = 0;
+        int DONT_INVITE_SELECTED = 1;
+
+        String[] nickNames = {"选中邀请", "选中不邀请"};
     }
 
     public enum ItemStatus {
