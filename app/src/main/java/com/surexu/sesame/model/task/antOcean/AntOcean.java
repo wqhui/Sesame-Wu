@@ -876,7 +876,12 @@ public class AntOcean extends ModelTask {
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return;
             }
-            JSONArray ja = jo.getJSONArray("antOceanTaskVOList");
+            JSONArray ja = jo.optJSONArray("antOceanTaskVOList");
+            if (ja == null) {
+                // 缺少任务列表时视为无效快照，避免误判任务状态
+                Log.i(TAG, "海洋任务列表缺失，跳过本轮处理:" + jo);
+                return;
+            }
             for (int i = 0; i < ja.length(); i++) {
                 jo = ja.getJSONObject(i);
                 String taskStatus = jo.optString("taskStatus");
@@ -884,7 +889,35 @@ public class AntOcean extends ModelTask {
                 String taskType = jo.getString("taskType");
                 JSONObject bizInfo = new JSONObject(jo.getString("bizInfo"));
                 String taskTitle = bizInfo.optString("taskTitle");
-                if (TaskStatus.RECEIVED.name().equals(taskStatus)) {
+
+                // 结合权益次数、已领奖次数与上限判定阶段，允许「已领取但仍有剩余额度」的任务继续推进
+                Integer rightsTimes = optTaskProgressInt(jo, "rightsTimes");
+                Integer rightsTimesLimit = optTaskProgressInt(jo, "rightsTimesLimit");
+                if (rightsTimesLimit != null && rightsTimesLimit <= 0) {
+                    rightsTimesLimit = null;
+                }
+                Integer receivedCount = optTaskProgressInt(jo.optJSONObject("extend"), "alreadyReceiveAwardCount");
+
+                boolean terminal = rightsTimesLimit != null && receivedCount != null
+                        && receivedCount >= rightsTimesLimit;
+                if (terminal) {
+                    continue;
+                }
+                boolean rewardReady = isRewardReadyStatus(taskStatus)
+                        || (rightsTimes != null && receivedCount != null && rightsTimes > receivedCount);
+                if (rewardReady) {
+                    receiveTaskAward(sceneCode, taskType, taskTitle);
+                    continue;
+                }
+                // 已领取但权益次数未用满：属于可重复任务，需要重新完成后再领奖
+                boolean readyToComplete = isRewardReceivedStatus(taskStatus) && rightsTimes != null
+                        && rightsTimesLimit != null && rightsTimes < rightsTimesLimit;
+                if (readyToComplete) {
+                    if (!finishOceanTask(jo)) {
+                        continue;
+                    }
+                    TimeUtil.sleep(500);
+                    receiveTaskAward(sceneCode, taskType, taskTitle);
                     continue;
                 }
                 if (TaskStatus.TODO.name().equals(taskStatus) && !finishOceanTask(jo)) {
@@ -897,6 +930,42 @@ public class AntOcean extends ModelTask {
         } catch (Throwable t) {
             Log.i(TAG, "queryTaskList err:");
             Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /** 待领奖状态：已完成但尚未领取 */
+    private static boolean isRewardReadyStatus(String taskStatus) {
+        return TaskStatus.FINISHED.name().equals(taskStatus)
+                || "COMPLETE".equals(taskStatus)
+                || "WAIT_RECEIVE".equals(taskStatus)
+                || "TO_RECEIVE".equals(taskStatus);
+    }
+
+    /** 已领奖状态 */
+    private static boolean isRewardReceivedStatus(String taskStatus) {
+        return TaskStatus.RECEIVED.name().equals(taskStatus) || "HAS_RECEIVED".equals(taskStatus);
+    }
+
+    /**
+     * 读取任务进度字段，兼容服务端下发数字或字符串两种形式。
+     *
+     * @return 字段不存在或无法解析时返回 null
+     */
+    private static Integer optTaskProgressInt(JSONObject source, String key) {
+        if (source == null || !source.has(key) || source.isNull(key)) {
+            return null;
+        }
+        Object value = source.opt(key);
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(value.toString().trim());
+        } catch (Throwable th) {
+            return null;
         }
     }
 
