@@ -118,6 +118,7 @@ public class AntFarm extends ModelTask {
     private BooleanModelField loveChickenTask;          // 爱心鸡结号活动任务领奖
     private IntegerModelField stealRankMinutes;
     private BooleanModelField useBigEaterTool;
+    private BooleanModelField useFullRewardTool;         // 道具满时自动使用一次后领奖
     //private ChoiceModelField getFeedType;
     private SelectModelField getFeedList;
     private BooleanModelField family;
@@ -134,6 +135,7 @@ public class AntFarm extends ModelTask {
         modelFields.addField(useAccelerateTool = new BooleanModelField("useAccelerateTool", "加速卡 | 使用", false));
         modelFields.addField(useAccelerateToolOptions = new SelectModelField("useAccelerateToolOptions", "加速卡 | 选项", new LinkedHashSet<>(), CustomOption::getUseAccelerateToolOptions));
         modelFields.addField(useBigEaterTool = new BooleanModelField("useBigEaterTool", "加饭卡 | 使用", false));
+        modelFields.addField(useFullRewardTool = new BooleanModelField("useFullRewardTool", "道具满时自动使用一次后领奖", false));
         modelFields.addField(useSpecialFood = new BooleanModelField("useSpecialFood", "特殊食品 | 使用", false));
         modelFields.addField(useSpecialFoodCountLimit = new IntegerModelField("useSpecialFoodCountLimit", "特殊食品 | " + "使用上限(无限:0)", 0));
         modelFields.addField(rewardFriend = new BooleanModelField("rewardFriend", "打赏好友", false));
@@ -948,24 +950,31 @@ public class AntFarm extends ModelTask {
                 JSONObject bizInfo = new JSONObject(joItem.getString("bizInfo"));
                 String awardType = bizInfo.optString("awardType");
                 ToolType toolType = ToolType.valueOf(awardType);
-                boolean isFull = false;
-                for (FarmTool farmTool : farmTools) {
-                    if (farmTool.toolType == toolType) {
-                        if (farmTool.toolCount == farmTool.toolHoldLimit) {
-                            isFull = true;
+                int awardCount = bizInfo.getInt("awardCount");
+                if (isToolFull(toolType)) {
+                    // 满仓腾位：先按道具自身使用条件消耗一张，回查库存确认腾出容量后再领奖
+                    boolean slotReleased = false;
+                    if (useFullRewardTool.getValue() && canReleaseRewardSlot(toolType)) {
+                        if (useFarmTool(ownerFarmId, toolType)) {
+                            if (ToolType.ACCELERATETOOL.equals(toolType)) {
+                                Status.useAccelerateToolToday();
+                            }
+                            listFarmTool();
+                            slotReleased = !isToolFull(toolType);
+                            if (!slotReleased) {
+                                Log.record("领取道具[" + toolType.nickName() + "]#已消耗一张但容量未释放，保留待领奖");
+                            }
                         }
-                        break;
                     }
-                }
-                if (isFull) {
-                    if (toolType.equals(ToolType.NEWEGGTOOL)) {
-                        useFarmTool(ownerFarmId, ToolType.NEWEGGTOOL);
-                    } else {
+                    if (!slotReleased && !toolType.equals(ToolType.NEWEGGTOOL)) {
                         Log.record("领取道具[" + toolType.nickName() + "]#已满，暂不领取");
                         continue;
                     }
+                    if (!slotReleased) {
+                        // 新蛋卡维持原有行为：满仓时使用一张后继续领奖
+                        useFarmTool(ownerFarmId, ToolType.NEWEGGTOOL);
+                    }
                 }
-                int awardCount = bizInfo.getInt("awardCount");
                 String taskType = joItem.getString("taskType");
                 String taskTitle = bizInfo.getString("taskTitle");
                 jo = new JSONObject(AntFarmRpcCall.receiveToolTaskReward(awardType, awardCount, taskType));
@@ -977,6 +986,32 @@ public class AntFarm extends ModelTask {
             Log.i(TAG, "receiveToolTaskReward err:");
             Log.printStackTrace(TAG, t);
         }
+    }
+
+    /** 指定道具是否已达持有上限（farmTools 为最近一次 listFarmTool 的快照） */
+    private boolean isToolFull(ToolType toolType) {
+        for (FarmTool farmTool : farmTools) {
+            if (farmTool.toolType == toolType) {
+                return farmTool.toolCount >= farmTool.toolHoldLimit;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 满仓腾位前判断该道具当前是否可用：
+     * 加速卡受当日使用次数限制；加饭卡要求小鸡在家且正在进食；其余道具交给接口判断可用性。
+     * 使用失败时不会领取奖励，保留待领奖状态。
+     */
+    private boolean canReleaseRewardSlot(ToolType toolType) {
+        if (ToolType.ACCELERATETOOL.equals(toolType)) {
+            return Status.canUseAccelerateToolToday();
+        }
+        if (ToolType.BIG_EATER_TOOL.equals(toolType)) {
+            return AnimalInteractStatus.HOME.name().equals(ownerAnimal.animalInteractStatus)
+                    && AnimalFeedStatus.EATING.name().equals(ownerAnimal.animalFeedStatus);
+        }
+        return true;
     }
 
     private void harvestProduce(String farmId) {
