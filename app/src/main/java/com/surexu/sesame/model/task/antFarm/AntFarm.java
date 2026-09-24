@@ -128,6 +128,7 @@ public class AntFarm extends ModelTask {
     private SelectModelField familyOptions;
     private SelectModelField notInviteList; // 新增：不邀请列表
     private ChoiceModelField familyShareMode;  // 好友分享动作：选中邀请/选中不邀请
+    private BooleanModelField leyuanDailyTask;  // 小鸡乐园任务（服务端任务列表驱动）
 
     @Override
     public ModelFields getFields() {
@@ -182,6 +183,7 @@ public class AntFarm extends ModelTask {
         farmGameTimeList.add("2200-2400");
         modelFields.addField(farmGameTime = new ListModelField.ListJoinCommaToStringModelField("farmGameTime", "小鸡乐园 " + "| 游戏时间(范围)", farmGameTimeList));
         modelFields.addField(drawGameCenterAward = new BooleanModelField("drawGameCenterAward", "小鸡乐园 | 游戏宝箱", false));
+        modelFields.addField(leyuanDailyTask = new BooleanModelField("leyuanDailyTask", "小鸡乐园 | 乐园任务领奖", false));
         modelFields.addField(gameCenterBuyMallItem = new BooleanModelField("gameCenterBuyMallItem", "小鸡乐园 | 乐园集市", false));
         modelFields.addField(gameCenterBuyMallItemList = new SelectAndCountModelField("gameCenterBuyMallItemList", "小鸡乐园 | 兑奖", new LinkedHashMap<>(), GameCenterMallItem::getList, "请填写兑奖次数(每日)"));
         modelFields.addField(kitchen = new BooleanModelField("kitchen", "小鸡厨房", false));
@@ -310,6 +312,11 @@ public class AntFarm extends ModelTask {
 
             if (gameCenterBuyMallItem.getValue()) {
                 gameCenterBuyMallItem();
+            }
+
+            // 小鸡乐园任务（服务端任务列表驱动，独立于乐园集市）
+            if (leyuanDailyTask.getValue()) {
+                queryOptionalPlay();
             }
 
             if (kitchen.getValue()) {
@@ -2774,46 +2781,129 @@ public class AntFarm extends ModelTask {
         }
     }
 
-    //乐园限定活动
+    /** 乐园任务场景码，仅处理该场景下的任务 */
+    private static final String LEYUAN_DAILY_TASK_SCENE_CODE = "ANTFARM_LEYUAN_DAILY_TASK";
+    /** 「玩游戏累计开宝箱」任务的固定 taskType，领奖前要求已开箱数达标 */
+    private static final String LEYUAN_OPEN_BOX_TASK_TYPE = "2026cc_GAME_ljkbx";
+    /** 开宝箱领奖前置数量 */
+    private static final int LEYUAN_OPEN_BOX_TARGET_COUNT = 10;
+
+    /**
+     * 乐园限定活动：改为服务端任务列表驱动。
+     * <p>
+     * 浏览类任务（bizInfo.actionType=VIEW）在 TODO 或「已领但次数未满」时先提交完成，再回查领奖；
+     * 领奖数量按 totalAwardCount-alreadyReceiveAwardCount 计算，并保留「累计开宝箱满 10 个」的前置条件。
+     */
     private void queryOptionalPlay() {
         try {
-            JSONObject jo = new JSONObject(AntFarmRpcCall.queryOptionalPlay());
-            if (!MessageUtil.checkSuccess(TAG, jo)) {
-                return;
-            }
-            if (!jo.has("taskTriggerPlayInfo")) {
-                return;
-            }
-            JSONObject taskTriggerPlayInfo = jo.optJSONObject("taskTriggerPlayInfo");
-            if (!taskTriggerPlayInfo.has("taskList")) {
-                return;
-            }
-            JSONArray taskList = taskTriggerPlayInfo.getJSONArray("taskList");
-            for (int j = 0; j < taskList.length(); j++) {
-                JSONObject task = taskList.getJSONObject(j);
-                String taskType = task.getString("taskType");
-                String taskStatus = task.getString("taskStatus");
-                String sceneCode = task.getString("sceneCode");
-                int alreadyReceiveAwardCount = task.optInt("alreadyReceiveAwardCount");
-                int awardCount = task.optInt("awardCount");
-                int awardCountForReceive = awardCount - alreadyReceiveAwardCount;
-                JSONObject bizInfo = task.getJSONObject("bizInfo");
-                String title = bizInfo.getString("title");
-                if (taskStatus.equals("FINISHED")) {
-                    if (awardCountForReceive > 0) {
-                        JSONObject joReceived = new JSONObject(AntFarmRpcCall.receiveTaskAwardantfarm(awardCountForReceive, sceneCode, taskType));
-                        if (MessageUtil.checkSuccess(TAG, joReceived)) {
-                            int incAwardCount = joReceived.optInt("incAwardCount");
-                            JSONObject taskConfigResultVO = joReceived.optJSONObject("taskConfigResultVO");
-                            String awardType = taskConfigResultVO.optString("awardType");
-                            Log.farm("小鸡乐园🎖️领取[" + title + "]奖励[" + awardType + "*" + incAwardCount + "]");
+            for (int round = 0; round < 3; round++) {
+                JSONObject jo = new JSONObject(AntFarmRpcCall.queryOptionalPlay());
+                if (!MessageUtil.checkSuccess(TAG, jo)) {
+                    return;
+                }
+                JSONObject taskTriggerPlayInfo = jo.optJSONObject("taskTriggerPlayInfo");
+                JSONArray taskList = taskTriggerPlayInfo == null ? null : taskTriggerPlayInfo.optJSONArray("taskList");
+                if (taskList == null) {
+                    return;
+                }
+                boolean progressed = false;
+                for (int j = 0; j < taskList.length(); j++) {
+                    JSONObject task = taskList.optJSONObject(j);
+                    if (task == null) {
+                        continue;
+                    }
+                    String sceneCode = task.optString("sceneCode");
+                    if (!LEYUAN_DAILY_TASK_SCENE_CODE.equals(sceneCode)) {
+                        continue;
+                    }
+                    String taskType = task.optString("taskType");
+                    String taskStatus = task.optString("taskStatus");
+                    JSONObject bizInfo = task.optJSONObject("bizInfo");
+                    String title = bizInfo == null ? taskType : bizInfo.optString("title", taskType);
+                    String actionType = bizInfo == null ? "" : bizInfo.optString("actionType");
+                    if (taskType.isEmpty()) {
+                        continue;
+                    }
+
+                    if ("FINISHED".equals(taskStatus)) {
+                        // 前置条件未满足时保留待领取，不领奖也不算进展
+                        if (LEYUAN_OPEN_BOX_TASK_TYPE.equals(taskType) && !hasOpenedEnoughGameCenterBoxes()) {
+                            Log.farm("小鸡乐园🎖️[" + title + "]已完成但开箱数未达" + LEYUAN_OPEN_BOX_TARGET_COUNT + "个，暂不领奖");
+                            continue;
                         }
+                        int unreceived = task.optInt("totalAwardCount") - task.optInt("alreadyReceiveAwardCount");
+                        int awardCountForReceive = unreceived > 0 ? unreceived
+                                : (task.optInt("awardCount") > 0 ? task.optInt("awardCount")
+                                : task.optInt("nextStageAwardCount"));
+                        if (awardCountForReceive <= 0) {
+                            Log.farm("小鸡乐园🎖️[" + title + "]缺少可领取奖励数量，跳过");
+                            continue;
+                        }
+                        JSONObject joReceived = new JSONObject(
+                                AntFarmRpcCall.receiveTaskAwardantfarm(awardCountForReceive, sceneCode, taskType));
+                        if (MessageUtil.checkSuccess(TAG, joReceived)) {
+                            JSONObject taskConfigResultVO = joReceived.optJSONObject("taskConfigResultVO");
+                            String awardType = taskConfigResultVO == null ? "" : taskConfigResultVO.optString("awardType");
+                            Log.farm("小鸡乐园🎖️领取[" + title + "]奖励[" + awardType + "*"
+                                    + joReceived.optInt("incAwardCount") + "]");
+                            progressed = true;
+                        } else {
+                            // 领奖失败保留原始响应，交给下一轮回查状态
+                            Log.record("小鸡乐园🎖️[" + title + "]领奖失败:" + joReceived);
+                        }
+                        TimeUtil.sleep(500);
+                    } else if ("VIEW".equals(actionType)
+                            && ("TODO".equals(taskStatus) || "RECEIVED".equals(taskStatus))) {
+                        // 浏览任务：TODO 需先完成；RECEIVED 但次数未满属于可重复任务
+                        int rightsTimes = task.optInt("rightsTimes");
+                        int rightsTimesLimit = task.optInt("rightsTimesLimit");
+                        if ("RECEIVED".equals(taskStatus) && rightsTimesLimit > 0 && rightsTimes >= rightsTimesLimit) {
+                            continue;
+                        }
+                        JSONObject joFinished = new JSONObject(AntFarmRpcCall.finishLeyuanTask(sceneCode, taskType));
+                        if (MessageUtil.checkSuccess(TAG, joFinished)) {
+                            Log.farm("小鸡乐园🧾[" + title + "]已提交，下轮回查领奖");
+                            progressed = true;
+                        } else {
+                            Log.record("小鸡乐园🧾[" + title + "]任务完成失败:" + joFinished);
+                        }
+                        TimeUtil.sleep(500);
                     }
                 }
+                if (!progressed) {
+                    break;
+                }
+                TimeUtil.sleep(1000);
             }
         } catch (Throwable th) {
             Log.i(TAG, "queryOptionalPlay err:");
             Log.printStackTrace(TAG, th);
+        }
+    }
+
+    /** 玩游戏累计开宝箱是否已达到领奖要求（以今日已开箱数为准） */
+    private boolean hasOpenedEnoughGameCenterBoxes() {
+        try {
+            JSONObject jo = new JSONObject(AntFarmRpcCall.queryGameList());
+            JSONObject resData = jo.optJSONObject("resData");
+            JSONObject drawRights = resData == null ? null : resData.optJSONObject("gameCenterDrawRights");
+            if (drawRights == null) {
+                drawRights = jo.optJSONObject("gameCenterDrawRights");
+            }
+            if (drawRights == null) {
+                Log.farm("小鸡乐园🎖️无法确认已开箱数量，暂不领奖");
+                return false;
+            }
+            int used = drawRights.optInt("usedQuota", -1);
+            if (used < 0) {
+                Log.farm("小鸡乐园🎖️无法确认已开箱数量，暂不领奖");
+                return false;
+            }
+            return used >= LEYUAN_OPEN_BOX_TARGET_COUNT;
+        } catch (Throwable th) {
+            Log.i(TAG, "hasOpenedEnoughGameCenterBoxes err:");
+            Log.printStackTrace(TAG, th);
+            return false;
         }
     }
 
@@ -2835,7 +2925,10 @@ public class AntFarm extends ModelTask {
                     TimeUtil.sleep(3000);
                 }
             }
-            queryOptionalPlay();
+            // 新开关已独立调度时不再重复执行，保留仅开启「乐园集市」用户的原有行为
+            if (!leyuanDailyTask.getValue()) {
+                queryOptionalPlay();
+            }
         } catch (Throwable t) {
             Log.i(TAG, "gameCenterBuyMallItem err:");
             Log.printStackTrace(TAG, t);

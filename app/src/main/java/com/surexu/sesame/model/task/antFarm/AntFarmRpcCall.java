@@ -171,6 +171,21 @@ public class AntFarmRpcCall {
         return ApplicationHook.requestString("com.alipay.antieptask.receiveTaskAwardantfarm", args1);
     }
 
+    /** 游戏中心接口使用的版本号（乐园任务接口要求） */
+    private static final String GAME_CENTER_VERSION = "10.8.20.8000";
+
+    /**
+     * 小鸡乐园任务完成（浏览类、可重复类任务）
+     * 对应 methodName: com.alipay.antieptask.finishTaskantfarm
+     */
+    public static String finishLeyuanTask(String sceneCode, String taskType) {
+        String args1 = "[{\"outBizNo\":\"" + taskType + System.currentTimeMillis()
+                + "\",\"requestType\":\"NORMAL\",\"sceneCode\":\"" + sceneCode
+                + "\",\"source\":\"antfarm\",\"taskType\":\"" + taskType
+                + "\",\"version\":\"" + GAME_CENTER_VERSION + "\"}]";
+        return ApplicationHook.requestString("com.alipay.antieptask.finishTaskantfarm", args1);
+    }
+
     public static String listToolTaskDetails() {
         String args1 = "[{\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"H5\",\"version\":\"" + VERSION + "\"}]";
         return ApplicationHook.requestString("com.alipay.antfarm.listToolTaskDetails", args1);
