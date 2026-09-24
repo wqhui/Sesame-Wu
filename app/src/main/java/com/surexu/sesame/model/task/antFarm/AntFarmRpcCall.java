@@ -731,6 +731,22 @@ public class AntFarmRpcCall {
         return ApplicationHook.requestString("com.alipay.antfarm.receiveDonationCompetitionProgressAward", "[{\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"H5\",\"version\":\"" + VERSION + "\"" + "}]");
     }
 
+    /**
+     * 爱心鸡结号活动任务列表
+     * 返回 taskList / paramMap / taskSceneCode；任务字段含 taskType、taskStatus、title、
+     * canReceiveAwardCount、alreadyReceiveStageAwardCount、rightsTimesLimit、taskEntityExpireTime
+     */
+    public static String listCompetitionTask() {
+        return ApplicationHook.requestString("com.alipay.antfarm.listCompetitionTask", "[{" + "  \"requestType\": \"NORMAL\"," + "  \"sceneCode\": \"ANTFARM\"," + "  \"source\": \"H5\"," + "  \"version\": \"" + VERSION + "\"" + "}]");
+    }
+
+    /**
+     * 报名参与爱心鸡结号活动
+     */
+    public static String participateCompetition() {
+        return ApplicationHook.requestString("com.alipay.antfarm.participateCompetition", "[{" + "  \"requestType\": \"NORMAL\"," + "  \"sceneCode\": \"ANTFARM\"," + "  \"source\": \"H5\"," + "  \"version\": \"" + VERSION + "\"" + "}]");
+    }
+
 
     /**
      * 查询游戏列表 (如：蚂蚁农场、庄园等)

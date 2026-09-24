@@ -115,6 +115,7 @@ public class AntFarm extends ModelTask {
     private IntegerModelField competitionLeadEggs;      // 领先第一名的蛋数
     private IntegerModelField competitionDailyLimit;    // 每日捐蛋上限
     private IntegerModelField competitionStealMinutes;  // 偷榜提前分钟数(0或负数不偷榜)
+    private BooleanModelField loveChickenTask;          // 爱心鸡结号活动任务领奖
     private IntegerModelField stealRankMinutes;
     private BooleanModelField useBigEaterTool;
     //private ChoiceModelField getFeedType;
@@ -161,6 +162,7 @@ public class AntFarm extends ModelTask {
         modelFields.addField(competitionDailyLimit = new IntegerModelField("competitionDailyLimit", "自动捐蛋 | 每日捐蛋上限(0不限)", 10, 0, 1000));
         modelFields.addField(competitionLeadEggs = new IntegerModelField("competitionLeadEggs", "激进模式 | 捐至榜首领先蛋数", 1, 0, 1000));
         modelFields.addField(competitionStealMinutes = new IntegerModelField("competitionStealMinutes", "激进模式 | 霸榜提前分钟数(0不霸榜，1200为整天)", 0, 0, 1200));
+        modelFields.addField(loveChickenTask = new BooleanModelField("loveChickenTask", "爱心鸡结号 | 领取活动任务奖励", false));
         modelFields.addField(stealRankMinutes = new IntegerModelField("stealRankMinutes", "激进模式 | 偷榜提前分钟数(0不偷榜)", 0, 0, 1200));
         modelFields.addField(family = new BooleanModelField("family", "亲密家庭 | 开启", false));
         modelFields.addField(familyOptions = new SelectModelField("familyOptions", "亲密家庭 | 选项", new LinkedHashSet<>(), CustomOption::getAntFarmFamilyOptions));
@@ -333,6 +335,10 @@ public class AntFarm extends ModelTask {
                 competition();
             } else if (donationType.getValue() != DonationType.ZERO) {
                 donation();
+            }
+
+            if (loveChickenTask.getValue()) {
+                loveChickenTaskList();
             }
 
             if (receiveFarmTaskAward.getValue()) {
@@ -1519,6 +1525,100 @@ public class AntFarm extends ModelTask {
             Log.i(TAG, "receiveReward err:");
             Log.printStackTrace(TAG, t);
         }
+    }
+
+    /**
+     * 爱心鸡结号活动任务：服务端任务列表驱动，领取已完成任务的奖励。
+     * <p>
+     * 仅处理 taskStatus=FINISHED 且 canReceiveAwardCount&gt;0 的任务；TODO 需要端上动作、
+     * RECEIVED 已领取，均跳过。动作提交后重新查询，由服务端状态决定是否还有可领项。
+     */
+    private void loveChickenTaskList() {
+        try {
+            // 报名参与活动：幂等且不消耗资源，每日仅尝试一次，避免无意义重复请求
+            if (!Status.hasFlagToday("farm::loveChickenParticipate")) {
+                Status.flagToday("farm::loveChickenParticipate");
+                JSONObject participate = new JSONObject(AntFarmRpcCall.participateCompetition());
+                if (loveChickenRes(participate)) {
+                    Log.record("爱心鸡结号🐔已报名参与活动");
+                } else {
+                    Log.i(TAG, "loveChickenTaskList 报名返回:" + participate);
+                }
+                TimeUtil.sleep(500);
+            }
+            boolean pending = false;
+            for (int round = 0; round < 3; round++) {
+                JSONObject jo = new JSONObject(AntFarmRpcCall.listCompetitionTask());
+                if (!loveChickenRes(jo)) {
+                    Log.i(TAG, "loveChickenTaskList 查询失败:" + jo);
+                    return;
+                }
+                JSONArray taskList = jo.optJSONArray("taskList");
+                if (taskList == null || taskList.length() == 0) {
+                    Log.record("爱心鸡结号🐔任务列表为空");
+                    return;
+                }
+                String sceneCode = jo.optString("taskSceneCode");
+                if (sceneCode.isEmpty()) {
+                    // 上游默认任务场景码
+                    sceneCode = "ANTFARM_PK_COMPETITION";
+                }
+                boolean claimed = false;
+                for (int i = 0; i < taskList.length(); i++) {
+                    JSONObject task = taskList.optJSONObject(i);
+                    if (task == null) {
+                        continue;
+                    }
+                    String taskType = task.optString("taskType");
+                    String taskStatus = task.optString("taskStatus");
+                    int canReceiveAwardCount = task.optInt("canReceiveAwardCount");
+                    if (taskType.isEmpty() || !"FINISHED".equals(taskStatus) || canReceiveAwardCount <= 0) {
+                        continue;
+                    }
+                    String title = task.optString("title", taskType);
+                    JSONObject result = new JSONObject(
+                            AntFarmRpcCall.receiveTaskAwardantfarm(canReceiveAwardCount, sceneCode, taskType));
+                    if (loveChickenRes(result)) {
+                        Log.farm("爱心鸡结号🐔领取[" + title + "]奖励x" + canReceiveAwardCount
+                                + "(已领" + task.optInt("alreadyReceiveStageAwardCount") + "次)");
+                        claimed = true;
+                    } else {
+                        Log.error("爱心鸡结号🐔领取[" + title + "]奖励失败:" + result);
+                    }
+                    TimeUtil.sleep(500);
+                }
+                if (!claimed) {
+                    pending = false;
+                    break;
+                }
+                pending = true;
+                TimeUtil.sleep(1000);
+            }
+            if (pending) {
+                Log.record("爱心鸡结号🐔任务奖励已提交，等待下轮回查确认");
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "loveChickenTaskList err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /**
+     * 结号活动响应判定，等价于上游 ResChecker.checkRes：
+     * 兼容 success / isSuccess / resultCode(200|SUCCESS|100) / memo=="SUCCESS" 四种成功标识
+     */
+    private boolean loveChickenRes(JSONObject jo) {
+        if (jo == null) {
+            return false;
+        }
+        if (jo.optBoolean("success") || jo.optBoolean("isSuccess")) {
+            return true;
+        }
+        String resultCode = jo.optString("resultCode");
+        if ("200".equals(resultCode) || "100".equals(resultCode) || "SUCCESS".equalsIgnoreCase(resultCode)) {
+            return true;
+        }
+        return "SUCCESS".equals(jo.optString("memo"));
     }
 
     private void receiveDonationCompetitionProgressAward() {
