@@ -44,6 +44,88 @@ public enum GameTask {
     private String cachedToken; // 缓存登录Token
 
     /**
+     * 单次上报结果，保留失败原因，便于调用方记录与回查。
+     */
+    private static class SingleReportResult {
+        private final boolean success;
+        private final String message;
+
+        SingleReportResult(boolean success, String message) {
+            this.success = success;
+            this.message = message == null ? "" : message;
+        }
+    }
+
+    /**
+     * 上报任务结果：区分「目标奖励数」「所需成功次数」「实际尝试次数」与「成功次数」，
+     * 便于调用方判断是否真正完成，而不是只看是否有异常抛出。
+     */
+    public static class ReportResult {
+        private final int requestedRewards;
+        private final int requiredSuccesses;
+        private final int attemptedReports;
+        private final int successfulReports;
+        private final String failureMessage;
+
+        ReportResult(int requestedRewards, int requiredSuccesses, int attemptedReports,
+                     int successfulReports, String failureMessage) {
+            this.requestedRewards = requestedRewards;
+            this.requiredSuccesses = requiredSuccesses;
+            this.attemptedReports = attemptedReports;
+            this.successfulReports = successfulReports;
+            this.failureMessage = failureMessage == null ? "" : failureMessage;
+        }
+
+        public int getRequestedRewards() {
+            return requestedRewards;
+        }
+
+        public int getRequiredSuccesses() {
+            return requiredSuccesses;
+        }
+
+        public int getAttemptedReports() {
+            return attemptedReports;
+        }
+
+        public int getSuccessfulReports() {
+            return successfulReports;
+        }
+
+        public String getFailureMessage() {
+            return failureMessage;
+        }
+
+        /** 是否达到完成任务所需的最小成功次数 */
+        public boolean isCompleted() {
+            return requiredSuccesses > 0 && successfulReports >= requiredSuccesses;
+        }
+    }
+
+    /**
+     * 根据小程序 appId 匹配游戏任务（金豆乐园游戏权益上报使用）
+     */
+    public static GameTask matchAppId(String appId) {
+        if (appId == null || appId.isEmpty()) {
+            return null;
+        }
+        for (GameTask task : values()) {
+            if (appId.equals(task.appId)) {
+                return task;
+            }
+        }
+        return null;
+    }
+
+    public String getAppId() {
+        return appId;
+    }
+
+    public String getTitle() {
+        return title;
+    }
+
+    /**
      * 枚举构造方法
      */
     GameTask(String title, String appId, String gid, String action, String channel, String version, int requestsPerEgg) {
@@ -59,7 +141,7 @@ public enum GameTask {
     /**
      * 第一步：登录获取 Token 并缓存
      */
-    private String login() {
+    private String login(String gameType) {
         try {
             String authCode = AuthCodeHelper.getAuthCode(appId);
             String mark = getAlipayMiniMark(appId, version);
@@ -117,53 +199,116 @@ public enum GameTask {
                     return this.cachedToken;
                 }
             } else {
-                Log.error("登录接口❌报错(Code" + respCode + "):" + responseText);
+                Log.error("登录接口❌报错(" + gameType + " Code" + respCode + "):" + responseText);
             }
         } catch (Exception e) {
-            Log.error("登录过程🚨抛出异常:" + e.getMessage());
+            Log.error("登录过程🚨抛出异常(" + gameType + "):" + e.getMessage());
         }
         return null;
     }
 
     /**
-     * 外部调用：执行上报任务
+     * 外部调用：执行上报任务（异步）
+     * @param gameType 日志展示用的场景名
      * @param eggCount 目标蛋数量
      */
-    public void report(String gameType,int eggCount) {
-        int totalNeeded = eggCount * (this.requestsPerEgg + 1); // 多1次确保网络请求不会错误
+    public void report(String gameType, int eggCount) {
         new Thread(() -> {
-            this.cachedToken = login();
-            if (this.cachedToken == null || this.cachedToken.isEmpty()) {
-                 Log.error("无法获取⚠️有效的Token，放弃上报任务");
-                return;
+            Log.record("开始执行🚀" + gameType + "游戏任务:目标" + eggCount + "个蛋");
+            ReportResult result = reportDetailed(gameType, eggCount, this.channel, true);
+            if (result.isCompleted()) {
+                Log.record(gameType + "游戏任务🏁已完成[" + result.getSuccessfulReports()
+                        + "/" + result.getRequiredSuccesses() + "]");
+            } else {
+                Log.error("⚠️ " + gameType + "游戏任务未完成: "
+                        + (result.getFailureMessage().isEmpty() ? "上报次数不足" : result.getFailureMessage())
+                        + "(成功" + result.getSuccessfulReports() + "/" + result.getRequiredSuccesses() + ")");
             }
+        }).start();
+    }
 
-            Log.record("开始执行🚀"+gameType+"游戏任务:目标" + eggCount + "个蛋，需请求" + totalNeeded + "次");
-            for (int i = 1; i <= totalNeeded; i++) {
-                if (!executeSingleReport(gameType,i, totalNeeded)) {
-                    // 具体的错误原因已在 executeSingleReport 中详细输出
+    /**
+     * 同步执行上报任务，返回成功上报次数。
+     * 用于需要等待结果并回查服务端状态的场景（如金豆乐园游戏权益）。
+     *
+     * @param gameType 日志展示用的场景名
+     * @param eggCount 目标蛋数量
+     * @return 成功上报的次数，失败返回已成功的次数
+     */
+    public int reportSync(String gameType, int eggCount) {
+        return reportDetailed(gameType, eggCount, this.channel, true).getSuccessfulReports();
+    }
+
+    /** 同步执行上报任务并返回结构化结果 */
+    public ReportResult reportDetailed(String gameType, int eggCount) {
+        return reportDetailed(gameType, eggCount, this.channel, true);
+    }
+
+    /**
+     * 同步执行上报任务，返回结构化结果。
+     * <p>
+     * 与旧实现相比：请求次数改为「所需成功次数 + 1 次兜底」，进度按 requestsPerEgg 汇报，
+     * 失败时保留服务端原始响应，便于调用方决定是否回查。
+     *
+     * @param gameType             日志展示用的场景名
+     * @param eggCount             目标蛋数量
+     * @param actionFinishChannel  上报使用的 action_finish_channel
+     * @param includeSafetyReport  是否额外多发一次作为网络兜底
+     */
+    public ReportResult reportDetailed(String gameType, int eggCount, String actionFinishChannel,
+                                      boolean includeSafetyReport) {
+        if (eggCount <= 0) {
+            return new ReportResult(eggCount, 0, 0, 0, "");
+        }
+        if (actionFinishChannel == null || actionFinishChannel.isEmpty()) {
+            return new ReportResult(eggCount, eggCount * this.requestsPerEgg, 0, 0, "action_finish_channel为空");
+        }
+
+        int requiredSuccesses = eggCount * this.requestsPerEgg;
+        int totalReports = requiredSuccesses + (includeSafetyReport ? 1 : 0);
+        this.cachedToken = login(gameType);
+        if (this.cachedToken == null || this.cachedToken.isEmpty()) {
+            Log.error("无法获取⚠️有效的Token，放弃上报任务");
+            return new ReportResult(eggCount, requiredSuccesses, 0, 0, "无法获取有效Token");
+        }
+
+        int attemptedReports = 0;
+        int successfulReports = 0;
+        String failureMessage = "";
+        for (int i = 1; i <= totalReports; i++) {
+            attemptedReports++;
+            SingleReportResult single = executeSingleReport(gameType, i, totalReports, actionFinishChannel);
+            if (!single.success) {
+                failureMessage = single.message;
+                break;
+            }
+            successfulReports++;
+            if (i % this.requestsPerEgg == 0) {
+                Log.other("游戏进度📈" + gameType + "[" + i + "/" + requiredSuccesses
+                        + "](达成" + (i / this.requestsPerEgg) + "个)");
+            }
+            if (i < totalReports) {
+                try {
+                    Thread.sleep(new Random().nextInt(2001) + 1000); // 1000-3000ms随机休眠
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    failureMessage = "上报被中断";
                     break;
                 }
-                if (i < totalNeeded) {
-                    try {
-                        Thread.sleep(new Random().nextInt(2001) + 1000); // 1000-3000ms随机休眠
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
             }
-            Log.record("任务流程🏁运行结束");
-        }).start();
+        }
+        return new ReportResult(eggCount, requiredSuccesses, attemptedReports, successfulReports, failureMessage);
     }
 
     /**
      * 执行单次上报请求
      * @param current 当前请求次数
      * @param total 总请求次数
-     * @return 是否上报成功
+     * @param actionFinishChannel 上报使用的 action_finish_channel
+     * @return 单次上报结果（含失败原因）
      */
-    private boolean executeSingleReport(String gameType,int current, int total) {
+    private SingleReportResult executeSingleReport(String gameType, int current, int total,
+                                                   String actionFinishChannel) {
         try {
             String mark = getAlipayMiniMark(appId, version);
             String reqId = System.currentTimeMillis() + "_" + (new Random().nextInt(90) + 10); // 10-99随机数
@@ -175,7 +320,7 @@ public enum GameTask {
             bodyJson.put("reqId", reqId);
             bodyJson.put("gid", gid);
             bodyJson.put("action_code", action);
-            bodyJson.put("action_finish_channel", channel);
+            bodyJson.put("action_finish_channel", actionFinishChannel);
             String body = bodyJson.toString();
 
             //Log.other("taskReport 请求体 -> " + body);
@@ -216,20 +361,20 @@ public enum GameTask {
             // 解析响应
             JSONObject resJson = new JSONObject(responseText.toString());
             if (resJson.optInt("code") == 1) {
-                if (current % this.requestsPerEgg == 0) {
-                    Log.other("游戏进度📈"+ gameType +"[" + current + "/" + total + "](达成" + (current/this.requestsPerEgg) + "个)");
-                }
-                return true;
+                return new SingleReportResult(true, "");
             } else {
-                Log.error("⚠️ 第 " + current + " 次上报业务失败 (HTTP " + respCode + "): " + responseText);
-                return false;
+                String message = "第 " + current + "/" + total + " 次上报业务失败 (HTTP " + respCode + "): " + responseText;
+                Log.error("⚠️ " + message);
+                return new SingleReportResult(false, message);
             }
         } catch (IOException e) {
-            Log.error("🚨 第 " + current + " 次请求发生网络崩溃:"+ e);
-            return false;
+            String message = "第 " + current + "/" + total + " 次请求发生网络崩溃:" + e;
+            Log.error("🚨 " + message);
+            return new SingleReportResult(false, message);
         } catch (Exception e) {
-            Log.error("🚨 第 " + current + " 次请求发生异常:"+ e);
-            return false;
+            String message = "第 " + current + "/" + total + " 次请求发生异常:" + e;
+            Log.error("🚨 " + message);
+            return new SingleReportResult(false, message);
         }
     }
 

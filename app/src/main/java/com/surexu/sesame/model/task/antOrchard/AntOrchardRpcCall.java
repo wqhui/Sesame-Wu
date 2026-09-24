@@ -195,8 +195,23 @@ public class AntOrchardRpcCall {
         return ApplicationHook.requestString("com.alipay.gamecenteruprod.biz.rpc.v3.submitUserAction", "[{\"actionCode\":\"enterGame\",\"gameId\":\"" + gameId + "\",\"paladinxVersion\":\"2.0.13\",\"source\":\"gameFramework\"}]");
     }
 
+    /** 默认单次上报时长（秒），沿用历史行为 */
+    private static final int DEFAULT_PLAY_TIME_SECONDS = 32;
+
     public static String submitUserPlayDurationAction(String gameAppId, String source) {
-        return ApplicationHook.requestString("com.alipay.gamecenteruprod.biz.rpc.v3.submitUserPlayDurationAction", "[{\"gameAppId\":\"" + gameAppId + "\",\"playTime\":32,\"source\":\"" + source + "\",\"statisticTag\":\"\"}]");
+        return submitUserPlayDurationAction(gameAppId, DEFAULT_PLAY_TIME_SECONDS, source);
+    }
+
+    /**
+     * 上报游戏游玩时长（P2E 时长上报统一入口）。
+     *
+     * @param gameAppId 游戏小程序 appId
+     * @param playTime  本次上报的游玩时长（秒），可由服务端下发的任务契约提供
+     * @param source    来源标识
+     */
+    public static String submitUserPlayDurationAction(String gameAppId, int playTime, String source) {
+        int seconds = playTime > 0 ? playTime : DEFAULT_PLAY_TIME_SECONDS;
+        return ApplicationHook.requestString("com.alipay.gamecenteruprod.biz.rpc.v3.submitUserPlayDurationAction", "[{\"gameAppId\":\"" + gameAppId + "\",\"playTime\":" + seconds + ",\"source\":\"" + source + "\",\"statisticTag\":\"\"}]");
     }
 
     public static String smashedGoldenEgg() {
