@@ -10,6 +10,7 @@ import com.surexu.sesame.model.normal.base.BaseModel;
 import com.surexu.sesame.model.task.antDodo.AntDodo;
 import com.surexu.sesame.model.task.antFarm.AntFarm;
 import com.surexu.sesame.model.task.antForest.AntForestV2;
+import com.surexu.sesame.model.task.antForestPatrol.AntForestPatrol;
 import com.surexu.sesame.model.task.antMember.AntMember;
 import com.surexu.sesame.model.task.antOcean.AntOcean;
 import com.surexu.sesame.model.task.antOrchard.AntOrchard;
@@ -30,6 +31,7 @@ public class ModelOrder {
     static {
         clazzList.add(BaseModel.class);
         clazzList.add(AntForestV2.class);
+        clazzList.add(AntForestPatrol.class);
         clazzList.add(AntFarm.class);
         clazzList.add(AntStall.class);
         clazzList.add(AntOrchard.class);
