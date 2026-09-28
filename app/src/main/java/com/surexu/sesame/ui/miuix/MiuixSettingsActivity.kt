@@ -23,6 +23,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.runtime.Composable
@@ -37,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.window.Dialog
 import com.surexu.sesame.data.ConfigPreload
 import com.surexu.sesame.data.ConfigV2
@@ -65,6 +67,7 @@ import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.basic.Checkbox
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.CheckboxPreference
@@ -733,43 +736,93 @@ fun SelectionDialog(
                 .background(MiuixTheme.colorScheme.surface, RoundedCornerShape(16.dp))
                 .padding(16.dp)
         ) {
-            Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(title, color = MiuixTheme.colorScheme.onBackground)
-                Spacer(Modifier.height(8.dp))
-                options.forEach { opt ->
-                    if (single) {
+            if (single) {
+                // 单选：原有布局不变
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(title, color = MiuixTheme.colorScheme.onBackground)
+                    Spacer(Modifier.height(8.dp))
+                    options.forEach { opt ->
                         RadioButtonPreference(
                             title = opt.name,
                             selected = sel.contains(opt.id),
                             onClick = { sel = setOf(opt.id) }
                         )
-                    } else {
-                        val checked = sel.contains(opt.id)
-                        CheckboxPreference(
-                            title = opt.name,
-                            checked = checked,
-                            onCheckedChange = { c ->
-                                sel = if (c) sel + opt.id else sel - opt.id
-                            }
-                        )
-                        if (withCount && checked) {
-                            var c by remember(opt.id) { mutableFloatStateOf((counts[opt.id] ?: 1).toFloat()) }
-                            SliderPreference(
-                                title = "数量",
-                                value = c,
-                                valueRange = 0f..100f,
-                                valueText = c.roundToInt().toString(),
-                                onValueChange = { c = it },
-                                onValueChangeFinished = { counts = counts + (opt.id to c.roundToInt()) }
-                            )
-                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(text = "取消", onClick = onDismiss)
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(text = "保存", onClick = { onConfirm(sel, counts) })
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(text = "取消", onClick = onDismiss)
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(text = "保存", onClick = { onConfirm(sel, counts) })
+            } else {
+                // 多选：三段式布局（固定头 + 可滚体 + 固定底）
+                Column(Modifier.heightIn(max = 560.dp)) {
+                    // 固定头部：标题
+                    Text(title, color = MiuixTheme.colorScheme.onBackground)
+                    Spacer(Modifier.height(8.dp))
+                    // 可滚体部：选项列表
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        options.forEach { opt ->
+                            val checked = sel.contains(opt.id)
+                            CheckboxPreference(
+                                title = opt.name,
+                                checked = checked,
+                                onCheckedChange = { c ->
+                                    sel = if (c) sel + opt.id else sel - opt.id
+                                }
+                            )
+                            if (withCount && checked) {
+                                var c by remember(opt.id) { mutableFloatStateOf((counts[opt.id] ?: 1).toFloat()) }
+                                SliderPreference(
+                                    title = "数量",
+                                    value = c,
+                                    valueRange = 0f..100f,
+                                    valueText = c.roundToInt().toString(),
+                                    onValueChange = { c = it },
+                                    onValueChangeFinished = { counts = counts + (opt.id to c.roundToInt()) }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    // 固定底部：全选复选框 + 操作按钮
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val selectAllState = when {
+                            sel.isEmpty() -> ToggleableState.Off
+                            sel.size == options.size -> ToggleableState.On
+                            else -> ToggleableState.Indeterminate
+                        }
+                        Checkbox(
+                            state = selectAllState,
+                            onClick = {
+                                if (sel.size == options.size) {
+                                    sel = emptySet()
+                                    counts = emptyMap()
+                                } else {
+                                    sel = options.map { it.id }.toSet()
+                                    counts = options.associate { it.id to (counts[it.id] ?: 1) }
+                                }
+                            }
+                        )
+                        Text(
+                            "全选",
+                            color = MiuixTheme.colorScheme.onBackground,
+                            fontSize = 15.sp
+                        )
+                        Spacer(Modifier.weight(1f))
+                        TextButton(text = "取消", onClick = onDismiss)
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(text = "保存", onClick = { onConfirm(sel, counts) })
+                    }
                 }
             }
         }
