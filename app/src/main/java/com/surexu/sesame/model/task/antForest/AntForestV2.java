@@ -204,6 +204,8 @@ public class AntForestV2 extends ModelTask {
     private SelectAndCountModelField wateredFriendList;
 
     private BooleanModelField doubleWaterFriendEnergy;
+    /** 本轮浇水已执行标志，防止水FriendEnergyFirst和最终调用重复执行 */
+    private boolean wateringExecutedThisRound = false;
     private SelectModelField giveEnergyRainList;
     private BooleanModelField vitalityExchangeBenefit;
     private SelectAndCountModelField vitality_ExchangeBenefitList;
@@ -383,10 +385,12 @@ public class AntForestV2 extends ModelTask {
             taskCount.set(0);
             selfId = UserIdMap.getCurrentUid();
             hasErrorWait = false;
+            wateringExecutedThisRound = false;
 
             //GameTask.Orchard_ncscc.report("农场上车车", 1);
             if (waterFriendEnergyFirst.getValue()) {
                 waterFriendEnergy();
+                wateringExecutedThisRound = true;
             }
 
 
@@ -582,7 +586,9 @@ public class AntForestV2 extends ModelTask {
                     }
                 }
 
-                waterFriendEnergy();
+                if (!wateringExecutedThisRound) {
+                    waterFriendEnergy();
+                }
 
                 if (pkEnergy.getValue()) {
                     collectPKEnergy();
