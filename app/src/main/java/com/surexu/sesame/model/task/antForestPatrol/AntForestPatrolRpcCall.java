@@ -77,4 +77,52 @@ public class AntForestPatrolRpcCall {
                 + "\",\"userManualSelect\":false,\"version\":\"20230501\"}]";
         return ApplicationHook.requestString("alipay.antmember.forest.h5.exchangeTree", args1);
     }
+
+    /** 领取新版巡护首页机会道具 */
+    public static String triggerMonopolyHomeProps() {
+        String args1 = "[{\"source\":\"" + MONOPOLY_SOURCE + "\",\"uniqueId\":\"" + uniqueId() + "\"}]";
+        return ApplicationHook.requestString("alipay.antisle.monopoly.h5.triggerHomePageProps", args1);
+    }
+
+    /** 新版巡护掷骰子 */
+    public static String rollMonopolyDice(boolean guideRoll) {
+        String ext = guideRoll ? ",\"extParams\":\"{\\\"guideRoll\\\":true,\\\"source\\\":\\\"newUserGuide\\\"}\"" : "";
+        String args1 = "[{\"source\":\"" + MONOPOLY_SOURCE + "\",\"uniqueId\":\"" + uniqueId()
+                + "\"" + ext + "}]";
+        return ApplicationHook.requestString("alipay.antisle.monopoly.h5.rollDice", args1);
+    }
+
+    /** 确认新版巡护事件（慈善/特殊事件） */
+    public static String confirmMonopolyEvent(String eventId, String actionKey) {
+        String args1 = "[{\"source\":\"" + MONOPOLY_SOURCE + "\",\"uniqueId\":\"" + uniqueId()
+                + "\",\"eventId\":\"" + eventId + "\",\"status\":\"CONFIRMED\""
+                + ",\"decisionData\":{\"actionKey\":\"" + actionKey
+                + "\",\"source\":\"ROLL_DICE_STEP\"}}]";
+        return ApplicationHook.requestString("alipay.antisle.monopoly.h5.eventConfirm", args1);
+    }
+
+    /** 查询新版巡护任务列表（大富翁任务） */
+    public static String listMonopolyTasks(String regionCode, String sceneCode) {
+        String args1 = "[{\"regionCode\":\"" + regionCode + "\",\"sceneCode\":\"" + sceneCode
+                + "\",\"source\":\"ANTFOREST\",\"requestType\":\"RPC\""
+                + ",\"zoneId\":\"Asia/Shanghai\",\"uniqueId\":\"" + uniqueId() + "\"}]";
+        return ApplicationHook.requestString("com.alipay.antieptask.listTaskopengreen", args1);
+    }
+
+    /** 完成新版巡护浏览类任务 */
+    public static String finishMonopolyTask(String taskType, String sceneCode) {
+        String outBizNo = taskType + "_" + System.currentTimeMillis() + "_" + RandomUtil.getRandomString(8);
+        String args1 = "[{\"taskType\":\"" + taskType + "\",\"sceneCode\":\"" + sceneCode
+                + "\",\"source\":\"ANTFOREST\",\"requestType\":\"H5\""
+                + ",\"outBizNo\":\"" + outBizNo + "\"}]";
+        return ApplicationHook.requestString("com.alipay.antieptask.finishTaskopengreen", args1);
+    }
+
+    /** 领取新版巡护任务奖励 */
+    public static String receiveMonopolyTask(String taskType, String sceneCode) {
+        String args1 = "[{\"taskType\":\"" + taskType + "\",\"sceneCode\":\"" + sceneCode
+                + "\",\"source\":\"ANTFOREST\",\"requestType\":\"RPC\""
+                + ",\"ignoreLimit\":false}]";
+        return ApplicationHook.requestString("com.alipay.antieptask.receiveTaskAwardopengreen", args1);
+    }
 }

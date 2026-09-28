@@ -209,14 +209,11 @@ public class AntForestV2 extends ModelTask {
     private SelectModelField giveEnergyRainList;
     private BooleanModelField vitalityExchangeBenefit;
     private SelectAndCountModelField vitality_ExchangeBenefitList;
-    private BooleanModelField userPatrol;
     private BooleanModelField collectGiftBox;
     private BooleanModelField medicalHealth;
     private BooleanModelField greenLife;
 
     private BooleanModelField greenRent;
-    private BooleanModelField combineAnimalPiece;
-    private ChoiceModelField consumeAnimalPropType;
     private SelectModelField whoYouWantToGiveTo;
     private BooleanModelField ecoLife;
     private BooleanModelField youthPrivilege;
@@ -312,9 +309,6 @@ public class AntForestV2 extends ModelTask {
         modelFields.addField(energyRain = new BooleanModelField("energyRain", "收集能量雨", false));
         modelFields.addField(giveEnergyRainList = new SelectModelField("giveEnergyRainList", "赠送能量雨好友列表", new LinkedHashSet<>(), AlipayUser::getList));
         modelFields.addField(useEnergyRainLimit = new BooleanModelField("useEnergyRainLimit", "兑换使用限时能量雨卡", false));
-        modelFields.addField(userPatrol = new BooleanModelField("userPatrol", "保护地巡护", false));
-        modelFields.addField(combineAnimalPiece = new BooleanModelField("combineAnimalPiece", "合成动物碎片", false));
-        modelFields.addField(consumeAnimalPropType = new ChoiceModelField("consumeAnimalPropType", "派遣动物伙伴", ConsumeAnimalPropType.NONE, ConsumeAnimalPropType.nickNames));
         modelFields.addField(receiveForestTaskAward = new BooleanModelField("receiveForestTaskAward", "森林任务", false));
         modelFields.addField(AutoAntForestVitalityTaskList = new BooleanModelField("AutoAntForestVitalityTaskList", "活力值 | 自动黑白名单", true));
         modelFields.addField(AntForestVitalityTaskList = new SelectModelField("AntForestVitalityTaskList", "活力值 | 黑名单列表", new LinkedHashSet<>(), AlipayAntForestVitalityTaskList::getList));
@@ -546,39 +540,6 @@ public class AntForestV2 extends ModelTask {
                         }
                     }
                 } while (hasMore);
-                //JSONArray usingUserProps = selfHomeObject.has("usingUserProps") ? selfHomeObject.getJSONArray("usingUserProps") : new JSONArray();
-                //JSONArray usingUserProps = selfHomeObject.has("usingUserPropsNew") ? selfHomeObject.getJSONArray("usingUserPropsNew") : new JSONArray();
-                JSONArray usingUserProps;
-                if (selfHomeObject.has("usingUserPropsNew")) {
-                    usingUserProps = selfHomeObject.getJSONArray("usingUserPropsNew");
-                } else {
-                    usingUserProps = selfHomeObject.has("usingUserProps") ? selfHomeObject.getJSONArray("usingUserProps") : new JSONArray();
-                }
-                boolean canConsumeAnimalProp = true;
-                if (usingUserProps.length() > 0) {
-                    for (int i = 0; i < usingUserProps.length(); i++) {
-                        JSONObject jo = usingUserProps.getJSONObject(i);
-                        if (!Objects.equals("animal", jo.optString("propGroup"))) {
-                            continue;
-                        } else {
-                            canConsumeAnimalProp = false;
-                        }
-                        JSONObject extInfo = new JSONObject(jo.getString("extInfo"));
-                        int energy = extInfo.optInt("energy", 0);
-                        if (energy > 0 && !extInfo.optBoolean("isCollected")) {
-                            String propId = jo.getString("propId");
-                            String propType = jo.getString("propType");
-                            String shortDay = extInfo.getString("shortDay");
-                            String animalName = extInfo.getJSONObject("animal").getString("name");
-                            jo = new JSONObject(AntForestRpcCall.collectAnimalRobEnergy(propId, propType, shortDay));
-                            if (MessageUtil.checkResultCode(TAG, jo)) {
-                                Log.forest("动物能量🦩派遣" + animalName + "收取能量[" + energy + "g]");
-                            }
-                            TimeUtil.sleep(500);
-                            break;
-                        }
-                    }
-                }
                 //强制重复浇水一次
                 if (doubleWaterFriendEnergy.getValue()) {
                     if (!Status.hasFlagToday("Forest::doubleWaterFriendEnergy")) {
@@ -624,19 +585,6 @@ public class AntForestV2 extends ModelTask {
                     forestChouChouLe.chouChouLe(ForestHuntDraw.getValue(), ForestHuntHelp.getValue(), ForestHuntHelpList.getValue(), NORMALForestHuntHelp.getValue(), ACTIVITYForestHuntHelp.getValue(), AntForestHuntTaskList.getValue());
                 }
 
-                if (userPatrol.getValue()) {
-                    queryUserPatrol();
-                }
-                if (combineAnimalPiece.getValue()) {
-                    queryAnimalAndPiece();
-                }
-                if (consumeAnimalPropType.getValue() != ConsumeAnimalPropType.NONE) {
-                    if (!canConsumeAnimalProp) {
-                        Log.record("已经有动物伙伴在巡护森林");
-                    } else {
-                        queryAnimalPropList();
-                    }
-                }
                 if (expiredEnergy.getValue()) {
                     popupTask();
                 }
@@ -3408,229 +3356,6 @@ public class AntForestV2 extends ModelTask {
         }
     }
 
-    private void queryUserPatrol() {
-        try {
-            th:
-            do {
-                JSONObject jo = new JSONObject(AntForestRpcCall.queryUserPatrol());
-                TimeUtil.sleep(500);
-                if (!MessageUtil.checkResultCode(TAG, jo)) {
-                    return;
-                }
-                JSONObject resData = new JSONObject(AntForestRpcCall.queryMyPatrolRecord());
-                TimeUtil.sleep(500);
-                if (resData.optBoolean("canSwitch")) {
-                    JSONArray records = resData.getJSONArray("records");
-                    for (int i = 0; i < records.length(); i++) {
-                        JSONObject record = records.getJSONObject(i);
-                        JSONObject userPatrol = record.getJSONObject("userPatrol");
-                        if (userPatrol.getInt("unreachedNodeCount") > 0) {
-                            if ("silent".equals(userPatrol.getString("mode"))) {
-                                JSONObject patrolConfig = record.getJSONObject("patrolConfig");
-                                String patrolId = patrolConfig.getString("patrolId");
-                                resData = new JSONObject(AntForestRpcCall.switchUserPatrol(patrolId));
-                                TimeUtil.sleep(500);
-                                if (MessageUtil.checkResultCode(TAG, resData)) {
-                                    Log.forest("巡护⚖️-切换地图至" + patrolId);
-                                }
-                                continue th;
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                JSONObject userPatrol = jo.getJSONObject("userPatrol");
-                int currentNode = userPatrol.getInt("currentNode");
-                String currentStatus = userPatrol.getString("currentStatus");
-                int patrolId = userPatrol.getInt("patrolId");
-                JSONObject chance = userPatrol.getJSONObject("chance");
-                int leftChance = chance.getInt("leftChance");
-                int leftStep = chance.getInt("leftStep");
-                int usedStep = chance.getInt("usedStep");
-                if ("STANDING".equals(currentStatus)) {
-                    if (leftChance > 0) {
-                        jo = new JSONObject(AntForestRpcCall.patrolGo(currentNode, patrolId));
-                        TimeUtil.sleep(500);
-                        patrolKeepGoing(jo.toString(), currentNode, patrolId);
-                        continue;
-                    } else if (leftStep >= 2000 && usedStep < 10000) {
-                        jo = new JSONObject(AntForestRpcCall.exchangePatrolChance(leftStep));
-                        TimeUtil.sleep(300);
-                        if (MessageUtil.checkResultCode(TAG, jo)) {
-                            int addedChance = jo.optInt("addedChance", 0);
-                            Log.forest("步数兑换⚖️[巡护次数*" + addedChance + "]");
-                            continue;
-                        }
-                    }
-                } else if ("GOING".equals(currentStatus)) {
-                    patrolKeepGoing(null, currentNode, patrolId);
-                }
-                break;
-            } while (true);
-        } catch (Throwable t) {
-            Log.i(TAG, "queryUserPatrol err:");
-            Log.printStackTrace(TAG, t);
-        }
-    }
-
-    private void patrolKeepGoing(String s, int nodeIndex, int patrolId) {
-        try {
-            do {
-                if (s == null) {
-                    s = AntForestRpcCall.patrolKeepGoing(nodeIndex, patrolId, "image");
-                }
-                JSONObject jo = new JSONObject(s);
-                if (!MessageUtil.checkResultCode(TAG, jo)) {
-                    return;
-                }
-                JSONArray jaEvents = jo.optJSONArray("events");
-                if (jaEvents == null || jaEvents.length() == 0) {
-                    return;
-                }
-                JSONObject userPatrol = jo.getJSONObject("userPatrol");
-                int currentNode = userPatrol.getInt("currentNode");
-                JSONObject events = jo.getJSONArray("events").getJSONObject(0);
-                JSONObject rewardInfo = events.optJSONObject("rewardInfo");
-                if (rewardInfo != null) {
-                    JSONObject animalProp = rewardInfo.optJSONObject("animalProp");
-                    if (animalProp != null) {
-                        JSONObject animal = animalProp.optJSONObject("animal");
-                        if (animal != null) {
-                            Log.forest("巡护森林🏇🏻[" + animal.getString("name") + "碎片]");
-                        }
-                    }
-                }
-                if (!"GOING".equals(jo.getString("currentStatus"))) {
-                    return;
-                }
-                JSONObject materialInfo = events.getJSONObject("materialInfo");
-                String materialType = materialInfo.optString("materialType", "image");
-                s = AntForestRpcCall.patrolKeepGoing(currentNode, patrolId, materialType);
-                TimeUtil.sleep(100);
-            } while (true);
-        } catch (Throwable t) {
-            Log.i(TAG, "patrolKeepGoing err:");
-            Log.printStackTrace(TAG, t);
-        }
-    }
-
-    // 查询可派遣伙伴
-    private void queryAnimalPropList() {
-        try {
-            JSONObject jo = new JSONObject(AntForestRpcCall.queryAnimalPropList());
-            if (!MessageUtil.checkResultCode(TAG, jo)) {
-                return;
-            }
-            JSONArray animalProps = jo.getJSONArray("animalProps");
-            JSONObject animalProp = null;
-            for (int i = 0; i < animalProps.length(); i++) {
-                jo = animalProps.getJSONObject(i);
-                if (animalProp == null) {
-                    animalProp = jo;
-                    if (consumeAnimalPropType.getValue() == ConsumeAnimalPropType.SEQUENCE) {
-                        break;
-                    }
-                } else if (jo.getJSONObject("main").getInt("holdsNum") > animalProp.getJSONObject("main").getInt("holdsNum")) {
-                    animalProp = jo;
-                }
-            }
-            consumeAnimalProp(animalProp);
-        } catch (Throwable t) {
-            Log.i(TAG, "queryAnimalPropList err:");
-            Log.printStackTrace(TAG, t);
-        }
-    }
-
-    // 派遣伙伴
-    private void consumeAnimalProp(JSONObject animalProp) {
-        if (animalProp == null) {
-            return;
-        }
-        try {
-            String propGroup = animalProp.getJSONObject("main").getString("propGroup");
-            String propType = animalProp.getJSONObject("main").getString("propType");
-            String name = animalProp.getJSONObject("partner").getString("name");
-            JSONObject jo = new JSONObject(AntForestRpcCall.consumeProp(propGroup, propType, false));
-            if (MessageUtil.checkResultCode(TAG, jo)) {
-                Log.forest("巡护派遣🐆[" + name + "]");
-            }
-        } catch (Throwable t) {
-            Log.i(TAG, "consumeAnimalProp err:");
-            Log.printStackTrace(TAG, t);
-        }
-    }
-
-    private void queryAnimalAndPiece() {
-        try {
-            JSONObject jo = new JSONObject(AntForestRpcCall.queryAnimalAndPiece(0));
-            if (!MessageUtil.checkResultCode(TAG, jo)) {
-                return;
-            }
-            JSONArray animalProps = jo.getJSONArray("animalProps");
-            for (int i = 0; i < animalProps.length(); i++) {
-                boolean canCombineAnimalPiece = true;
-                jo = animalProps.getJSONObject(i);
-                JSONArray pieces = jo.getJSONArray("pieces");
-                int id = jo.getJSONObject("animal").getInt("id");
-                for (int j = 0; j < pieces.length(); j++) {
-                    jo = pieces.optJSONObject(j);
-                    if (jo == null || jo.optInt("holdsNum", 0) <= 0) {
-                        canCombineAnimalPiece = false;
-                        break;
-                    }
-                }
-                if (canCombineAnimalPiece) {
-                    combineAnimalPiece(id);
-                }
-            }
-        } catch (Throwable t) {
-            Log.i(TAG, "queryAnimalAndPiece err:");
-            Log.printStackTrace(TAG, t);
-        }
-    }
-
-    private void combineAnimalPiece(int animalId) {
-        try {
-            do {
-                JSONObject jo = new JSONObject(AntForestRpcCall.queryAnimalAndPiece(animalId));
-                if (!MessageUtil.checkResultCode(TAG, jo)) {
-                    return;
-                }
-                JSONArray animalProps = jo.getJSONArray("animalProps");
-                jo = animalProps.getJSONObject(0);
-                JSONObject animal = jo.getJSONObject("animal");
-                int id = animal.getInt("id");
-                String name = animal.getString("name");
-                JSONArray pieces = jo.getJSONArray("pieces");
-                boolean canCombineAnimalPiece = true;
-                JSONArray piecePropIds = new JSONArray();
-                for (int j = 0; j < pieces.length(); j++) {
-                    jo = pieces.optJSONObject(j);
-                    if (jo == null || jo.optInt("holdsNum", 0) <= 0) {
-                        canCombineAnimalPiece = false;
-                        break;
-                    } else {
-                        piecePropIds.put(jo.getJSONArray("propIdList").getString(0));
-                    }
-                }
-                if (canCombineAnimalPiece) {
-                    jo = new JSONObject(AntForestRpcCall.combineAnimalPiece(id, piecePropIds.toString()));
-                    if (MessageUtil.checkResultCode(TAG, jo)) {
-                        Log.forest("合成动物💡[" + name + "]");
-                        animalId = id;
-                        TimeUtil.sleep(100);
-                        continue;
-                    }
-                }
-                break;
-            } while (true);
-        } catch (Throwable t) {
-            Log.i(TAG, "combineAnimalPiece err:");
-            Log.printStackTrace(TAG, t);
-        }
-    }
-
     private int forFriendCollectEnergy(String targetUserId, long bubbleId) {
         int helped = 0;
         try {
@@ -4424,15 +4149,6 @@ public class AntForestV2 extends ModelTask {
         int NOT_HELP = 2;
 
         String[] nickNames = {"不复活能量", "复活已选好友", "复活未选好友"};
-    }
-
-    public interface ConsumeAnimalPropType {
-
-        int NONE = 0;
-        int SEQUENCE = 1;
-        int QUANTITY = 2;
-
-        String[] nickNames = {"不派遣动物", "按默认顺序派遣", "按最大数量派遣"};
     }
 
     public interface UsePropType {
