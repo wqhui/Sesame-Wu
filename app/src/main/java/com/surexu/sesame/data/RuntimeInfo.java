@@ -25,7 +25,8 @@ public class RuntimeInfo {
     private JSONObject joCurrent;
 
     public enum RuntimeInfoKey {
-        ForestPauseTime
+        ForestPauseTime,
+        TaskPauseMap
     }
 
     public static RuntimeInfo getInstance() {

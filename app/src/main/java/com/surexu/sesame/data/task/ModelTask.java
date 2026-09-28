@@ -14,6 +14,12 @@ import com.surexu.sesame.data.ModelType;
 import com.surexu.sesame.model.normal.base.BaseModel;
 import com.surexu.sesame.util.Log;
 import com.surexu.sesame.util.StringUtil;
+import com.surexu.sesame.data.RuntimeInfo;
+import com.surexu.sesame.util.TimeUtil;
+import org.json.JSONException;
+import org.json.JSONObject;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,9 +31,14 @@ public abstract class ModelTask extends Model {
 
     private static final Map<ModelTask, Thread> MAIN_TASK_MAP = new ConcurrentHashMap<>();
 
+    private static final Object TASK_PAUSE_LOCK = new Object();
+
     private static final ThreadPoolExecutor MAIN_THREAD_POOL = new ThreadPoolExecutor(getModelArray().length, Integer.MAX_VALUE, 30L, TimeUnit.SECONDS, new SynchronousQueue<>(), new ThreadPoolExecutor.CallerRunsPolicy());
 
     private final Map<String, ChildModelTask> childTaskMap = new ConcurrentHashMap<>();
+
+    /** 连续执行失败计数（内存，进程重启清零），达到阈值后自动挂起本任务 */
+    private int consecutiveFailures = 0;
 
     private ChildTaskExecutor childTaskExecutor;
 
@@ -44,8 +55,10 @@ public abstract class ModelTask extends Model {
             MAIN_TASK_MAP.put(task, Thread.currentThread());
             try {
                 task.run();
+                consecutiveFailures = 0;
             } catch (Exception e) {
                 Log.printStackTrace(e);
+                onTaskRunFailure();
             } finally {
                 MAIN_TASK_MAP.remove(task);
             }
@@ -154,6 +167,11 @@ public abstract class ModelTask extends Model {
         }
         try {
             if (isEnable() && check()) {
+                String pausedMsg = getPausedMessage();
+                if (pausedMsg != null) {
+                    Log.record(pausedMsg);
+                    return false;
+                }
                 if (isSync()) {
                     mainRunnable.run();
                 } else {
@@ -235,6 +253,86 @@ public abstract class ModelTask extends Model {
             throw new RuntimeException("not found childTaskExecutor");
         }
         return childTaskExecutor;
+    }
+
+    /** 任务级异常暂停：写入持久化暂停表（按用户隔离） */
+    protected void pauseSelfUntil(long untilMs) {
+        String name = getName();
+        synchronized (TASK_PAUSE_LOCK) {
+            RuntimeInfo runtimeInfo = RuntimeInfo.getInstance();
+            JSONObject jo;
+            try {
+                String raw = runtimeInfo.getString(RuntimeInfo.RuntimeInfoKey.TaskPauseMap.name());
+                jo = new JSONObject(raw);
+            } catch (JSONException e) {
+                jo = new JSONObject();
+            }
+            try {
+                jo.put(name, untilMs);
+            } catch (JSONException ignored) {
+            }
+            runtimeInfo.put(RuntimeInfo.RuntimeInfoKey.TaskPauseMap.name(), jo.toString());
+        }
+    }
+
+    /** 连续执行失败达到阈值后自动挂起本任务，避免反复异常空转 */
+    private void onTaskRunFailure() {
+        String name = getName();
+        consecutiveFailures++;
+        int threshold = BaseModel.getExceptionPauseThreshold().getValue() != null
+                ? BaseModel.getExceptionPauseThreshold().getValue() : 0;
+        Integer waitVal = BaseModel.getWaitWhenException().getValue();
+        long waitMs = waitVal != null ? waitVal.longValue() : 0L;
+        if (threshold >= 1 && consecutiveFailures >= threshold && waitMs > 0) {
+            long until = System.currentTimeMillis() + waitMs;
+            pauseSelfUntil(until);
+            Log.record("「" + name + "」连续失败 " + consecutiveFailures + " 次，已自动挂起至 " + TimeUtil.getCommonDate(until));
+            consecutiveFailures = 0;
+        }
+    }
+
+    /** 读取未过期的任务级异常暂停表（任务名 → 恢复时间），顺手移除已过期项 */
+    public static Map<String, Long> activeTaskPauseMap() {
+        RuntimeInfo runtimeInfo = RuntimeInfo.getInstance();
+        synchronized (TASK_PAUSE_LOCK) {
+            String raw = runtimeInfo.getString(RuntimeInfo.RuntimeInfoKey.TaskPauseMap.name());
+            if (raw == null || raw.isEmpty()) return new LinkedHashMap<>();
+            JSONObject jo;
+            try {
+                jo = new JSONObject(raw);
+            } catch (JSONException e) {
+                return new LinkedHashMap<>();
+            }
+            long now = System.currentTimeMillis();
+            Map<String, Long> active = new LinkedHashMap<>();
+            boolean expired = false;
+            Iterator<String> keys = jo.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                long until = jo.optLong(key, 0L);
+                if (until > now) {
+                    active.put(key, until);
+                } else {
+                    expired = true;
+                }
+            }
+            if (expired) {
+                try {
+                    runtimeInfo.put(RuntimeInfo.RuntimeInfoKey.TaskPauseMap.name(), new JSONObject(active).toString());
+                } catch (Exception ignored) {
+                }
+            }
+            return active;
+        }
+    }
+
+    private String getPausedMessage() {
+        Map<String, Long> pausedMap = activeTaskPauseMap();
+        Long until = pausedMap.get(getName());
+        if (until != null) {
+            return "⏸ 异常暂停中，恢复时间 " + TimeUtil.getCommonDate(until) + "，暂不执行检测！";
+        }
+        return null;
     }
 
     public static class ChildModelTask implements Runnable {

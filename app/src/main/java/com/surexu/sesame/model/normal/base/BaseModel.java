@@ -47,6 +47,8 @@ public class BaseModel extends Model {
     @Getter
     private static final IntegerModelField.MultiplyIntegerModelField waitWhenException = new IntegerModelField.MultiplyIntegerModelField("waitWhenException", "异常等待时间(分钟)", 60, 0, 24 * 60, 60_000);
     @Getter
+    private static final IntegerModelField exceptionPauseThreshold = new IntegerModelField("exceptionPauseThreshold", "连续失败挂起阈值(次)", 3, 0, 10);
+    @Getter
     public static final IntegerModelField backupConfigDays = new IntegerModelField("backupConfigDays", "按天和修改备份配置保存数(滚动覆盖)", 5);
     @Getter
     private static final BooleanModelField newRpc = new BooleanModelField("newRpc", "使用新接口(最低支持v10.3.96.8100)", true);
@@ -109,6 +111,8 @@ public class BaseModel extends Model {
         modelFields.addField(energyTime);
         modelFields.addField(timedTaskModel);
         modelFields.addField(timeoutRestart);
+        modelFields.addField(waitWhenException);
+        modelFields.addField(exceptionPauseThreshold);
         modelFields.addField(backupConfigDays);
         modelFields.addField(newRpc);
         modelFields.addField(debugMode);
