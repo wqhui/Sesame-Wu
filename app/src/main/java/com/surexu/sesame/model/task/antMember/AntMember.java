@@ -37,6 +37,25 @@ import java.util.Set;
 
 public class AntMember extends ModelTask {
     private static final String TAG = AntMember.class.getSimpleName();
+
+    // Sesame-AG 风格：芝麻炼金攒粒任务默认黑名单
+    // 这些模板/任务需要真实游戏内事件或其他条件才能完成，通过 RPC 调用必然返回 ILLEGAL_ARGUMENT / PROMISE_TEMPLATE_NOT_EXIST
+    private static final Set<String> ALCHENY_BLACKLIST_TEMPLATE_IDS = new HashSet<>(java.util.Arrays.asList(
+            "alchemy_check_in_subscribe_task", // joinActivity 返回 PROMISE_TEMPLATE_NOT_EXIST（生活记录模板不存在）
+            "hjwf_xiangjiangshikaipao_renwu",   // 游戏事件不能由 pushActivity 完成
+            "hjwf_zcylt_chongzhi",              // 真实充值不能由 pushActivity 完成
+            "hjwf_langmancanting_renwu",        // 完成订单游戏事件，pushActivity 返回 ILLEGAL_ARGUMENT
+            "hjwf_zcylt_zhuanhua",
+            "hjwf_eduka_renwu",
+            "hjwf_tbqd_qiandao_sanfang",
+            "hjwf_tbbbnc_shifei_sanfang",
+            "zml_check_in_subscribe_task",      // joinActivity 返回 PROMISE_TEMPLATE_NOT_EXIST
+            "zml_set_home_task"                 // joinActivity 返回 PROMISE_TEMPLATE_NOT_EXIST
+    ));
+    private static final Set<String> ALCHENY_BLACKLIST_TITLES = new HashSet<>(java.util.Arrays.asList(
+            "玩游戏赢最高8888元红包", // 动态 taskId，需游戏内事件，ILLEGAL_ARGUMENT promiseActivityExtCheck
+            "订阅炼金签到提醒"        // joinActivity 返回 PROMISE_TEMPLATE_NOT_EXIST
+    ));
     
     @Override
     public String getName() {
@@ -1812,6 +1831,12 @@ public class AntMember extends ModelTask {
                 }
                 String actionUrl = task.optString("actionUrl", "");
                 if (actionUrl.startsWith("alipays://") && !actionUrl.contains("chInfo")) {
+                    continue;
+                }
+
+                // 默认黑名单：这些模板/标题通过 RPC 必然返回 ILLEGAL_ARGUMENT / PROMISE_TEMPLATE_NOT_EXIST
+                if (ALCHENY_BLACKLIST_TEMPLATE_IDS.contains(templateId) || ALCHENY_BLACKLIST_TITLES.contains(title)) {
+                    Log.record("芝麻炼金⚗[黑名单跳过] " + title);
                     continue;
                 }
 
