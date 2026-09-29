@@ -161,6 +161,8 @@ public enum GameTask {
             // 建立HTTP连接
             URL url = new URL("https://gamesapi2.aslk2018.com/v2/game/login");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(15000);
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setRequestProperty("Content-Type", "application/json");
@@ -328,6 +330,8 @@ public enum GameTask {
             // 建立HTTP连接
             URL url = new URL("https://gamesapi2.aslk2018.com/v2/zfb/taskReport");
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(15000);
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setRequestProperty("authorization", this.cachedToken);
