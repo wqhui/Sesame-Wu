@@ -39,6 +39,7 @@ public class Status {
     private final Map<String, Integer> gameCenterBuyMallItemList = new HashMap<>();
     private int useAccelerateToolCount = 0;
     private int useSpecialFoodCount = 0;
+    private final Set<String> competitionDonatedRoundIds = new HashSet<>();
     
     // orchard
     private final Set<String> orchardShareP2PLogList = new HashSet<>();
@@ -513,6 +514,15 @@ public class Status {
     public static void feedFriendToday(String id) {
         int count = getFeedFriendCountToday(id) + 1;
         INSTANCE.feedFriendLogList.put(id, count);
+        save();
+    }
+
+    public static boolean isCompetitionDonated(String roundId) {
+        return INSTANCE.competitionDonatedRoundIds.contains(roundId);
+    }
+
+    public static void markCompetitionDonated(String roundId) {
+        INSTANCE.competitionDonatedRoundIds.add(roundId);
         save();
     }
     
