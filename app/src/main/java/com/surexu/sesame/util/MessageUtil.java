@@ -320,6 +320,14 @@ public class MessageUtil {
 
                 //会员任务AntMember
                 case "AntMemberTaskList":
+                    if (jo.has("resultView")) {
+                        String resultView = jo.optString("resultView");
+                        if (resultView.contains("不是有效的入参")
+                                || resultView.contains("存在进行中的生活记录")
+                                || resultView.contains("生活记录模板不存在")) {
+                            canAddBlackList = true;
+                        }
+                    }
                     if (canAddBlackList) {
                         MarkTaskBlackList("AntMember", listTitle, "会员任务", taskTitle);
 
