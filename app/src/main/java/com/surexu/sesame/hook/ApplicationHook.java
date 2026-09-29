@@ -279,6 +279,30 @@ public class ApplicationHook {
                 Log.i(TAG, "hook login err:");
                 Log.printStackTrace(TAG, t);
             }
+            // 兜底：AlipayLogin.onResume 在部分版本/场景下比 LauncherActivity 更稳定（reOpenApp 也会显式拉起）
+            try {
+                XHelpers.findAndHookMethod(ClassUtil.CURRENT_USING_ACTIVITY, classLoader, "onResume", new XC_MethodHook() {
+                    @Override
+                    protected void afterHookedMethod(MethodHookParam param) {
+                        // 如果 LauncherActivity hook 已触发过 init，则跳过本次兜底
+                        if (init) {
+                            return;
+                        }
+                        Log.i(TAG, "Login onResume (fallback)");
+                        String targetUid = getUserId();
+                        if (targetUid == null) {
+                            Log.record("用户未登录");
+                            Toast.show("用户未登录");
+                            return;
+                        }
+                        initHandler(true);
+                    }
+                });
+                Log.i(TAG, "hook login resume (fallback) successfully");
+            } catch (Throwable t) {
+                Log.i(TAG, "hook login resume err:");
+                Log.printStackTrace(TAG, t);
+            }
             try {
                 XHelpers.findAndHookMethod("android.app.Service", classLoader, "onCreate", new XC_MethodHook() {
 
@@ -432,28 +456,15 @@ public class ApplicationHook {
                 Log.printStackTrace(TAG, t);
             }
             try {
+                // Sesame-AG 风格：将前后台检测相关 hook 合并为一个 try-catch，
+                // 减少重复日志，统一处理类缺失的情况
                 XHelpers.findAndHookMethod("com.alipay.mobile.common.fgbg.FgBgMonitorImpl", classLoader, "isInBackground", XC_MethodReplacement.returnConstant(false));
-            } catch (Throwable t) {
-                Log.i(TAG, "hook FgBgMonitorImpl method 1 err:");
-                Log.printStackTrace(TAG, t);
-            }
-            try {
                 XHelpers.findAndHookMethod("com.alipay.mobile.common.fgbg.FgBgMonitorImpl", classLoader, "isInBackground", boolean.class, XC_MethodReplacement.returnConstant(false));
-            } catch (Throwable t) {
-                Log.i(TAG, "hook FgBgMonitorImpl method 2 err:");
-                Log.printStackTrace(TAG, t);
-            }
-            try {
                 XHelpers.findAndHookMethod("com.alipay.mobile.common.fgbg.FgBgMonitorImpl", classLoader, "isInBackgroundV2", XC_MethodReplacement.returnConstant(false));
-            } catch (Throwable t) {
-                Log.i(TAG, "hook FgBgMonitorImpl method 3 err:");
-                Log.printStackTrace(TAG, t);
-            }
-            try {
                 XHelpers.findAndHookMethod("com.alipay.mobile.common.transport.utils.MiscUtils", classLoader, "isAtFrontDesk", classLoader.loadClass("android.content.Context"), XC_MethodReplacement.returnConstant(true));
-                Log.i(TAG, "hook MiscUtils successfully");
+                Log.i(TAG, "hook other service (FgBg + MiscUtils) successfully");
             } catch (Throwable t) {
-                Log.i(TAG, "hook MiscUtils err:");
+                Log.i(TAG, "hook other service err:");
                 Log.printStackTrace(TAG, t);
             }
             hooked = true;
