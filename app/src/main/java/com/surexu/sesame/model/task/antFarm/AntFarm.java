@@ -1572,6 +1572,8 @@ public class AntFarm extends ModelTask {
             if (!MessageUtil.checkMemo(TAG, jo)) {
                 return;
             }
+            String taskSceneCode = jo.optString("taskSceneCode",
+                    jo.optString("sceneCode", "ANTFARM_FOOD_TASK"));
             JSONObject signList = jo.getJSONObject("signList");
             if (sign(signList)) {
                 TimeUtil.sleep(1000);
@@ -1591,7 +1593,7 @@ public class AntFarm extends ModelTask {
                 if (taskStatus == TaskStatus.RECEIVED || taskStatus != Mode) {
                     continue;
                 }
-                if (taskStatus == TaskStatus.TODO && !doFarmTask(jo)) {
+                if (taskStatus == TaskStatus.TODO && !doFarmTask(jo, taskSceneCode)) {
                     continue;
                 }
                 if (taskStatus == TaskStatus.FINISHED && !receiveFarmTaskAward(jo)) {
@@ -1736,33 +1738,46 @@ public class AntFarm extends ModelTask {
         }
     }
 
-    private Boolean doFarmTask(JSONObject task) {
+    private Boolean doFarmTask(JSONObject task, String taskSceneCode) {
         boolean isDoTask = false;
         try {
             String title = task.getString("title");
             String bizKey = task.getString("bizKey");
             String taskId = task.optString("taskId");
+            String taskType = task.optString("taskType", "");
             if (bizKey.contains("HEART_DONAT") || bizKey.equals("BAIDUJS_202512") || bizKey.equals("BABAFARM_TB")) {
                 return false;
             }
-            // 按稳定 taskId 分派（2026-09-22 抓包实测）：
-            //   视频任务 taskId="VIDEO_TASK"、答题任务 taskId="ANSWER"
-            // 注意视频任务的标题实际是「看庄园小视频」——原先写的是 equals("庄园小视频")，
-            // 少一个"看"字，导致这两类任务从来没有走对过接口（一直落到通用 doFarmTask 分支）
+            // 由业务逻辑自行处理的类型：COOK=厨房集肥料、SLEEP=睡觉、HIRE_LOW_ACTIVITY=雇佣小鸡
+            // 这些任务的肥料/奖励由对应的业务链在自己的流程里自动收取，不需要通过 RPC 完成
+            if ("COOK".equals(taskType) || "SLEEP".equals(taskType) || "HIRE_LOW_ACTIVITY".equals(taskType)) {
+                Log.farm("饲料任务⏭️[" + title + "]由" + taskType + "业务链负责，跳过RPC");
+                return false;
+            }
+            // 按稳定 taskId 分派视频/答题任务
             if ("VIDEO_TASK".equals(taskId)) {
                 isDoTask = doVideoTask(title);
             } else if ("ANSWER".equals(taskId)) {
                 isDoTask = doAnswerTask(title);
             } else {
-                JSONObject jodoFarmTask = new JSONObject(AntFarmRpcCall.doFarmTask(bizKey));
-                //检查并标记黑名单任务（此处是庄园饲料任务，应写入饲料黑名单而非抽抽乐）
-                MessageUtil.checkResultCodeAndMarkTaskBlackList("AntFarmDoFarmTaskList", title, jodoFarmTask);
-                if (MessageUtil.checkResultCode(TAG, jodoFarmTask)) {
-                    isDoTask=true;
-                } else {
-                    // 留痕：标题被服务端改得完全不像时会落到这里（并可能被自动拉黑），
-                    // 日志里的 bizKey/taskId 用于后续把分派改成稳定字段
-                    Log.other("饲料任务⚠️未完成[" + title + "]#bizKey=" + bizKey + "#taskId=" + task.optString("taskId"));
+                // 两条腿：先试 finishTask，失败再走 doFarmTask
+                if (!taskId.isEmpty() && taskSceneCode != null && !taskSceneCode.isEmpty()) {
+                    JSONObject joFinish = new JSONObject(AntFarmRpcCall.finishTask(taskId, taskSceneCode));
+                    if (MessageUtil.checkSuccess(TAG, joFinish)) {
+                        isDoTask = true;
+                    }
+                }
+                if (!isDoTask) {
+                    JSONObject jodoFarmTask = new JSONObject(AntFarmRpcCall.doFarmTask(bizKey, taskSceneCode));
+                    //检查并标记黑名单任务（此处是庄园饲料任务，应写入饲料黑名单而非抽抽乐）
+                    MessageUtil.checkResultCodeAndMarkTaskBlackList("AntFarmDoFarmTaskList", title, jodoFarmTask);
+                    if (MessageUtil.checkResultCode(TAG, jodoFarmTask)) {
+                        isDoTask = true;
+                    } else {
+                        // 留痕：标题被服务端改得完全不像时会落到这里（并可能被自动拉黑），
+                        // 日志里的 bizKey/taskId 用于后续把分派改成稳定字段
+                        Log.other("饲料任务⚠️未完成[" + title + "]#bizKey=" + bizKey + "#taskId=" + taskId + "#taskType=" + taskType);
+                    }
                 }
             }
 
