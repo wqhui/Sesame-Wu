@@ -117,6 +117,9 @@ public class ApplicationHook {
 
     private static volatile boolean init = false;
 
+    /** 标记一次重载是否正在进行，避免重载期间被主线程反复丢后台线程造成重复初始化 */
+    private static volatile boolean initializing = false;
+
     private static volatile Calendar dayCalendar;
 
     @Getter
@@ -250,9 +253,7 @@ public class ApplicationHook {
                             return;
                         }
                         if (!init) {
-                            if (initHandler(true)) {
-                                init = true;
-                            }
+                            initHandler(true);
                             return;
                         }
                         String currentUid = UserIdMap.getCurrentUid();
@@ -402,9 +403,7 @@ public class ApplicationHook {
                         dayCalendar = Calendar.getInstance();
                         Statistics.load();
                         FriendWatch.load();
-                        if (initHandler(true)) {
-                            init = true;
-                        }
+                        initHandler(true);
                     }
                 });
                 Log.i(TAG, "hook service onCreate successfully");
@@ -541,7 +540,54 @@ public class ApplicationHook {
     }
 
     @SuppressLint("WakelockTimeout")
-    private synchronized Boolean initHandler(Boolean force) {
+    /**
+     * 切换账号/首启的重载入口。
+     * 重载（force=true）包含大量文件 IO、整份配置 JSON 反序列化、反射建 Model、逐 Model 装 Hook，
+     * 这些若在「主线程」同步执行会把支付宝界面卡住（表现为"切号卡死不动"）。
+     * 因此这里只做需要 UI 反馈的快速前置检查，真正的重活统一交给 {@link #runInit} 在后台线程执行。
+     */
+    private Boolean initHandler(Boolean force) {
+        if (service == null) {
+            return false;
+        }
+        // 快速前置检查：未登录/无闹钟权限，留在调用线程同步返回（Toast 内部已切主线程，后台调用也安全）
+        if (force) {
+            String userId = getUserId();
+            if (userId == null) {
+                Log.record("用户未登录");
+                Toast.show("用户未登录");
+                return false;
+            }
+            if (!PermissionUtil.checkAlarmPermissions()) {
+                Log.record("支付宝无闹钟权限");
+                mainHandler.postDelayed(() -> {
+                    if (!PermissionUtil.checkOrRequestAlarmPermissions(context)) {
+                        android.widget.Toast.makeText(context, "请授予支付宝使用闹钟权限", android.widget.Toast.LENGTH_SHORT).show();
+                    }
+                }, 2000);
+                return false;
+            }
+        }
+        // 主线程调用则丢到后台线程执行，避免卡 UI；广播重启等已在后台线程的场景直接同步执行
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            if (initializing) {
+                return false;
+            }
+            initializing = true;
+            final Boolean f = force;
+            new Thread(() -> runInit(f), "Sure-Xu-InitHandler").start();
+            return null;
+        }
+        return runInit(force);
+    }
+
+    /**
+     * 真正执行重载，必须在非主线程调用。
+     * synchronized 保证同一时刻只有一处重载，防止切号与首启/广播重启并发触发重复初始化。
+     */
+
+    @SuppressLint("WakelockTimeout")
+    private synchronized Boolean runInit(Boolean force) {
         if (service == null) {
             return false;
         }
@@ -678,6 +724,7 @@ public class ApplicationHook {
                 BaseModel.initRpcRequest();
                 Log.record("加载完成");
                 Toast.show("Sure-Xu 加载成功");
+                init = true;
             }
             offline = false;
             execHandler();
@@ -687,6 +734,8 @@ public class ApplicationHook {
             Log.printStackTrace(TAG, th);
             Toast.show("Sure-Xu 加载失败");
             return false;
+        } finally {
+            initializing = false;
         }
     }
 
