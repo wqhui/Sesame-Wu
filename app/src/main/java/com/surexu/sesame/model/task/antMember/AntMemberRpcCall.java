@@ -9,6 +9,9 @@ import com.surexu.sesame.util.RandomUtil;
 
 public class AntMemberRpcCall {
 
+    /** 备用接口 doFarmTask 使用的 version，对齐 Sesame-M */
+    public static final String DO_FARM_TASK_VERSION = "20250812.01";
+
     private static String getUniqueId() {
         return String.valueOf(System.currentTimeMillis()) + RandomUtil.nextLong();
     }

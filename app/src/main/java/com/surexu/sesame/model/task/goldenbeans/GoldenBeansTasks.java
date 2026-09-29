@@ -11,8 +11,11 @@ import java.util.Set;
 import com.surexu.sesame.data.ConfigV2;
 import com.surexu.sesame.data.ModelFields;
 import com.surexu.sesame.data.modelFieldExt.SelectModelField;
+import com.surexu.sesame.model.base.TaskAlternative;
 import com.surexu.sesame.util.Log;
 import com.surexu.sesame.util.MessageUtil;
+import com.surexu.sesame.util.RandomUtil;
+import com.surexu.sesame.util.TimeUtil;
 import com.surexu.sesame.util.idMap.GoldenBeansTaskListMap;
 import com.surexu.sesame.util.idMap.UserIdMap;
 
@@ -38,6 +41,19 @@ public final class GoldenBeansTasks {
 
     private final SelectModelField blacklist;
     private final boolean autoBlacklist;
+
+    /** 备用接口同轮待核对（见 TaskAlternative.verify） */
+    private final Map<String, String> pendingVerifyTasks = new LinkedHashMap<>();
+
+    /** 同轮核对配置（见 TaskAlternative.verify） */
+    private static final TaskAlternative.VerifyConfig VERIFY_CFG = new TaskAlternative.VerifyConfig(
+            "goldenbeans", "GoldenBeansTaskList", "金豆夺宝任务", "金豆", "🧾完成", false,
+            msg -> Log.goldenBeans(msg));
+
+    // 固定延迟基础上叠加 0~60ms 随机抖动，避免触发时间过于规整
+    private static void sleepWithJitter(long baseMillis) {
+        TimeUtil.sleep(Math.max(baseMillis, 200) + RandomUtil.nextInt(0, 61));
+    }
 
     /**
      * @param blacklist     黑名单配置字段，可为 null
@@ -120,7 +136,7 @@ public final class GoldenBeansTasks {
                             + GoldenBeansSupport.describe(signResponse) + "]");
                     return null;
                 }
-                GoldenBeansSupport.pause(interval);
+                sleepWithJitter(interval);
                 JSONObject syncResponse = GoldenBeansSupport.parse(
                         goldenbeansRpcCall.pullOf(entry.bizType, entry.source,
                                 "JAR_INFO", "SIGN", "MARKETING_POPUP", "TASK_LIST"));
@@ -170,7 +186,7 @@ public final class GoldenBeansTasks {
                         + GoldenBeansSupport.describe(triggerResponse));
                 return;
             }
-            GoldenBeansSupport.pause(interval);
+            sleepWithJitter(interval);
             JSONObject syncResponse = GoldenBeansSupport.parse(goldenbeansRpcCall.pullOf(
                     entry.bizType, entry.source, "MARKETING_POPUP"));
             if (GoldenBeansSupport.ok(syncResponse)) {
@@ -227,7 +243,7 @@ public final class GoldenBeansTasks {
                 // 黑名单任务跳过；已完成待领取的仍执行领奖，兼容以标题为键的旧黑名单项
                 if (isBlacklisted(blacklistKey, taskName)) {
                     if (STATUS_FINISHED.equals(taskStatus) || STATUS_TO_RECEIVE.equals(taskStatus)) {
-                        GoldenBeansSupport.pause(interval);
+                        sleepWithJitter(interval);
                         claimAward(entry, taskId, taskName);
                     } else {
                         Log.record("金豆[" + entry.alias + "]任务⏭️[" + taskName + "]黑名单跳过");
@@ -241,7 +257,7 @@ public final class GoldenBeansTasks {
                 }
 
                 if (STATUS_FINISHED.equals(taskStatus) || STATUS_TO_RECEIVE.equals(taskStatus)) {
-                    GoldenBeansSupport.pause(interval);
+                    sleepWithJitter(interval);
                     if (claimAward(entry, taskId, taskName)) {
                         handled++;
                         changed = true;
@@ -261,7 +277,7 @@ public final class GoldenBeansTasks {
                                 + (entry == GoldenBeansEntry.ALCHEMY ? "芝麻粒换豆处理" : "肥料换豆处理"));
                         continue;
                     }
-                    GoldenBeansSupport.pause(interval);
+                    sleepWithJitter(interval);
                     if (finishTask(entry, taskId, taskName)) {
                         handled++;
                         changed = true;
@@ -277,9 +293,10 @@ public final class GoldenBeansTasks {
                 unresolved = true;
             }
 
+            verifyPendingTasks(entry);
             Log.record("金豆[" + entry.alias + "]任务🗂️共[" + total + "]个#完成[" + handled + "]个");
             if (changed) {
-                GoldenBeansSupport.pause(interval);
+                sleepWithJitter(interval);
                 goldenbeansRpcCall.pullOf(entry.bizType, entry.source, "FARM_TASK", "TASK_LIST");
             }
         } catch (Throwable th) {
@@ -349,6 +366,14 @@ public final class GoldenBeansTasks {
                 Log.goldenBeans("金豆[" + entry.alias + "]任务🧾完成[" + taskName + "]");
                 return true;
             }
+            // 另一种实现方案（见 TaskAlternative）
+            if (TaskAlternative.hit(jo, entry.taskSceneCode)) {
+                TaskAlternative.trigger(pendingVerifyTasks, taskId, taskName, taskId,
+                        entry.taskSceneCode,
+                        goldenbeansRpcCall.VERSION,
+                        "金豆[" + entry.alias + "]", msg -> Log.goldenBeans(msg));
+                return false;
+            }
             // 命中不可自动完成的任务时按错误特征自动加入黑名单
             MessageUtil.checkResultCodeAndMarkTaskBlackList("GoldenBeansTaskList", taskId, jo);
             String failMessage = GoldenBeansSupport.describe(jo);
@@ -386,6 +411,40 @@ public final class GoldenBeansTasks {
             Log.printStackTrace(GoldenBeansSupport.TAG, th);
         }
         return false;
+    }
+
+    /**
+     * 核对「已触发但响应不可信」的任务：等几秒后重拉列表，
+     * 仍为 TODO 的才计入自动拉黑。
+     * <p>为什么以列表为准：{@code doFarmTask} 会回 102 等错码但任务其实已生效，
+     * 服务端异步推进状态，只有列表里的 {@code taskStatus} 才是最终判据。
+     */
+    private void verifyPendingTasks(GoldenBeansEntry entry) {
+        TaskAlternative.verify(pendingVerifyTasks, VERIFY_CFG, () -> {
+            Set<String> notDone = new LinkedHashSet<>();
+            collectNotDoneIds(goldenbeansRpcCall.pullOf(
+                    entry.bizType, entry.source, "FARM_TASK", "TASK_LIST"), notDone);
+            return notDone;
+        });
+    }
+
+    private static void collectNotDoneIds(String response, Set<String> out) {
+        try {
+            JSONObject data = GoldenBeansSupport.parse(response);
+            if (data == null) return;
+            JSONArray taskList = data.optJSONArray("taskList");
+            if (taskList == null) return;
+            for (int i = 0; i < taskList.length(); i++) {
+                JSONObject task = taskList.optJSONObject(i);
+                if (task == null) continue;
+                if ("TODO".equals(task.optString("taskStatus", "").trim().toUpperCase())) {
+                    String id = task.optString("taskId", "").trim();
+                    if (!id.isEmpty()) out.add(id);
+                }
+            }
+        } catch (Throwable t) {
+            Log.record("GoldenBeansTasks collectNotDoneIds err: " + t.getMessage());
+        }
     }
 
     /**

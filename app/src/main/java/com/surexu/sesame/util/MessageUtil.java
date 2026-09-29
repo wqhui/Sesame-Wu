@@ -356,4 +356,13 @@ public class MessageUtil {
         }
     }
 
+    /**
+     * 判断响应是否为「不支持rpc调用」（400000040），用于决定是否走备用接口。
+     */
+    public static boolean isUnsupportedRpc(JSONObject jo) {
+        if (jo == null) return false;
+        String code = jo.optString("resultCode", jo.optString("code", ""));
+        return code.contains("400000040");
+    }
+
 }

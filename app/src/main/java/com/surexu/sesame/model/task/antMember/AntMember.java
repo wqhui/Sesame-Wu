@@ -16,6 +16,7 @@ import com.surexu.sesame.entity.AlipayMemberCreditSesameTaskList;
 import com.surexu.sesame.entity.MemberBenefit;
 import com.surexu.sesame.hook.ApplicationHook;
 import com.surexu.sesame.model.base.TaskCommon;
+import com.surexu.sesame.model.base.TaskAlternative;
 import com.surexu.sesame.model.extensions.ExtensionsHandle;
 import com.surexu.sesame.model.task.antGame.GameCenterPlayRpcCall;
 import com.surexu.sesame.model.task.antOrchard.AntOrchardRpcCall;
@@ -28,7 +29,9 @@ import com.surexu.sesame.util.idMap.PromiseSimpleTemplateIdMap;
 import com.surexu.sesame.util.idMap.UserIdMap;
 
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
@@ -68,7 +71,15 @@ public class AntMember extends ModelTask {
     private BooleanModelField merchantSignIn;
     private BooleanModelField merchantKMDK;
     private BooleanModelField enableSesameAlchemy;
-    
+
+    /** 备用接口同轮待核对（见 TaskAlternative.verify） */
+    private static final Map<String, String> pendingVerifyTasks = new LinkedHashMap<>();
+
+    /** 同轮核对配置（见 TaskAlternative.verify） */
+    private static final TaskAlternative.VerifyConfig VERIFY_CFG = new TaskAlternative.VerifyConfig(
+            "AntMember", "AntMemberTaskList", "会员任务", "游戏中心", "🎮完成", true,
+            msg -> Log.other(msg));
+
     @Override
     public ModelFields getFields() {
         ModelFields modelFields = new ModelFields();
@@ -646,7 +657,12 @@ public class AntMember extends ModelTask {
             }
             Long id = taskConfigInfo.getLong("id");
             String awardParamPoint = taskConfigInfo.getJSONObject("awardParam").getString("awardParamPoint");
-            String targetBusiness = taskConfigInfo.getJSONArray("targetBusiness").getString(0);
+            JSONArray targetBusinessArr = taskConfigInfo.optJSONArray("targetBusiness");
+            if (targetBusinessArr == null || targetBusinessArr.length() == 0) {
+                Log.record("会员浏览任务[" + name + "]无 targetBusiness 配置，跳过");
+                return false;
+            }
+            String targetBusiness = targetBusinessArr.getString(0);
             for (int i = left; i <= right; i++) {
                 JSONObject jo = new JSONObject(AntMemberRpcCall.applyTask(name, id));
                 sleepWithJitter(300);
@@ -1007,6 +1023,17 @@ public class AntMember extends ModelTask {
             JSONObject doTaskjo = new JSONObject(AntMemberRpcCall.doTaskSend(taskId));
             if (MessageUtil.checkSuccess(TAG, doTaskjo)) {
                 Log.other("游戏中心🎮完成任务[" + subTitle + "]#待领[" + prizeAmount + "玩乐豆]");
+            } else {
+                // doTaskSend 常被 400000040 拒绝，改用另一种实现方案（见 TaskAlternative）
+                String sceneCode = taskObj.optString("sceneCode", "").trim();
+                if (TaskAlternative.hit(doTaskjo, sceneCode)) {
+                    TaskAlternative.trigger(pendingVerifyTasks, taskId, subTitle, taskId, sceneCode,
+                            AntMemberRpcCall.DO_FARM_TASK_VERSION,
+                            "游戏中心", msg -> Log.other(msg));
+                } else {
+                    // 检查并标记黑名单任务
+                    MessageUtil.checkResultCodeAndMarkTaskBlackList("AntMemberTaskList", subTitle, doTaskjo);
+                }
             }
         }
         catch (Throwable t) {
@@ -1035,13 +1062,66 @@ public class AntMember extends ModelTask {
                     processTask(taskList.getJSONObject(j));
                 }
             }
+            verifyPendingTasks();
         }
         catch (Throwable t) {
             Log.i(TAG, "queryModularTaskList err:");
             Log.printStackTrace(TAG, t);
         }
     }
-    
+
+    /**
+     * 核对「已触发但响应不可信」的游戏中心任务：等几秒后重拉任务列表，
+     * 仍为 NOT_DONE 的才计入自动拉黑。
+     */
+    private static void verifyPendingTasks() {
+        TaskAlternative.verify(pendingVerifyTasks, VERIFY_CFG, () -> {
+            Set<String> notDone = new LinkedHashSet<>();
+            collectNotDoneIds(AntMemberRpcCall.queryModularTaskList(), notDone);
+            collectNotDoneIds(AntMemberRpcCall.queryTaskList(), notDone);
+            return notDone;
+        });
+    }
+
+    private static void collectNotDoneIds(String response, Set<String> out) {
+        try {
+            JSONObject data = new JSONObject(response).optJSONObject("data");
+            if (data == null) return;
+            JSONArray modules = data.optJSONArray("taskModuleList");
+            if (modules != null) {
+                for (int i = 0; i < modules.length(); i++) {
+                    JSONObject moduleObj = modules.optJSONObject(i);
+                    if (moduleObj == null) continue;
+                    JSONArray taskList = moduleObj.optJSONArray("taskList");
+                    if (taskList == null) continue;
+                    for (int j = 0; j < taskList.length(); j++) {
+                        JSONObject task = taskList.optJSONObject(j);
+                        if (task == null) continue;
+                        if ("NOT_DONE".equals(task.optString("taskStatus"))) {
+                            String id = task.optString("taskId");
+                            if (id != null && !id.isEmpty()) out.add(id);
+                        }
+                    }
+                }
+            }
+            JSONObject gameTaskModule = data.optJSONObject("gameTaskModule");
+            if (gameTaskModule != null) {
+                JSONArray gameTaskList = gameTaskModule.optJSONArray("gameTaskList");
+                if (gameTaskList != null) {
+                    for (int i = 0; i < gameTaskList.length(); i++) {
+                        JSONObject task = gameTaskList.optJSONObject(i);
+                        if (task == null) continue;
+                        if ("NOT_DONE".equals(task.optString("taskStatus"))) {
+                            String id = task.optString("taskId");
+                            if (id != null && !id.isEmpty()) out.add(id);
+                        }
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            Log.record(TAG + " collectNotDoneIds err: " + t.getMessage());
+        }
+    }    
     /**
      * 会员游戏乐园浏览奖励（独立闭环）。
      * <p>
