@@ -167,6 +167,9 @@ public class BaseModel extends Model {
             AntStallTaskListMap.clear();
             AntSportsTaskListMap.clear();
             AntMemberTaskListMap.clear();
+            // 这两个列表原先漏了 clear，切换账号后候选项会残留上一个账号的任务
+            GoldenBeansTaskListMap.clear();
+            PathThemeMapListMap.clear();
         }
         catch (Exception e) {
             Log.printStackTrace(e);
