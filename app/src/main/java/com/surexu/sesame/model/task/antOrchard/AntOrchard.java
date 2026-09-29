@@ -202,7 +202,14 @@ public class AntOrchard extends ModelTask {
             }
             JSONObject entry = new JSONObject(AntOrchardRpcCall.enterDrawActivity(""));
             if (!MessageUtil.checkResultCode(TAG, entry)) {
-                Log.error("农场抽抽乐⚗活动查询失败#" + entry);
+                // Sesame-AG 风格：识别活动已过期/不存在的错误码
+                if (entry.optBoolean("activityExpire")
+                        || ("2600000010".equals(entry.optString("code")) && !entry.optBoolean("retriable", true))) {
+                    Log.record("农场抽抽乐⚗活动已关闭#code=" + entry.optString("code")
+                            + " desc=" + entry.optString("desc") + "，停止后续请求");
+                } else {
+                    Log.error("农场抽抽乐⚗活动查询失败#" + entry);
+                }
                 return;
             }
             String activityId = entry.optJSONObject("drawActivity") != null
