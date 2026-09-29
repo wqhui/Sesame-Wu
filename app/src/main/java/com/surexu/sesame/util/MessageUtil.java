@@ -24,6 +24,11 @@ public class MessageUtil {
 
     public static void printErrorMessage(String tag, JSONObject jo, String errorMessageField) {
         try {
+            if (isServerBusy(jo)) {
+                // 102 高频错误：只打一行 JSON，避免 memo + JSON 刷两条
+                Log.i(tag, jo.toString());
+                return;
+            }
             String errMsg = tag + " error:";
             Log.record(errMsg + jo.getString(errorMessageField));
             Log.i(jo.getString(errorMessageField), jo.toString());
@@ -99,7 +104,10 @@ public class MessageUtil {
                 } else if (jo.has("resultView")) {
                     printErrorMessage(tag, jo, "resultView");
                 } else {
-                    Log.i(tag, jo.toString());
+                    // 服务端繁忙（102）已有 printErrorMessage 统一降噪，这里跳过避免重复刷行
+                    if (!isServerBusy(jo)) {
+                        Log.i(tag, jo.toString());
+                    }
                 }
                 return false;
             }
@@ -354,6 +362,15 @@ public class MessageUtil {
         } else {
             Log.record("添加" + TaskListName + "黑名单失败：" + taskTitle);
         }
+    }
+
+    /**
+     * 判断响应是否为「服务端繁忙」（102），用于日志降噪。
+     */
+    public static boolean isServerBusy(JSONObject jo) {
+        if (jo == null) return false;
+        String code = jo.optString("resultCode", jo.optString("code", ""));
+        return code.contains("102");
     }
 
     /**
