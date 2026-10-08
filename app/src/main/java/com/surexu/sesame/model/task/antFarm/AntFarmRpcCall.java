@@ -113,6 +113,16 @@ public class AntFarmRpcCall {
         return ApplicationHook.requestString("com.alipay.antfarm.donation", args1);
     }
 
+    /**
+     * 爱心鸡结号(S2)捐蛋：真实接口使用 projectId（非 activityId），并带 cele:1。
+     * <p>与公益捐蛋 {@link #donation(String, int)} 走同一个端点，但参数形状不同：
+     * 少了 {@code cele:1} 服务端会按公益捐蛋校验 projectId 报错，表现为"捐了但没捐上"。
+     */
+    public static String donationCompetition(String projectId, int donationAmount) {
+        String args1 = "[{\"cele\":1,\"donationAmount\":" + donationAmount + ",\"projectId\":\"" + projectId + "\",\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"H5\",\"version\":\"" + VERSION + "\"}]";
+        return ApplicationHook.requestString("com.alipay.antfarm.donation", args1);
+    }
+
     public static String listFarmTask() {
         String args1 = "[{\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"H5\",\"version\":\"" + VERSION + "\"}]";
         return ApplicationHook.requestString("com.alipay.antfarm.listFarmTask", args1);

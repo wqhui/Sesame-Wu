@@ -42,6 +42,50 @@ public class AntFarm extends ModelTask {
     /** 亲密家庭成员上限，满员后不再提交分享邀请 */
     private static final int FAMILY_MEMBER_LIMIT = 6;
 
+    /**
+     * 公益捐蛋当日标记：当天已经捐过一次公益蛋。只归「每日捐蛋」自己用。
+     * <p>持久化 key，**不能改名**。
+     */
+    private static final String FLAG_CHARITY_DONATION_DONE = "farm::donation";
+
+    /**
+     * S2 捐蛋「今日已捐成」标记：只归「爱心鸡结号 | 自动捐蛋」自己用。
+     * <p>持久化 key，**不能改名**。
+     */
+    private static final String FLAG_COMPETITION_DONATED_TODAY = "antFarm::competitionDonatedToday";
+
+    /**
+     * S2 捐蛋「今日已放弃」标记：只在服务端明确回绝（活动不可用 / 参数非法 / 业务限制）时落下，
+     * 表示当天不再尝试。**可重试的失败不落这个标记**。
+     * <p>持久化 key，**不能改名**。
+     */
+    private static final String FLAG_COMPETITION_DONATE_TRIED = "antFarm::competitionDonateTried";
+
+    /**
+     * S2 捐蛋失败退避时长：命中「可重试」失败后，至少隔这么久才会再发一次请求。
+     * <p>它比默认「执行间隔(分钟)」= 50 分钟短，所以默认配置下等价于「每轮都重试」；
+     * 只有把执行间隔调到 10 分钟以下时，这个退避才会真正起作用（防止轰炸接口）。
+     */
+    private static final long COMPETITION_RETRY_BACKOFF_MS = 10 * 60 * 1000L;
+
+    /**
+     * S2 失败结果码：命中即判定「当天不再重试」（活动不可用 / 参数非法 / 业务限制 / 不支持 rpc）。
+     * <p>其余失败（尤其 102 服务端繁忙、网络异常、响应里取不到码）一律按可重试处理 ——
+     * 宁可多试一次，也不要因为一次抖动就把当天的爱心值机会丢掉。
+     */
+    private static final Set<String> COMPETITION_NO_RETRY_CODES = new HashSet<>(Arrays.asList(
+            "DONATION_COMPETITION01", "DONATION_COMPETITION02",
+            "400000040",
+            "20020012", "TASK_ID_INVALID", "ILLEGAL_ARGUMENT", "PROMISE_TEMPLATE_NOT_EXIST",
+            "331", "1009", "DRAW_MACHINE07", "CAMP_TRIGGER_ERROR"));
+
+    /**
+     * 当日已捐出的爱心蛋总数（<b>公益 + 爱心鸡结号 合计</b>）。
+     * <p>供「每日捐蛋 | 总量上限」使用：两处捐蛋都记这一份账，谁先捐谁先占额度。
+     * <p>走 Status 的当日整型标记，随 status.json 每日重置自动清零。持久化 key，**不能改名**。
+     */
+    private static final String FLAG_DONATION_TOTAL_TODAY = "antFarm::donationTotalToday";
+
     private String ownerFarmId;
     private String ownerUserId;
     private String ownerGroupId;
@@ -93,6 +137,7 @@ public class AntFarm extends ModelTask {
     private BooleanModelField harvestProduce;
     private ChoiceModelField donationType;
     private IntegerModelField donationAmount;
+    private IntegerModelField donationTotalLimit;             // 每日捐蛋 | 总量上限(0不限)
     private BooleanModelField receiveFarmTaskAward;
     private BooleanModelField useAccelerateTool;
     private SelectModelField useAccelerateToolOptions;
@@ -119,6 +164,9 @@ public class AntFarm extends ModelTask {
     private IntegerModelField competitionDonateAmount;         // 爱心鸡结号 | 自动捐蛋数量
     private BooleanModelField competitionStealRank;            // 爱心鸡结号 | 偷榜
     private IntegerModelField competitionStealMinutes;         // 爱心鸡结号 | 偷榜提前分钟数
+    private IntegerModelField competitionStealLimit;           // 爱心鸡结号 | 偷榜捐献上限(0不限)
+    /** S2 可重试失败的退避截止时间（内存态；进程重启即清零＝立刻重试，无副作用） */
+    private long competitionRetryAt = 0L;
     /**
      * 本轮是否已被服务端限流（领奖返回 102）。
      * 命中后本轮不再继续领其余饲料任务：服务端对领奖的 102 是临时性的，
@@ -169,12 +217,14 @@ public class AntFarm extends ModelTask {
         modelFields.addField(IPexchangeBenefit = new BooleanModelField("IPexchangeBenefit", "抽抽乐兑换 | 开启", false));
         modelFields.addField(donationType = new ChoiceModelField("donationType", "每日捐蛋 | 方式", DonationType.ZERO, DonationType.nickNames));
         modelFields.addField(donationAmount = new IntegerModelField("donationAmount", "每日捐蛋 | 倍数(每项)", 1));
+        modelFields.addField(donationTotalLimit = new IntegerModelField("donationTotalLimit", "每日捐蛋 | 总量上限(0不限)", 0, 0, 10000));
         modelFields.addField(competition = new BooleanModelField("competition", "爱心鸡结号 | 开启", false));
         modelFields.addField(competitionReceiveTask = new BooleanModelField("competitionReceiveTask", "爱心鸡结号 | 领取奖励", false));
         modelFields.addField(competitionDonate = new BooleanModelField("competitionDonate", "爱心鸡结号 | 自动捐蛋", false));
         modelFields.addField(competitionDonateAmount = new IntegerModelField("competitionDonateAmount", "爱心鸡结号 | 自动捐蛋数量", 5, 0, 1000));
         modelFields.addField(competitionStealRank = new BooleanModelField("competitionStealRank", "爱心鸡结号 | 偷榜", false));
         modelFields.addField(competitionStealMinutes = new IntegerModelField("competitionStealMinutes", "爱心鸡结号 | 偷榜提前分钟数", 30, 0, 240));
+        modelFields.addField(competitionStealLimit = new IntegerModelField("competitionStealLimit", "爱心鸡结号 | 偷榜捐献上限(0不限)", 0, 0, 1000));
         modelFields.addField(family = new BooleanModelField("family", "亲密家庭 | 开启", false));
         modelFields.addField(familyOptions = new SelectModelField("familyOptions", "亲密家庭 | 选项", new LinkedHashSet<>(), CustomOption::getAntFarmFamilyOptions));
         modelFields.addField(notInviteList = new SelectModelField("notInviteList", "亲密家庭 | 好友分享名单", new LinkedHashSet<>(), AlipayUser::getList));
@@ -350,17 +400,17 @@ public class AntFarm extends ModelTask {
                 harvestProduce(ownerFarmId);
             }
 
-            if (competition.getValue()) {
-                if (!competition()) {
-                    // 仅「确认当天没有竞赛活动」才回退公益捐蛋；接口异常/数据缺失/轮次外
-                    // 跳过都返回 true，不会走到这里（以免当天已为竞赛捐过，晚上又捐一次公益）
-                    if (donationType.getValue() != DonationType.ZERO) {
-                        Log.record("爱心鸡结号❤️当天无竞赛活动，回退公益捐蛋");
-                        donation();
-                    }
-                }
-            } else if (donationType.getValue() != DonationType.ZERO) {
+            // 公益捐蛋与爱心鸡结号(S2)捐蛋是两件独立的事，各跑各的、互不回退：
+            //   · 公益按「每日捐蛋 | 方式/倍数」执行 —— 它同时是每天「爱心捐赠」饲料任务的完成条件，
+            //     所以每天都跑一次，保证这个任务不被 S2 挤掉；
+            //   · S2 按「爱心鸡结号 | 自动捐蛋」执行，失败自己退避重试，不影响公益。
+            // 顺序上公益先跑：蛋紧张时优先保证每日捐蛋任务。
+            if (donationType.getValue() != DonationType.ZERO) {
                 donation();
+            }
+
+            if (competition.getValue()) {
+                competition();
             }
 
             if (receiveFarmTaskAward.getValue()) {
@@ -1074,6 +1124,16 @@ public class AntFarm extends ModelTask {
                 String projectId = jo.getString("projectId");
                 int projectDonationNum = getProjectDonationNum(projectId);
                 donationNum = Math.min(donationNum, donationAmount.getValue() - projectDonationNum % donationAmount.getValue());
+                // 每日捐蛋总量上限（公益与爱心鸡结号共用一份额度）：剩余不足时按剩余收敛，可能小于单次倍数
+                int quota = remainingDonationQuotaToday();
+                if (quota <= 0) {
+                    Log.record("公益捐蛋⏸️已达每日捐蛋总量上限" + donationTotalLimit.getValue() + "#本轮停止");
+                    return;
+                }
+                donationNum = Math.min(donationNum, quota);
+                if (donationNum <= 0) {
+                    continue;
+                }
                 boolean isDonation;
                 if (donationNum == donationAmount.getValue()) {
                     isDonation = donation(activityId, projectName, donationNum, 1);
@@ -1092,6 +1152,13 @@ public class AntFarm extends ModelTask {
 
     private void donation(int donateNum) {
         try {
+            // 每日捐蛋总量上限守卫：本重载当前无调用点，但保留守卫以免日后接入时绕过额度
+            int quota = remainingDonationQuotaToday();
+            if (quota <= 0) {
+                Log.record("公益捐蛋⏸️已达每日捐蛋总量上限" + donationTotalLimit.getValue() + "#跳过");
+                return;
+            }
+            donateNum = Math.min(donateNum, quota);
             JSONObject jo = new JSONObject(AntFarmRpcCall.listActivityInfo());
             if (!MessageUtil.checkMemo(TAG, jo)) {
                 return;
@@ -1176,6 +1243,10 @@ public class AntFarm extends ModelTask {
             harvestBenevolenceScore = jo.getDouble("harvestBenevolenceScore");
             int donationTimesStat = jo.getInt("donationTimesStat");
             Log.farm("公益捐赠❤️[捐爱心蛋:" + activityName + "]捐赠" + donationAmount + "颗爱心蛋#累计捐赠" + donationTimesStat + "次");
+            // 公益自己的当日标记：公益每天只捐一次（与 S2 无关，两边各跑各的）
+            Status.flagToday(FLAG_CHARITY_DONATION_DONE);
+            // 计入每日捐蛋总量，供「每日捐蛋 | 总量上限」核算（与 S2 共用一份额度）
+            addDonationTotalToday(donationAmount);
             return true;
         } catch (Throwable t) {
             Log.i(TAG, "donation err:");
@@ -1188,96 +1259,259 @@ public class AntFarm extends ModelTask {
     //偷榜捐蛋
 
     /**
-     * 爱心鸡结号活动任务：服务端任务列表驱动，领取已完成任务的奖励。
+     * 爱心鸡结号(S2赛季)自动化：领奖 + 定向捐蛋 + 偷榜调度。
      * <p>
-     * 仅处理 taskStatus=FINISHED 且 canReceiveAwardCount&gt;0 的任务；TODO 需要端上动作、
-     * RECEIVED 已领取，均跳过。动作提交后重新查询，由服务端状态决定是否还有可领项。
+     * S2 为<b>周活动</b>：每周一 00:00:00 ~ 周日 20:00:00 为一轮。
+     * <p>
+     * <b>与公益捐蛋完全解耦</b>：这里只管 S2，捐不成也不会去动公益 ——
+     * 公益由调用方按「每日捐蛋」自己的开关独立执行。两件事各记各自的当日标记。
+     * <p>
+     * 活跃判据用「多信号取或」：轮次号、活动数据字段、捐蛋项目三者任一命中即算有活动。
+     * 原先只看 {@code rankRoundId} + 单组活动字段，服务端字段一改就永远判成「无活动」，
+     * 表现为每天都跳过爱心鸡结号。
      */
-
-    /**
-     * 爱心鸡结号(S2赛季)：自动捐蛋、偷榜、领取等级奖励与任务奖励。
-     * 与公共捐蛋(donation)互斥：当天有竞赛活动则由这里处理捐蛋与奖励，无活动则返回 false 让调用方回退到公共捐蛋。
-     *
-     * @return true=已处理（含竞赛捐蛋/领奖/跳过），false=当天无竞赛活动可回退公共捐蛋
-     */
-    private boolean competition() {
+    private void competition() {
+        // 失败退避：距上次「可重试失败」未满退避时长，本轮整个结号流程都跳过
+        // （连同领奖一起跳过，避免在接口不稳时反复空打）
+        if (System.currentTimeMillis() < competitionRetryAt) {
+            Log.record("爱心鸡结号❤️距上次失败未满" + (COMPETITION_RETRY_BACKOFF_MS / 60000)
+                    + "分钟，本轮跳过#下次" + TimeUtil.getCommonDate(competitionRetryAt));
+            return;
+        }
         try {
             JSONObject jo = new JSONObject(AntFarmRpcCall.enterDonationCompetitionRank());
             if (!MessageUtil.checkMemo(TAG, jo)) {
-                // 接口失败/繁忙：查不到不等于不存在，不回退公益捐蛋
-                return true;
+                Log.record("爱心鸡结号❤️入口信息查询失败：" + jo);
+                handleCompetitionFailure(jo, "入口查询");
+                return;
             }
-            if (!jo.has("competitionTaskInfo") && !jo.has("donationCompetitionLevelConfigs")
-                    && !jo.has("benevolenceScore")) {
-                Log.record("爱心鸡结号❤️无活动数据，判定当天无爱心鸡结号");
-                return false;
-            }
-            int benevolenceScore = jo.optInt("benevolenceScore");
-            Log.farm("爱心鸡结号❤️当前爱心值" + benevolenceScore);
+            Log.i("爱心鸡结号❤️当前爱心值" + jo.optInt("benevolenceScore"));
 
-            // 轮次外（周日20:00 ~ 周一00:00）跳过捐蛋/偷榜，但仍可领取已产生奖励
-            boolean inRound = isCompetitionRoundActive();
-            if (!inRound) {
-                Log.record("爱心鸡结号❤️当前不在活动轮次内(周一00:00-周日20:00)，跳过捐蛋/偷榜");
-            } else {
-                // 自动捐蛋（每轮一次，定向捐到 S2 项目）
-                if (competitionDonate.getValue()) {
-                    String roundId = jo.optString("rankRoundId");
-                    if (!roundId.isEmpty() && !Status.isCompetitionDonated(roundId)) {
-                        donateToCompetition(competitionDonateAmount.getValue());
-                        Status.markCompetitionDonated(roundId);
-                    }
-                }
-                // 偷榜定时任务（周日20:00前 N 分钟执行一次）
-                if (competitionStealRank.getValue()) {
-                    setupStealRankTask();
-                }
-            }
-
-            // 领取等级奖励
+            // 领奖与捐蛋解耦：没开自动捐蛋、不在轮次内，也照样把该领的领掉
             if (competitionReceiveTask.getValue()) {
-                if (jo.has("levelAwardInfoList")) {
-                    receiveCompetitionAward(jo);
-                }
+                receiveCompetitionAward(jo);
                 receiveCompetitionTaskAwards();
             }
+
+            // 偷榜定时任务（周日20:00前 N 分钟执行一次）
+            if (competitionStealRank.getValue() && isCompetitionRoundActive()) {
+                setupStealRankTask();
+            }
+
+            // 自动捐蛋
+            if (!competitionDonate.getValue()) {
+                return;
+            }
+            if (!isCompetitionRoundActive()) {
+                Log.record("爱心鸡结号❤️已过周活动时间窗口(周日20:00后)，本轮不捐蛋");
+                return;
+            }
+            if (Status.hasFlagToday(FLAG_COMPETITION_DONATED_TODAY)) {
+                Log.i("爱心鸡结号❤️今日 S2 捐蛋已完成，跳过");
+                return;
+            }
+            if (Status.hasFlagToday(FLAG_COMPETITION_DONATE_TRIED)) {
+                Log.i("爱心鸡结号❤️今日 S2 捐蛋已被服务端回绝，不再尝试");
+                return;
+            }
+
+            // 捐蛋项目：多信号都命中就直接让 donateToCompetition 去取，否则这里兜底探测
+            String projectId = "";
+            String projectName = "";
+            if (findCompetitionRoundId(jo).isEmpty() && !hasCompetitionActivityData(jo)) {
+                JSONObject project = queryCompetitionProject();
+                projectId = project == null ? "" : project.optString("projectId", "");
+                projectName = project == null ? "" : project.optString("projectName", "");
+                if (projectId.isEmpty()) {
+                    Log.record("爱心鸡结号❤️未确认到活跃轮次，本轮不捐蛋");
+                    return;
+                }
+                Log.record("爱心鸡结号❤️活动字段未命中，但能取到捐蛋项目，按有活动处理");
+            } else {
+                Log.i("爱心鸡结号❤️判定 S2 活跃");
+            }
+
+            donateToCompetition(projectId, projectName);
         } catch (Throwable t) {
             Log.i(TAG, "competition err:");
             Log.printStackTrace(TAG, t);
         }
-        return true;
     }
 
     /**
-     * 竞赛专属捐蛋：从竞赛首页拉取 S2 项目信息后定向捐蛋。
+     * S2 失败的统一处理：可重试 → 设退避等下一轮；服务端明确回绝 → 落标记当天不再试。
      */
-    private void donateToCompetition(int amount) {
+    private void handleCompetitionFailure(JSONObject jo, String scene) {
+        if (isCompetitionRetryable(jo)) {
+            competitionRetryAt = System.currentTimeMillis() + COMPETITION_RETRY_BACKOFF_MS;
+            Log.record("爱心鸡结号❤️" + scene + "失败(可重试)，"
+                    + (COMPETITION_RETRY_BACKOFF_MS / 60000) + "分钟后重试");
+        } else {
+            Status.flagToday(FLAG_COMPETITION_DONATE_TRIED);
+            Log.record("爱心鸡结号❤️" + scene + "被服务端回绝(不可重试)，今日不再尝试");
+        }
+    }
+
+    /**
+     * S2 失败是否值得重试。
+     * <p>默认「值得」：网络抖动、102 服务端繁忙、响应里取不到码，都按可重试处理 ——
+     * 宁可多试一次，也不要因为一次抖动把当天的爱心值机会丢掉。
+     * 只有命中 {@link #COMPETITION_NO_RETRY_CODES} 的明确回绝才判定为不值得。
+     */
+    private static boolean isCompetitionRetryable(JSONObject jo) {
+        if (jo == null) {
+            return true;
+        }
+        if (MessageUtil.isServerBusy(jo)) {
+            return true;      // 102：服务端临时繁忙，必须重试
+        }
+        if (MessageUtil.isUnsupportedRpc(jo)) {
+            return false;     // 400000040：接口不支持，重试无意义
+        }
+        String code = jo.optString("resultCode", jo.optString("code", "")).trim();
+        return code.isEmpty() || !COMPETITION_NO_RETRY_CODES.contains(code);
+    }
+
+    /**
+     * 当日剩余可捐蛋额度。
+     * <p>上限为 0（默认）表示不限，返回 {@link Integer#MAX_VALUE}。
+     * <p>额度由公益和爱心鸡结号<b>共用</b>：谁先捐谁先占，避免两个功能加起来超支。
+     */
+    private int remainingDonationQuotaToday() {
+        int limit = donationTotalLimit.getValue();
+        if (limit <= 0) {
+            return Integer.MAX_VALUE;
+        }
+        return Math.max(limit - Status.getIntFlagToday(FLAG_DONATION_TOTAL_TODAY), 0);
+    }
+
+    /**
+     * 记账：把本次捐出的蛋数累加到当日总量。
+     * <p>公益和爱心鸡结号捐成功后都要调，否则总量上限会漏算。
+     */
+    private void addDonationTotalToday(int amount) {
+        if (amount <= 0) {
+            return;
+        }
+        Status.setIntFlagToday(FLAG_DONATION_TOTAL_TODAY,
+                Status.getIntFlagToday(FLAG_DONATION_TOTAL_TODAY) + amount);
+    }
+
+    /**
+     * S2 轮次号：服务端字段名/层级不唯一，按候选路径探测，取不到返回空串。
+     */
+    private static String findCompetitionRoundId(JSONObject jo) {
+        String[] keys = {"rankRoundId", "roundId"};
+        for (String key : keys) {
+            String value = jo.optString(key, "");
+            if (!value.isEmpty()) {
+                return value;
+            }
+        }
+        for (String wrapper : new String[]{"rankRoundInfo", "competitionRankInfo", "donationCompetitionInfo"}) {
+            JSONObject sub = jo.optJSONObject(wrapper);
+            if (sub == null) {
+                continue;
+            }
+            for (String key : keys) {
+                String value = sub.optString(key, "");
+                if (!value.isEmpty()) {
+                    return value;
+                }
+            }
+        }
+        return "";
+    }
+
+    /**
+     * S2 活动数据是否存在：已知字段任一命中即算（比只看单个字段更抗字段改名/改层级）。
+     */
+    private static boolean hasCompetitionActivityData(JSONObject jo) {
+        for (String key : new String[]{"competitionTaskInfo", "donationCompetitionLevelConfigs", "benevolenceScore"}) {
+            if (jo.has(key)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 查 S2 捐蛋项目（{@code animationInfo.competitionProjectInfo}），失败返回 {@code null}。
+     */
+    private static JSONObject queryCompetitionProject() {
         try {
+            JSONObject info = new JSONObject(AntFarmRpcCall.queryCompetitionEntranceInfo());
+            JSONObject animationInfo = info.optJSONObject("animationInfo");
+            return animationInfo == null ? null : animationInfo.optJSONObject("competitionProjectInfo");
+        } catch (Throwable t) {
+            Log.i(TAG, "queryCompetitionProject err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return null;
+    }
+
+    /**
+     * 自动捐蛋到 S2 项目（爱心鸡结号）。
+     * <p>防重与重试：
+     * <ul>
+     *   <li>成功 → 落 {@link #FLAG_COMPETITION_DONATED_TODAY}，当天不再捐；</li>
+     *   <li>可重试失败（网络抖动 / 102 繁忙 / 响应没法判定）→ 只更新内存退避时间，下一轮再试；</li>
+     *   <li>服务端明确回绝 → 落 {@link #FLAG_COMPETITION_DONATE_TRIED}，当天不再尝试；</li>
+     *   <li>两次判定都没成时回读项目累计捐赠数（{@code userProjectDonationNum}），
+     *       涨了就认定其实捐上了，避免重复捐。</li>
+     * </ul>
+     * <p>「没蛋」「取不到项目」不落任何标记：下轮条件具备时自然重试。
+     * <p>这里**不会**去碰公益捐蛋 —— 两者是独立的功能。
+     */
+    private void donateToCompetition(String projectId, String projectName) {
+        try {
+            int amount = competitionDonateAmount.getValue();
             if (amount <= 0) {
                 return;
             }
             int have = (int) harvestBenevolenceScore;
             if (have <= 0) {
-                Log.record("爱心鸡结号❤️当前无蛋可捐");
+                Log.record("爱心鸡结号❤️当前无蛋可捐，下轮再看");
                 return;
             }
-            JSONObject info = new JSONObject(AntFarmRpcCall.queryCompetitionEntranceInfo());
-            String projectId = null, projectName = null;
-            JSONObject anim = info.optJSONObject("animationInfo");
-            if (anim != null) {
-                JSONObject cpi = anim.optJSONObject("competitionProjectInfo");
-                if (cpi != null) {
-                    projectId = cpi.optString("projectId");
-                    projectName = cpi.optString("projectName");
-                }
+            if (projectId.isEmpty()) {
+                JSONObject project = queryCompetitionProject();
+                projectId = project == null ? "" : project.optString("projectId", "");
+                projectName = project == null ? "" : project.optString("projectName", "");
             }
-            if (projectId == null || projectId.isEmpty()) {
-                Log.record("爱心鸡结号❤️未获取到捐蛋项目，跳过自动捐蛋");
+            if (projectId.isEmpty()) {
+                Log.record("爱心鸡结号❤️未获取到捐蛋项目，保留后续重试");
                 return;
             }
-            int n = Math.min(amount, have);
+            // 每日捐蛋总量上限（与公益共用一份额度）：剩余不足时按剩余收敛
+            int quota = remainingDonationQuotaToday();
+            if (quota <= 0) {
+                Log.record("爱心鸡结号❤️已达每日捐蛋总量上限" + donationTotalLimit.getValue() + "，本轮不捐");
+                return;
+            }
+            int n = Math.min(Math.min(amount, have), quota);
+            int beforeNum = queryProjectDonationNum(projectId);   // 捐前基准（-1=读不到）
             Log.farm("爱心鸡结号❤️自动捐蛋" + n + "枚到项目[" + projectName + "]");
-            donation(projectId, projectName, n);
+            DonateResult result = donationCompetition(projectId, projectName, n);
+            if (result == DonateResult.SUCCESS) {
+                Status.flagToday(FLAG_COMPETITION_DONATED_TODAY);
+                return;
+            }
+            // 响应没判定成功：回读累计捐赠数，涨了说明其实捐上了
+            int afterNum = queryProjectDonationNum(projectId);
+            if (beforeNum >= 0 && afterNum > beforeNum) {
+                Log.record("爱心鸡结号❤️响应未判定成功，但项目累计捐赠" + beforeNum + "→" + afterNum + "，按已捐处理");
+                Status.flagToday(FLAG_COMPETITION_DONATED_TODAY);
+                return;
+            }
+            if (result == DonateResult.GIVE_UP) {
+                Status.flagToday(FLAG_COMPETITION_DONATE_TRIED);
+                Log.record("爱心鸡结号❤️S2 捐蛋被服务端回绝(不可重试，累计" + beforeNum + "→" + afterNum + ")，今日不再尝试");
+            } else {
+                competitionRetryAt = System.currentTimeMillis() + COMPETITION_RETRY_BACKOFF_MS;
+                Log.record("爱心鸡结号❤️本轮 S2 捐蛋失败(累计" + beforeNum + "→" + afterNum + ")，"
+                        + (COMPETITION_RETRY_BACKOFF_MS / 60000) + "分钟后重试");
+            }
         } catch (Throwable t) {
             Log.i(TAG, "donateToCompetition err:");
             Log.printStackTrace(TAG, t);
@@ -1343,6 +1577,7 @@ public class AntFarm extends ModelTask {
 
     /**
      * 偷榜定时任务：计算到周日20:00前 N 分钟的时间并调度执行。
+     * <p>已经错过本周时间点时顺延到下周，避免设了个过去的时刻导致永不执行。
      */
     private void setupStealRankTask() {
         int minutes = competitionStealMinutes.getValue();
@@ -1359,11 +1594,163 @@ public class AntFarm extends ModelTask {
         target.add(java.util.Calendar.DAY_OF_MONTH, daysUntilSunday);
         long stealRankTime = target.getTimeInMillis() - (long) minutes * 60 * 1000;
         if (stealRankTime <= System.currentTimeMillis()) {
-            Log.record("爱心鸡结号🐔偷榜时间已过，跳过");
-            return;
+            target.add(java.util.Calendar.DAY_OF_MONTH, 7);
+            stealRankTime = target.getTimeInMillis() - (long) minutes * 60 * 1000;
         }
-        // 偷榜已由 stealRankS2 独立实现，这里只做调度日志
-        Log.record("爱心鸡结号🐔已调度偷榜，将在" + TimeUtil.getCommonDate(stealRankTime) + "执行");
+        String taskId = "competitionStealRank_" + minutes;
+        if (!hasChildTask(taskId)) {
+            addChildTask(new ChildModelTask(taskId, "COMPETITION_STEAL", this::stealRankS2, stealRankTime));
+            Log.record("爱心鸡结号❤️已设置偷榜[定时]在 " + TimeUtil.getCommonDate(stealRankTime) + " 执行");
+        }
+    }
+
+    /**
+     * 偷榜：读取排行，捐赠至超过当前第1名（定向捐到 S2 项目）。
+     */
+    private void stealRankS2() {
+        try {
+            JSONObject jo = new JSONObject(AntFarmRpcCall.enterDonationCompetitionRank());
+            if (!MessageUtil.checkMemo(TAG, jo)) {
+                return;
+            }
+            JSONObject home = jo.optJSONObject("donationRankHomeInfo");
+            if (home == null) {
+                Log.record("爱心鸡结号❤️偷榜：无排行信息");
+                return;
+            }
+            JSONArray list = home.optJSONArray("userDonationRankList");
+            if (list == null || list.length() == 0) {
+                Log.record("爱心鸡结号❤️偷榜：排行榜为空");
+                return;
+            }
+            String myId = UserIdMap.getCurrentUid();
+            int myDonation = 0, myRank = 0, rank1Donation = 0;
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject u = list.getJSONObject(i);
+                int rank = u.optInt("rankOrder");
+                int dn = u.optInt("donationNum");
+                if (rank == 1) {
+                    rank1Donation = dn;
+                }
+                if (myId != null && myId.equals(u.optString("userId"))) {
+                    myDonation = dn;
+                    myRank = rank;
+                }
+            }
+            if (myRank == 1) {
+                Log.record("爱心鸡结号❤️偷榜：已第1名(捐" + myDonation + ")，无需操作");
+                return;
+            }
+            int need = rank1Donation - myDonation + 1;
+            if (need <= 0) {
+                need = 1;
+            }
+            int have = (int) harvestBenevolenceScore;
+            if (have <= 0) {
+                Log.record("爱心鸡结号❤️偷榜：当前无蛋可捐");
+                return;
+            }
+            // 蛋不够就不捐：捐了也超不过第1名
+            if (have < need) {
+                Log.record("爱心鸡结号❤️偷榜⏭️跳过：手上的蛋不够超过第1名(有" + have + "需" + need
+                        + "，当前第" + myRank + "名捐" + myDonation + "，第1名捐" + rank1Donation + ")");
+                return;
+            }
+            int n = need;
+            // 上限按最终捐献量判定
+            int stealLimit = competitionStealLimit.getValue();
+            if (stealLimit > 0 && n > stealLimit) {
+                Log.record("爱心鸡结号❤️偷榜⏭️跳过：需捐" + n + "超过上限" + stealLimit
+                        + "(当前第" + myRank + "名捐" + myDonation + "，第1名捐" + rank1Donation + ")");
+                return;
+            }
+            // 每日捐蛋总量额度不够也不捐：捐了也超不过第1名，还白占公益的额度
+            int quota = remainingDonationQuotaToday();
+            if (quota < need) {
+                Log.record("爱心鸡结号❤️偷榜⏭️跳过：每日捐蛋额度不足(剩余" + quota + "需" + need
+                        + "，上限" + donationTotalLimit.getValue() + ")");
+                return;
+            }
+            // 定向捐到 S2 项目
+            JSONObject info = new JSONObject(AntFarmRpcCall.queryCompetitionEntranceInfo());
+            String projectId = null, projectName = null;
+            JSONObject anim = info.optJSONObject("animationInfo");
+            if (anim != null) {
+                JSONObject cpi = anim.optJSONObject("competitionProjectInfo");
+                if (cpi != null) {
+                    projectId = cpi.optString("projectId");
+                    projectName = cpi.optString("projectName");
+                }
+            }
+            if (projectId == null || projectId.isEmpty()) {
+                Log.record("爱心鸡结号❤️偷榜：未获取到捐蛋项目，跳过（无法定向到 S2）");
+                return;
+            }
+            Log.i("爱心鸡结号❤️偷榜：当前第" + myRank + "名捐" + myDonation + "，第1名捐" + rank1Donation + "，尝试再捐" + n);
+            donationCompetition(projectId, projectName, n);
+        } catch (Throwable t) {
+            Log.i(TAG, "stealRankS2 err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /** S2 定向捐蛋的结果分类 */
+    private enum DonateResult {
+        /** 捐成功 */
+        SUCCESS,
+        /** 临时性失败（网络 / 繁忙 / 判定不了），过一会儿值得重试 */
+        RETRY_LATER,
+        /** 服务端明确回绝（活动不可用 / 参数非法 / 业务限制），当天别再试了 */
+        GIVE_UP
+    }
+
+    /**
+     * S2 定向捐蛋：使用 projectId（抓包确认字段），成功后刷新爱心蛋余额。
+     *
+     * @return 成功 / 可重试失败 / 服务端明确回绝
+     */
+    private DonateResult donationCompetition(String projectId, String projectName, int donationAmount) {
+        try {
+            JSONObject jo = new JSONObject(AntFarmRpcCall.donationCompetition(projectId, donationAmount));
+            if (!MessageUtil.checkMemo(TAG, jo)) {
+                return isCompetitionRetryable(jo) ? DonateResult.RETRY_LATER : DonateResult.GIVE_UP;
+            }
+            // 只用响应刷新余额；缺字段时保留原值，不做本地估算（估算会与服务端漂移叠加）
+            try {
+                JSONObject d = jo.getJSONObject("donation");
+                harvestBenevolenceScore = d.getDouble("harvestBenevolenceScore");
+            } catch (Throwable ignore) {
+                Log.record("爱心鸡结号❤️捐蛋响应缺少 donation 字段，余额暂不更新");
+            }
+            Log.farm("爱心鸡结号❤️[捐爱心蛋:" + projectName + "]捐赠" + donationAmount + "颗爱心蛋");
+            // 计入每日捐蛋总量，供「每日捐蛋 | 总量上限」核算（与公益共用一份额度）
+            addDonationTotalToday(donationAmount);
+            return DonateResult.SUCCESS;
+        } catch (Throwable t) {
+            // 网络异常 / 响应不是合法 JSON：都是临时性的，按可重试处理
+            Log.i(TAG, "donationCompetition err:");
+            Log.printStackTrace(TAG, t);
+            return DonateResult.RETRY_LATER;
+        }
+    }
+
+    /**
+     * 读项目累计捐赠数（{@code userProjectDonationNum}）。
+     * <p>与 {@link #getProjectDonationNum} 的区别：查询失败 / 字段缺失返回 {@code -1}，
+     * 把「读不到」与「真的是 0 次」区分开（读不到时不做"是否已捐上"的推断）。
+     */
+    private int queryProjectDonationNum(String projectId) {
+        try {
+            JSONObject jo = new JSONObject(AntFarmRpcCall.getProjectInfo(projectId));
+            if (!MessageUtil.checkMemo(TAG, jo)) {
+                return -1;
+            }
+            return jo.optInt("userProjectDonationNum", -1);
+        } catch (Throwable t) {
+            Log.i(TAG, "queryProjectDonationNum err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return -1;
     }
 
     private void loveChickenTaskList() {
@@ -1499,7 +1886,7 @@ public class AntFarm extends ModelTask {
     }
 
     private Boolean canDonationToday() {
-        if (Status.hasFlagToday("farm::donation")) {
+        if (Status.hasFlagToday(FLAG_CHARITY_DONATION_DONE)) {
             return false;
         }
         try {
@@ -1516,7 +1903,7 @@ public class AntFarm extends ModelTask {
             if (TimeUtil.isLessThanNowOfDays(charityTime)) {
                 return true;
             }
-            Status.flagToday("farm::donation");
+            Status.flagToday(FLAG_CHARITY_DONATION_DONE);
         } catch (Throwable t) {
             Log.i(TAG, "canDonationToday err:");
             Log.printStackTrace(TAG, t);
