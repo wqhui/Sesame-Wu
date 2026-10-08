@@ -183,5 +183,36 @@ public class UserIdMap {
     public synchronized static boolean saveSelf(UserEntity userEntity) {
         return FileUtil.write2File(JsonUtil.toJsonString(userEntity), FileUtil.getSelfIdFile(userEntity.getUserId()));
     }
-    
+
+    /**
+     * 取账号的展示名（备注名优先，其次昵称）—— 只返回名称本身，不带账号/手机号。
+     * <p>典型用途是导出文件名：{@code [小明]-config_v2.json}。
+     * <p>直接读该账号的 self.json，<b>不动全局 userMap</b> ——
+     * {@link #loadSelf(String)} 会先 {@code userMap.clear()} 且只装入一个账号，
+     * 在导出这类场景调用它会把别的账号挤掉，导致取到 null 而退回 UID。
+     * <p>取不到名称时退回 {@code userId}；{@code userId} 也为空时返回「默认」。
+     */
+    public static String getDisplayName(String userId) {
+        if (userId == null || userId.trim().isEmpty()) {
+            return "默认";
+        }
+        try {
+            String body = FileUtil.readFromFile(FileUtil.getSelfIdFile(userId));
+            if (!body.isEmpty()) {
+                UserEntity.UserDto dto = JsonUtil.parseObject(body, new TypeReference<UserEntity.UserDto>() {
+                });
+                UserEntity entity = dto == null ? null : dto.toEntity();
+                if (entity != null) {
+                    String name = entity.getShowName();
+                    if (name != null && !name.trim().isEmpty()) {
+                        return name.trim();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.printStackTrace(e);
+        }
+        return userId;
+    }
+
 }

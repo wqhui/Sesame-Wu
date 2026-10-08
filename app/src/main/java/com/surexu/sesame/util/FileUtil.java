@@ -722,6 +722,60 @@ public class FileUtil {
         return wuaFile;
     }
     
+    /** 净化后的文件名片段最大长度：够区分账号，又不会撑爆文件系统 */
+    private static final int SAFE_FILE_NAME_PART_MAX = 32;
+
+    /**
+     * 把任意文本净化为可安全用作文件名片段的字符串。
+     * <p>文件系统非法字符（{@code / \ : * ? " < > |}）、不可见控制字符与空白
+     * 统一折叠成单个下划线（连续多个只保留一个），并去掉首尾下划线。
+     * <p>例：{@code "夜/风"} → {@code "夜_风"}；{@code "大 熊"} → {@code "大_熊"}。
+     * <p>长度限制 {@value #SAFE_FILE_NAME_PART_MAX}（不会把 emoji 的代理对截成半个字符）；
+     * 净化后为空时返回 {@code "default"}，保证调用方拼出来的文件名始终合法。
+     */
+    public static String sanitizeFileNamePart(String raw) {
+        if (raw == null) {
+            return "default";
+        }
+        StringBuilder sb = new StringBuilder(raw.length());
+        boolean lastWasSeparator = false;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?'
+                    || c == '"' || c == '<' || c == '>' || c == '|' || c < 0x20 || c == 0x7F
+                    || Character.isWhitespace(c)) {
+                if (!lastWasSeparator) {
+                    sb.append('_');
+                    lastWasSeparator = true;
+                }
+            } else {
+                sb.append(c);
+                lastWasSeparator = false;
+            }
+        }
+        // 去掉首尾分隔符
+        int start = 0;
+        int end = sb.length();
+        while (start < end && sb.charAt(start) == '_') {
+            start++;
+        }
+        while (end > start && sb.charAt(end - 1) == '_') {
+            end--;
+        }
+        String safe = sb.substring(start, end);
+        if (safe.isEmpty()) {
+            return "default";
+        }
+        if (safe.length() > SAFE_FILE_NAME_PART_MAX) {
+            int cut = SAFE_FILE_NAME_PART_MAX;
+            if (Character.isHighSurrogate(safe.charAt(cut - 1))) {
+                cut--;   // 别把代理对截成半个字符
+            }
+            safe = safe.substring(0, cut);
+        }
+        return safe;
+    }
+
     public static File exportFile(File file) {
         String exportDirStr = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS) + File.separator + CONFIG_DIRECTORY_NAME;
         File exportDir = new File(exportDirStr);

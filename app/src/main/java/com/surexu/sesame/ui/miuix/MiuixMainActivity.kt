@@ -921,7 +921,11 @@ fun ConfigTab(activity: MiuixMainActivity) {
                     modifier = Modifier.rotate(180f)
                 )
             }
-            IconButton(onClick = { exportLauncher.launch("[" + (selectedUserId ?: "默认") + "]-config_v2.json") }) {
+            IconButton(onClick = {
+                // 文件名用账号昵称（取不到才退回 UID）；昵称可能含非法字符，先净化
+                val tag = FileUtil.sanitizeFileNamePart(UserIdMap.getDisplayName(selectedUserId))
+                exportLauncher.launch("[" + tag + "]-config_v2.json")
+            }) {
                 Icon(
                     imageVector = Icons.Filled.Upload,
                     contentDescription = "导出",

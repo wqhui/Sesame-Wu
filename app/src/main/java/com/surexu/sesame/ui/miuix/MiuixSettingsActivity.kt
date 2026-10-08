@@ -56,10 +56,12 @@ import com.surexu.sesame.data.modelFieldExt.SelectModelField
 import com.surexu.sesame.data.modelFieldExt.SelectOneModelField
 import com.surexu.sesame.entity.IdAndName
 import com.surexu.sesame.entity.KVNode
+import com.surexu.sesame.util.FileUtil
 import com.surexu.sesame.util.Log
 import com.surexu.sesame.util.PermissionUtil
 import com.surexu.sesame.util.StringUtil
 import com.surexu.sesame.util.ToastUtil
+import com.surexu.sesame.util.idMap.UserIdMap
 import kotlin.math.roundToInt
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -259,7 +261,11 @@ fun SettingsContent(activity: MiuixSettingsActivity, userId: String?) {
                 title = "配置设置",
                 onBack = { activity.goBack() },
                 onImport = { importLauncher.launch("*/*") },
-                onExport = { exportLauncher.launch("[" + (userId ?: "默认") + "]-config_v2.json") },
+                onExport = {
+                    // 文件名用账号昵称（取不到才退回 UID）；昵称可能含非法字符，先净化
+                    val tag = FileUtil.sanitizeFileNamePart(UserIdMap.getDisplayName(userId))
+                    exportLauncher.launch("[" + tag + "]-config_v2.json")
+                },
                 onClear = { showDeleteDialog = true }
             )
         },
