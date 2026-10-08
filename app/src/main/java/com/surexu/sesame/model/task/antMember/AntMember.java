@@ -71,6 +71,7 @@ public class AntMember extends ModelTask {
     private BooleanModelField AutoAntMemberTaskList;
     private SelectModelField AntMemberTaskList;
     private BooleanModelField memberSign;
+    private BooleanModelField memberSignPageTask;              // 会员积分 | 签到页任务
     private BooleanModelField memberPointExchangeBenefit;
     private SelectModelField memberPointExchangeBenefitList;
     
@@ -106,6 +107,9 @@ public class AntMember extends ModelTask {
         modelFields.addField(AutoAntMemberTaskList = new BooleanModelField("AutoAntMemberTaskList", "会员任务 | 自动黑白名单", true));
         modelFields.addField(AntMemberTaskList = new SelectModelField("AntMemberTaskList", "会员任务 | 黑名单列表", new LinkedHashSet<>(), AlipayAntMemberTaskList::getList));
         modelFields.addField(memberSign = new BooleanModelField("memberSign", "会员签到", false));
+        // 签到页任务：默认开，对齐 Sesame-M 的既有行为（M 一直是启用状态）；
+        // 独立成开关是为了万一它触发风控时能单独关掉，不影响「会员任务」的其它分支
+        modelFields.addField(memberSignPageTask = new BooleanModelField("memberSignPageTask", "会员积分 | 签到页任务", true));
         modelFields.addField(memberPointExchangeBenefit = new BooleanModelField("memberPointExchangeBenefit", "会员积分 | 兑换权益", false));
         modelFields.addField(memberPointExchangeBenefitList = new SelectModelField("memberPointExchangeBenefitList", "会员积分 | 权益列表", new LinkedHashSet<>(), MemberBenefit::getList));
         modelFields.addField(collectSesame = new BooleanModelField("collectSesame", "芝麻粒 | 领取", false));
@@ -151,8 +155,14 @@ public class AntMember extends ModelTask {
             
             if (AntMemberTask.getValue()) {
                 queryPointCert(1, 8);
-                //signPageTaskList();
+                // 签到页任务（原先是注释状态，对齐 Sesame-M 重新启用）
+                if (memberSignPageTask.getValue()) {
+                    signPageTaskList();
+                }
+                // 签到广告任务（sourceBusiness=signInAd）
                 queryAllStatusTaskList();
+                // 会员任务阶段奖励：任务推进到阶段后单独可领，和上面的「领积分」是两条路
+                collectMemberTaskProcessAwards();
             }
             
             if (memberPointExchangeBenefit.getValue()) {
@@ -483,13 +493,17 @@ public class AntMember extends ModelTask {
     }
     
     /**
-     * 做任务赚积分
+     * 签到页任务（会员积分）：拉取签到页任务列表并逐类推进。
+     * <p>BROWSE 类走 {@link #doBrowseTask(JSONArray)}，其余类型交给
+     * {@link ExtensionsHandle#handleAlphaRequest} 的 doMoreTask 分支；
+     * 只要这一轮有推进就重新拉一次，直到没有可做的为止。
+     * <p>RPC 之间用 {@link #randomSleep(int, int)} 拉开随机间隔，模拟人工节奏、降低风控。
      */
     private void signPageTaskList() {
         try {
             do {
                 JSONObject jo = new JSONObject(AntMemberRpcCall.signPageTaskList());
-                TimeUtil.sleep(500);
+                randomSleep(1200, 2200);
                 boolean doubleCheck = false;
                 if (!MessageUtil.checkResultCode(TAG + " signPageTaskList", jo)) {
                     return;
@@ -503,10 +517,12 @@ public class AntMember extends ModelTask {
                     JSONArray taskList = jo.getJSONArray("taskList");
                     String type = jo.getString("type");
                     if (Objects.equals("BROWSE", type)) {
+                        // doBrowseTask 内部已按 applyTask / executeTask 逐步随机延迟
                         doubleCheck = doBrowseTask(taskList);
                     }
                     else {
                         ExtensionsHandle.handleAlphaRequest("antMember", "doMoreTask", jo);
+                        randomSleep(1500, 3000);
                     }
                 }
                 if (doubleCheck) {
@@ -523,12 +539,95 @@ public class AntMember extends ModelTask {
     }
     
     /**
-     * 查询所有状态任务列表
+     * 会员任务阶段奖励领取。
+     * <p>会员任务推进到某个阶段后，服务端会在 {@code availableTaskProcessList} 下发独立的
+     * 阶段奖励条目（{@code stageProcessList[].stageStatus == "COMPLETE"}），
+     * 这些奖励<b>不会</b>被 {@code queryPointCert} 的「一键领积分」覆盖，需要单独调 award 接口。
+     * <p>同一 ({@code taskProcessId}, {@code awardRelatedOutBizNo}) 只领一次（服务端在
+     * {@code retryable=false} 时会拒绝重复请求，去重能省掉这些噪音）。
+     * <p>每领一项之间随机等待，模拟人工节奏。
+     */
+    private void collectMemberTaskProcessAwards() {
+        try {
+            JSONObject jo = new JSONObject(AntMemberRpcCall.queryMemberTaskProcessList());
+            randomSleep(800, 1800);
+            if (!MessageUtil.checkResultCode(TAG, jo)) {
+                return;
+            }
+            JSONArray taskProcessList = jo.optJSONArray("availableTaskProcessList");
+            if (taskProcessList == null || taskProcessList.length() == 0) {
+                return;
+            }
+            Set<String> seen = new HashSet<>();
+            int claimedCount = 0;
+            for (int i = 0; i < taskProcessList.length(); i++) {
+                JSONObject taskProcess = taskProcessList.optJSONObject(i);
+                if (taskProcess == null) {
+                    continue;
+                }
+                String taskProcessId = taskProcess.optString("taskProcessId", "");
+                if (taskProcessId.isEmpty()) {
+                    continue;
+                }
+                JSONObject taskConfig = taskProcess.optJSONObject("taskConfig");
+                String title = taskConfig != null ? taskConfig.optString("title", "") : "";
+                if (title.isEmpty()) {
+                    title = taskProcess.optString("title", "会员任务");
+                }
+                JSONArray stageProcessList = taskProcess.optJSONArray("stageProcessList");
+                if (stageProcessList == null) {
+                    continue;
+                }
+                for (int k = 0; k < stageProcessList.length(); k++) {
+                    JSONObject stage = stageProcessList.optJSONObject(k);
+                    if (stage == null) {
+                        continue;
+                    }
+                    if (!"COMPLETE".equalsIgnoreCase(stage.optString("stageStatus", ""))) {
+                        continue;
+                    }
+                    String awardOutBizNo = stage.optString("awardRelatedOutBizNo", "");
+                    if (awardOutBizNo.isEmpty()) {
+                        continue;
+                    }
+                    if (!seen.add(taskProcessId + "#" + awardOutBizNo)) {
+                        continue;
+                    }
+                    int stageIndex = stage.optInt("stageIndex", k + 1);
+                    int awardPoint = stage.optInt("awardPoint", 0);
+                    JSONObject awardJo = new JSONObject(
+                            AntMemberRpcCall.awardMemberTaskProcess(awardOutBizNo, taskProcessId));
+                    randomSleep(800, 1800);
+                    if (!MessageUtil.checkResultCode(TAG, awardJo)) {
+                        Log.record("会员任务[" + title + "]#阶段奖励领取失败");
+                        continue;
+                    }
+                    claimedCount++;
+                    String stageSuffix = stageIndex > 0 ? "-阶段" + stageIndex : "";
+                    if (awardPoint > 0) {
+                        Log.other("会员任务🎖️[" + title + stageSuffix + "]#获得[" + awardPoint + "积分]");
+                    } else {
+                        Log.other("会员任务🎖️[" + title + stageSuffix + "]#领取阶段奖励");
+                    }
+                }
+            }
+            if (claimedCount > 0) {
+                Log.record("会员任务[阶段奖励]#本次领取" + claimedCount + "项");
+            }
+        }
+        catch (Throwable t) {
+            Log.i(TAG, "collectMemberTaskProcessAwards err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /**
+     * 查询所有状态任务列表（签到广告任务，sourceBusiness=signInAd）
      */
     private void queryAllStatusTaskList() {
         try {
             JSONObject jo = new JSONObject(AntMemberRpcCall.queryAllStatusTaskList());
-            TimeUtil.sleep(500);
+            randomSleep(1200, 2200);
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return;
             }

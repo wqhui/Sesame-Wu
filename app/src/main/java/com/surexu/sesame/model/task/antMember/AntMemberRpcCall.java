@@ -55,6 +55,54 @@ public class AntMemberRpcCall {
     }
 
     /**
+     * 会员任务阶段奖励列表（relatedChannel=MEMBERPOINT）。
+     * <p>响应里的 {@code availableTaskProcessList[].stageProcessList[]} 带
+     * {@code stageStatus} 与 {@code awardRelatedOutBizNo}，后者是领奖所需的凭证。
+     */
+    public static String queryMemberTaskProcessList() {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("relatedChannel", "MEMBERPOINT");
+            body.put("sourcePassMap", memberSourcePassMap());
+        } catch (Throwable ignored) {
+        }
+        return ApplicationHook.requestString(
+                "com.alipay.alipaymember.biz.rpc.membertask.h5.queryTaskList",
+                new JSONArray().put(body).toString());
+    }
+
+    /**
+     * 领取会员任务阶段奖励。
+     *
+     * @param awardRelatedOutBizNo 阶段奖励凭证，取自 stageProcessList[].awardRelatedOutBizNo
+     * @param taskProcessId        所属任务流程 id
+     */
+    public static String awardMemberTaskProcess(String awardRelatedOutBizNo, String taskProcessId) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("awardRelatedOutBizNo", awardRelatedOutBizNo);
+            body.put("taskProcessId", taskProcessId);
+            body.put("sourcePassMap", memberSourcePassMap());
+        } catch (Throwable ignored) {
+        }
+        return ApplicationHook.requestString(
+                "com.alipay.alipaymember.biz.rpc.membertask.h5.award",
+                new JSONArray().put(body).toString());
+    }
+
+    /** 会员链路统一的 sourcePassMap（对齐 Sesame-AG 的 buildMemberSourcePassMap） */
+    private static JSONObject memberSourcePassMap() {
+        JSONObject sourcePassMap = new JSONObject();
+        try {
+            sourcePassMap.put("innerSource", "");
+            sourcePassMap.put("source", "mytab");
+            sourcePassMap.put("unid", "");
+        } catch (Throwable ignored) {
+        }
+        return sourcePassMap;
+    }
+
+    /**
      * 黄金票收取
      *
      * @param str signInfo
