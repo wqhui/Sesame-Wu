@@ -22,11 +22,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.state.ToggleableState
@@ -468,30 +469,26 @@ fun FieldItem(field: ModelField<*>, onSave: () -> Unit) {
             val max = if (maxOf(rawMin, rawMax) <= min) min + 1f else maxOf(rawMin, rawMax)
             var value by remember { mutableFloatStateOf((field.value as? Int ?: 0).toFloat().coerceIn(min, max)) }
             var showDialog by remember { mutableStateOf(false) }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) {
-                    SliderPreference(
-                        title = field.name ?: "",
-                        summary = field.description,
-                        value = value.coerceIn(min, max),
-                        valueRange = min..max,
-                        valueText = value.roundToInt().toString(),
-                        onValueChange = { value = it.coerceIn(min, max) },
-                        onValueChangeFinished = {
-                            field.setObjectValue(value.roundToInt())
-                            onSave()
-                        }
-                    )
-                }
-                // 滑块拖不准时的出口：右侧编辑图标 → 精确输入
-                IconButton(onClick = { showDialog = true }) {
-                    Icon(
-                        imageVector = Icons.Filled.Edit,
-                        contentDescription = "精确输入",
-                        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary
-                    )
-                }
-            }
+            // 弹窗打开期间保持按下态，避免松手后高亮立刻消失（对齐官方 ArrowSection 示例）
+            var dialogHoldDown by remember { mutableStateOf(false) }
+            SliderPreference(
+                title = field.name ?: "",
+                summary = field.description,
+                value = value.coerceIn(min, max),
+                valueRange = min..max,
+                valueText = value.roundToInt().toString(),
+                onValueChange = { value = it.coerceIn(min, max) },
+                onValueChangeFinished = {
+                    field.setObjectValue(value.roundToInt())
+                    onSave()
+                },
+                // 传了 onClick 组件会自己显示尾部箭头；点击整行（标题/摘要区）开精确输入
+                onClick = {
+                    showDialog = true
+                    dialogHoldDown = true
+                },
+                holdDownState = dialogHoldDown
+            )
             if (showDialog) {
                 EditDialog(
                     title = field.name ?: "",
@@ -511,9 +508,13 @@ fun FieldItem(field: ModelField<*>, onSave: () -> Unit) {
                             value = applied.toFloat()
                             onSave()
                             showDialog = false
+                            dialogHoldDown = false
                         }
                     },
-                    onDismiss = { showDialog = false }
+                    onDismiss = {
+                        showDialog = false
+                        dialogHoldDown = false
+                    }
                 )
             }
         }
@@ -748,10 +749,15 @@ fun EditDialog(
                 TextField(
                     value = text,
                     onValueChange = { input ->
-                        // 数字字段只收数字：否则 toIntOrNull 解析失败会静默丢弃整次输入
-                        text = if (numeric) input.filter { it.isDigit() } else input
+                        // 数字字段只收数字并限 9 位：既挡掉非法字符，也避免超长输入让保存时
+                        // toIntOrNull 溢出返回 null、点了保存却没反应（9 位最大 999999999，不会溢出）
+                        text = if (numeric) input.filter { it.isDigit() }.take(9) else input
                     },
                     label = title,
+                    // 数字字段直接弹数字键盘，省去在中文输入法里再切一次数字页；
+                    // 非数字字段传 Default，与不传等价，行为不变
+                    keyboardOptions = if (numeric) KeyboardOptions(keyboardType = KeyboardType.Number)
+                                      else KeyboardOptions.Default,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
