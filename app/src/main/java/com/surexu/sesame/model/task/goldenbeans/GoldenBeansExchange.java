@@ -26,8 +26,10 @@ public final class GoldenBeansExchange {
 
     /**
      * 肥料换豆（农场入口）。
+     * <p>上限与记账口径都是<b>金豆数</b>（不是肥料数）。农场入口费:豆=1:1，
+     * 所以数值上与肥料一致，但配置项名称按金豆表述以免误解。
      *
-     * @param dailyLimit 单日消耗肥料上限，0 表示不限
+     * @param dailyLimit 单日可兑换金豆数上限，0 表示不限
      */
     public static void exchangeManure(int interval, int dailyLimit) {
         try {
