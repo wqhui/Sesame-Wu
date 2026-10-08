@@ -26,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -460,18 +461,55 @@ fun FieldItem(field: ModelField<*>, onSave: () -> Unit) {
             val min = minOf(rawMin, rawMax)
             val max = if (maxOf(rawMin, rawMax) <= min) min + 1f else maxOf(rawMin, rawMax)
             var value by remember { mutableFloatStateOf((field.value as? Int ?: 0).toFloat().coerceIn(min, max)) }
-            SliderPreference(
-                title = field.name ?: "",
-                summary = field.description,
-                value = value.coerceIn(min, max),
-                valueRange = min..max,
-                valueText = value.roundToInt().toString(),
-                onValueChange = { value = it.coerceIn(min, max) },
-                onValueChangeFinished = {
-                    field.setObjectValue(value.roundToInt())
-                    onSave()
+            var showDialog by remember { mutableStateOf(false) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    SliderPreference(
+                        title = field.name ?: "",
+                        summary = field.description,
+                        value = value.coerceIn(min, max),
+                        valueRange = min..max,
+                        valueText = value.roundToInt().toString(),
+                        onValueChange = { value = it.coerceIn(min, max) },
+                        onValueChangeFinished = {
+                            field.setObjectValue(value.roundToInt())
+                            onSave()
+                        }
+                    )
                 }
-            )
+                // 滑块拖不准时的出口：右侧编辑图标 → 精确输入
+                IconButton(onClick = { showDialog = true }) {
+                    Icon(
+                        imageVector = Icons.Filled.Edit,
+                        contentDescription = "精确输入",
+                        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary
+                    )
+                }
+            }
+            if (showDialog) {
+                EditDialog(
+                    title = field.name ?: "",
+                    initial = value.roundToInt().toString(),
+                    multiline = false,
+                    numeric = true,
+                    onConfirm = { input ->
+                        val parsed = input.trim().toIntOrNull()
+                        if (parsed == null) {
+                            // 已过滤成纯数字，唯一可能是空串：不关弹窗，让用户接着填
+                            showDialog = true
+                        } else {
+                            // 与滑块同一量程：超出 [min, max] 的一律收敛，避免刻度与存盘值错位
+                            val applied = parsed.coerceIn(min.toInt(), max.toInt())
+                            field.setObjectValue(applied)
+                            // 同步本地状态，让滑块立刻反映弹窗改动的值
+                            value = applied.toFloat()
+                            onSave()
+                            showDialog = false
+                        }
+                    },
+                    onDismiss = { showDialog = false }
+                )
+            }
         }
 
         "STRING", "TEXT" -> {
@@ -687,7 +725,8 @@ fun EditDialog(
     initial: String,
     multiline: Boolean,
     onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    numeric: Boolean = false
 ) {
     var text by remember { mutableStateOf(initial) }
     Dialog(onDismissRequest = onDismiss) {
@@ -702,7 +741,10 @@ fun EditDialog(
                 Spacer(Modifier.height(8.dp))
                 TextField(
                     value = text,
-                    onValueChange = { text = it },
+                    onValueChange = { input ->
+                        // 数字字段只收数字：否则 toIntOrNull 解析失败会静默丢弃整次输入
+                        text = if (numeric) input.filter { it.isDigit() } else input
+                    },
                     label = title,
                     modifier = Modifier.fillMaxWidth()
                 )
