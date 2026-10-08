@@ -861,6 +861,8 @@ fun SelectionDialog(
                                 }
                             }
                         )
+                        // 复选框与标签之间留出间距（Miuix 的 Checkbox 自身没有右侧内边距）
+                        Spacer(Modifier.width(8.dp))
                         Text(
                             "全选",
                             color = MiuixTheme.colorScheme.onBackground,
