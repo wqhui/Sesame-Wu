@@ -14,17 +14,15 @@ import com.surexu.sesame.util.Log;
 
 public final class ViewAppInfo {
 
-    @Getter
+    // 下面 4 个字段的 getter 都是手写的（见本文件后半），
+    // 故不再加 @Getter —— 否则 Lombok 会报「A method with that name already exists」
     private static Context context = null;
 
-    @Getter
     private static String appTitle = "";
 
-    @Getter
     private static String appVersion = "";
 
     @Setter
-    @Getter
     private static RunType runType = RunType.DISABLE;
 
     private static Runnable runTypeListener = null;

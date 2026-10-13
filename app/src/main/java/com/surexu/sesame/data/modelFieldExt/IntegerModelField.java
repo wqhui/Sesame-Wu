@@ -15,7 +15,8 @@ import com.surexu.sesame.R;
 import com.surexu.sesame.data.ModelField;
 import com.surexu.sesame.util.Log;
 
-@Getter
+// 本类只有 minLimit / maxLimit 两个字段，且两者的 getter 都手写在下方，
+// 故不加类级 @Getter（否则 Lombok 报「A method with that name already exists」）
 public class IntegerModelField extends ModelField<Integer> {
 
     protected final Integer minLimit;
