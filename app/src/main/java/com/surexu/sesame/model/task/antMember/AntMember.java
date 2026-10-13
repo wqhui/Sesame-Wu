@@ -2248,7 +2248,13 @@ public class AntMember extends ModelTask {
                     String joinRes = AntMemberRpcCall.joinSesameTask(templateId);
                     JSONObject joinJo = new JSONObject(joinRes);
                     if (!checkAlchemyRes(joinJo)) {
-                        Log.error("芝麻炼金⚗攒粒任务 join 失败: " + title + " - " + joinJo.optString("resultView", joinRes));
+                        if (autoBlacklistAlchemyTask(templateId, title, joinJo)) {
+                            // 服务端按错误码明确判定做不了：已落盘跳过，不打 ERROR
+                        } else {
+                            // 注意：PROMISE_HAS_PROCESSING_TEMPLATE（上轮留下的进行中记录）属可恢复状态，
+                            // 不在错误码白名单内，不会拉黑，下轮会重试
+                            Log.error("芝麻炼金⚗攒粒任务 join 失败: " + title + " - " + joinJo.optString("resultView", joinRes));
+                        }
                         continue;
                     }
                     JSONObject joinData = joinJo.optJSONObject("data");
