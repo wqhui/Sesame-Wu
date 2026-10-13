@@ -98,6 +98,19 @@ public class AntOrchardRpcCall {
         }
     }
 
+    /**
+     * 农场抽抽乐-完成任务（互备腿）。
+     * <p>首选接口 {@code com.alipay.antieptask.finishTaskantorchard} 对本场景常回 400000040，
+     * 换另一种调用格式 {@code com.alipay.antiep.finishTask}（NORMAL + userId + version）再试。
+     */
+    public static String finishDrawTaskV2(String sceneCode, String taskType, String userId) {
+        String outBizNo = userId + System.currentTimeMillis();
+        String requestData = "[{\"outBizNo\":\"" + outBizNo + "\",\"requestType\":\"NORMAL\",\"sceneCode\":\"" + sceneCode
+                + "\",\"source\":\"antorchard\",\"taskType\":\"" + taskType + "\",\"userId\":\"" + userId
+                + "\",\"version\":\"20250812.01\"}]";
+        return ApplicationHook.requestString("com.alipay.antiep.finishTask", requestData);
+    }
+
     public static String receiveDrawTaskAward(String sceneCode, String taskType) {
         try {
             JSONObject args = new JSONObject();

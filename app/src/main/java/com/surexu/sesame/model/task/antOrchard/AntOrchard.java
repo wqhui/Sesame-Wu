@@ -315,6 +315,14 @@ public class AntOrchard extends ModelTask {
                     JSONObject fin = new JSONObject(AntOrchardRpcCall.finishDrawTask(sceneCode, taskType));
                     if (MessageUtil.checkResultCode(TAG, fin)) {
                         Log.farm("农场抽抽乐⚗任务完成[" + title + "]");
+                    } else {
+                        // 互备腿：首选接口对本场景常回 400000040，换另一种调用格式再试
+                        JSONObject alt = new JSONObject(AntOrchardRpcCall.finishDrawTaskV2(sceneCode, taskType, userId));
+                        if (MessageUtil.checkResultCode(TAG, alt)) {
+                            Log.farm("农场抽抽乐⚗任务完成[" + title + "]#备用接口");
+                        } else {
+                            Log.record("农场抽抽乐⚗任务完成失败[" + title + "]#" + alt);
+                        }
                     }
                 }
             }
