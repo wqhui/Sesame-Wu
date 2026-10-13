@@ -356,15 +356,21 @@ public class AntMember extends ModelTask {
             //初始化MemberCreditSesameTaskListMap
             MemberCreditSesameTaskListMap.load();
             blackList = new HashSet<>();
-            blackList.add("去淘金币逛一逛");
-            blackList.add("坚持逛裹酱领福利");
-            blackList.add("坚持签到领奖励");
-            blackList.add("坚持看直播领福利");
-            blackList.add("去雇佣芝麻大表鸽");
-            blackList.add("完成旧衣回收得现金");
+            // 芝麻粒任务改走 taskFeedback 后，服务端**不校验是否真的参与过**，
+            // 未报名的「去玩xx」一次即 success ⇒ 游戏/浏览/签到/组件/施肥类不再预置拉黑，
+            // 全部交给任务循环自动完成。仍预置拉黑的只剩**真实交易/履约类**
+            // （下单/租赁/订酒店/回收/雇佣/付钱/查车），这类没真做就申报"完成"属虚假履约，有风控风险
+            blackList.add("用额度免押金下单");
+            blackList.add("去租赁下单");
+            blackList.add("芝麻租赁下单得芝麻粒");
+            blackList.add("去飞猪订酒店");
             blackList.add("0.1元起租会员攒粒");
-            blackList.add("每日施肥领水果");
-            blackList.add("去玩小游戏");
+            blackList.add("9.9元抢租3天大疆");
+            blackList.add("1分起囤神券茶咖美食");
+            blackList.add("完成旧衣回收得现金");
+            blackList.add("去雇佣芝麻大表鸽");
+            blackList.add("送你10.6元支付红包");
+            blackList.add("一键查询爱车估值");
             // 可继续添加更多黑名单任务
             
             whiteList = new HashSet<>();// 从黑名单中移除该任务
@@ -1632,33 +1638,19 @@ public class AntMember extends ModelTask {
                 int needCompleteNum = toCompleteVO.has("needCompleteNum") ? toCompleteVO.getInt("needCompleteNum") : 1;
                 int completedNum = toCompleteVO.optInt("completedNum", 0);
                 String s = null;
-                String recordId = null;
                 JSONObject responseObj = null;
-                
-                if (!toCompleteVO.has("todayFinish")) {
-                    // 领取任务
-                    s = AntMemberRpcCall.joinSesameTask(taskTemplateId);
-                    responseObj = new JSONObject(s);
-                    //检查并标记黑名单任务
-                    MessageUtil.checkResultCodeAndMarkTaskBlackList("MemberCreditSesameTaskList", taskTitle, responseObj);
-                    TimeUtil.sleep(200);
-                    if (!MessageUtil.checkResultCode(TAG, responseObj)) {
-                        Log.error(TAG + "芝麻信用💳领取任务[" + taskTitle + "]失败#" + s);
-                        continue;
-                    }
-                    recordId = responseObj.getJSONObject("data").getString("recordId");
-                }
-                else {
-                    if (!toCompleteVO.has("recordId")) {
-                        Log.error(TAG + "芝麻信用💳任务[" + taskTitle + "未获取到]recordId#" + toCompleteVO);
-                        continue;
-                    }
-                    recordId = toCompleteVO.getString("recordId");
-                }
-                
-                // 完成任务
+
+                // 官方走 CreditAccumulateStrategyRpcManager.taskFeedback（actionType=TO_COMPLETE
+                // + bizType=LIFE_RECORD + sceneCode=zml + version=new），全程不发
+                // PromiseRpcManager.joinActivity/pushActivity。原先的 join（领取）+ push（完成）链
+                // 服务端会拒——「存在进行中的生活记录」（PROMISE_HAS_PROCESSING_TEMPLATE）/
+                // 「参数[promiseActivityExtCheck]不是有效的入参」（ILLEGAL_ARGUMENT），
+                // 且只会在服务端留下一条永远「进行中」的生活记录，故整段废弃
+                // （原判据 toCompleteVO.has("todayFinish") 也失效：服务端根本不返回该字段）
+
+                // 完成任务：官方实测走 taskFeedback，不再走 PromiseRpcManager.pushActivity
                 for (int j = completedNum; j < needCompleteNum; j++) {
-                    s = AntMemberRpcCall.finishSesameTask(recordId);
+                    s = AntMemberRpcCall.feedBackSesameTaskNew(taskTemplateId);
                     TimeUtil.sleep(2000);
                     responseObj = new JSONObject(s);
                     //检查并标记黑名单任务
