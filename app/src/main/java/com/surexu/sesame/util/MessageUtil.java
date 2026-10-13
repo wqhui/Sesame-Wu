@@ -456,4 +456,49 @@ public class MessageUtil {
         return code.contains("400000040");
     }
 
+    /**
+     * 判断响应是否为**硬阻塞**（风控拦截 / 访问被拒），用于让调用方停止对后续对象继续发请求。
+     *
+     * <p>参照 Sesame-AG 的 {@code RpcOfflineRisk.isHardBlocked}，但只保留「确定该停」的判据：
+     * <ul>
+     *   <li>结果码 {@code 1009}（直接风控）</li>
+     *   <li>文案含「访问受限 / 访问被拒绝」</li>
+     * </ul>
+     * <p>以下情况**不算**硬阻塞，避免误停：
+     * <ul>
+     *   <li>滑块 / 验证码 / captcha —— 可恢复，用户操作后即可继续</li>
+     *   <li>离线模式 / 登录超时（{@code I07}、{@code 2000}）—— 由登录流程处理，不是风控</li>
+     *   <li>响应本身是成功的</li>
+     * </ul>
+     */
+    public static boolean isHardBlocked(JSONObject jo) {
+        if (jo == null) return false;
+        if (jo.optBoolean("success", false) || jo.optBoolean("isSuccess", false)) {
+            return false;
+        }
+        String code = jo.optString("resultCode", jo.optString("code", "")).trim();
+        String message = jo.optString("resultView",
+                jo.optString("errorMessage", jo.optString("memo", "")));
+        // 可恢复的验证类：不算硬阻塞
+        for (String kw : new String[]{"滑块", "滑塊", "验证码", "驗證碼", "captcha"}) {
+            if (message.toLowerCase().contains(kw.toLowerCase())) {
+                return false;
+            }
+        }
+        // 离线/登录超时：交给登录流程，不在这里停
+        if ("I07".equals(code) || "2000".equals(code)
+                || message.contains("离线模式") || message.contains("登录超时")) {
+            return false;
+        }
+        if ("1009".equals(code)) {
+            return true;
+        }
+        for (String kw : new String[]{"访问受限", "訪問受限", "访问被拒绝", "訪問被拒絕"}) {
+            if (message.contains(kw)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 }

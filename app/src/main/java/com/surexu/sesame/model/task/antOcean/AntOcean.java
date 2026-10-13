@@ -60,6 +60,12 @@ public class AntOcean extends ModelTask {
 
     private BooleanModelField queryTaskList;
     private BooleanModelField AutoAntOceanAntiepTaskList;
+
+    /**
+     * 本轮已遇「硬阻塞」（风控 / 访问被拒）：置位后不再对后续好友发清理请求。
+     * 每轮 run() 开头重置。见 {@link MessageUtil#isHardBlocked}。
+     */
+    private boolean rpcStoppedThisRun = false;
     private SelectModelField AntOceanAntiepTaskList;
     private BooleanModelField AutoAntOceanFishBlackList;  // 自动添加摸鱼黑名单
     private SelectModelField AntOceanFishBlackList;  // 摸鱼黑名单列表
@@ -102,6 +108,7 @@ public class AntOcean extends ModelTask {
     @Override
     public void run() {
         try {
+            rpcStoppedThisRun = false;
             if (!queryOceanStatus()) {
                 return;
             }
@@ -742,6 +749,9 @@ public class AntOcean extends ModelTask {
                 JSONObject fillFlag = fillFlagVOList.getJSONObject(i);
                 if (cleanOceanType.getValue() != CleanOceanType.NONE) {
                     cleanFriendOcean(fillFlag);
+                    if (rpcStoppedThisRun) {
+                        return;
+                    }
                 }
             }
             int pos = 20;
@@ -766,6 +776,9 @@ public class AntOcean extends ModelTask {
                         JSONObject fillFlag = fillFlagVOList.getJSONObject(i);
                         if (cleanOceanType.getValue() != CleanOceanType.NONE) {
                             cleanFriendOcean(fillFlag);
+                            if (rpcStoppedThisRun) {
+                                return;
+                            }
                             if (Status.hasFlagToday("Ocean::HELP_CLEAN_ALL_FRIEND_LIMIT")) {
                                 return;
                             }
@@ -822,6 +835,12 @@ public class AntOcean extends ModelTask {
         try {
             JSONObject jo = new JSONObject(AntOceanRpcCall.queryFriendPage(userId));
             if (!MessageUtil.checkResultCode(TAG, jo)) {
+                // 硬阻塞（风控 / 访问被拒）：本轮不再对后续好友发请求——
+                // 原先一律 return false 会被当普通「没清成」，继续对下一个好友发，既刷不出结果又加重风控
+                if (MessageUtil.isHardBlocked(jo)) {
+                    rpcStoppedThisRun = true;
+                    Log.record("神奇海洋🐳好友清理停止#服务端拒绝访问，本轮不再清理好友");
+                }
                 return false;
             }
             if (Status.hasFlagToday("Ocean::HELP_CLEAN_ALL_FRIEND_LIMIT")) {
@@ -840,6 +859,10 @@ public class AntOcean extends ModelTask {
                 JSONArray cleanRewardVOS = jo.getJSONArray("cleanRewardVOS");
                 checkReward(cleanRewardVOS);
                 return true;
+            }
+            if (MessageUtil.isHardBlocked(jo)) {
+                rpcStoppedThisRun = true;
+                Log.record("神奇海洋🐳好友清理停止#服务端拒绝访问，本轮不再清理好友");
             }
         } catch (Throwable t) {
             Log.i(TAG, "cleanFriendOcean err:");
