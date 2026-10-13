@@ -3723,12 +3723,35 @@ public class AntForestV2 extends ModelTask {
                 return;
             }
 
-            // 执行浇水
-            String waterStr = AntForestRpcCall.teamWater(teamId, finalWaterAmount);
-            JSONObject waterJo = new JSONObject(waterStr);
-            if (MessageUtil.checkResultCode(TAG, waterJo)) {
+            // 执行浇水。记账原则与真爱合种一致：只有「确定没发出去」才不计当日额度，
+            // 其余（响应判定不成、超时、解析异常）一律按已浇记账——否则每次自动运行都会重发一次。
+            JSONObject waterJo = null;
+            Throwable waterErr = null;
+            try {
+                waterJo = new JSONObject(AntForestRpcCall.teamWater(teamId, finalWaterAmount));
+            } catch (Throwable t) {
+                waterErr = t;
+            }
+            boolean accountWater = true;
+            if (waterErr != null) {
+                if (ApplicationHook.isOffline()) {
+                    // 确定没发出去：不记账，下一轮再试
+                    accountWater = false;
+                    Log.record("组队合种浇水未发出(离线)，下次运行再试");
+                } else {
+                    // 超时 / 响应解析异常：请求可能已经到服务端，按已浇记账避免重复
+                    Log.i(TAG, "teamWater err:");
+                    Log.printStackTrace(TAG, waterErr);
+                    Log.record("组队合种浇水结果不明(超时/解析异常)，按已浇记账避免重复");
+                }
+            } else if (MessageUtil.checkResultCode(TAG, waterJo) || MessageUtil.checkSuccess(TAG, waterJo)) {
                 Log.forest("组队合种🚿给合种浇水" + finalWaterAmount + "g#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
                 Toast.show("组队合种🚿给合种浇水" + finalWaterAmount + "g");
+            } else {
+                // 判定不成（结构不符 / 今日已浇过 / 额度用尽）：按已浇记账，保留响应原文便于排查
+                Log.record("组队合种浇水未确认成功，按已浇记账避免重复：" + waterJo);
+            }
+            if (accountWater) {
                 Status.forestHuntHelpToday("FLAG_TEAM_WATER_DAILY_COUNT", todayUsed + finalWaterAmount, UserIdMap.getCurrentUid());
                 Log.record("组队合种今日浇水累计: " + (todayUsed + finalWaterAmount) + "g / " + userDailyTarget + "g");
             }
@@ -3788,16 +3811,29 @@ public class AntForestV2 extends ModelTask {
     }
 
     private static void loveteamWater(String loveteamWater, int loveteamWaterNum) {
+        // 当日标记「先落再发请求」：这个动作一天只该做一次，不能把标记挂在响应判定上——
+        // 响应一旦不被判定为成功（结构不符、或服务端提示今日已浇/额度用尽），标记就落不下去，
+        // 每次自动运行都会重发一次浇水请求，表现为"反复浇水"。
+        Status.flagToday("Forest::loveteamWater");
         try {
             JSONObject jo = new JSONObject(AntForestRpcCall.loveteamWater(loveteamWater, loveteamWaterNum));
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.forest("真爱浇水🚿给[" + loveteamWater + "]合种浇水" + loveteamWaterNum + "g#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
                 Toast.show("真爱浇水🚿给[" + loveteamWater + "]合种浇水" + loveteamWaterNum + "g");
-                Status.flagToday("Forest::loveteamWater");
+                return;
             }
+            // 判定不成（结构不符 / 今日已浇过 / 额度用尽）当日不再重发，保留响应原文便于排查
+            Log.record("真爱合种浇水未确认成功，今日不再尝试：" + jo);
         } catch (Throwable th) {
-            Log.i(TAG, "loveteamWater err:");
-            Log.printStackTrace(TAG, th);
+            if (ApplicationHook.isOffline()) {
+                // 确定没发出去：撤销标记，下一轮再试
+                Status.clearFlag("Forest::loveteamWater");
+                Log.record("真爱合种浇水未发出(离线)，下次运行再试");
+            } else {
+                // 可能已经发出去（超时 / 响应解析异常）：保留标记，避免每轮重浇
+                Log.i(TAG, "loveteamWater err:");
+                Log.printStackTrace(TAG, th);
+            }
         }
     }
 
