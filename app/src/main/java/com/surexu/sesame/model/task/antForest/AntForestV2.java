@@ -91,6 +91,9 @@ public class AntForestV2 extends ModelTask {
     /** 森林乐园限定任务单轮最多重拉次数：只防服务端恒回 TODO 时死循环。 */
     private static final int MAX_OPTIONAL_PLAY_ROUNDS = 2;
 
+    /** 森林集市「线上逛街」能量单轮最多重试次数：只防服务端恒回可发却不产生能量时死循环。 */
+    private static final int MAX_MARKET_ENERGY_ROUNDS = 3;
+
     private static final AverageMath offsetTimeMath = new AverageMath(5);
 
     private static final Map<String, Long> usingProps = new ConcurrentHashMap<>();
@@ -1919,20 +1922,28 @@ public class AntForestV2 extends ModelTask {
                 return;
             }
             JSONObject data = jo.getJSONObject("data");
-            if (data.optBoolean("canSendEnergy", false)) {
+            if (!data.optBoolean("canSendEnergy", false)) {
+                return;
+            }
+            // 集市逛街能量：服务端一轮只发一份，需循环问到「拿到能量」或「额度已达上限」为止。
+            // 原先只问一次——首次 send 返回 0 能量（服务端异步未落状态）时当轮就白跑了。
+            // 加轮次上限，防服务端恒回可发但不产生能量时死循环
+            for (int round = 0; round < MAX_MARKET_ENERGY_ROUNDS; round++) {
                 jo = new JSONObject(GreenLifeRpcCall.sendEnergyByAction(sourceType));
-                if (MessageUtil.checkSuccess(TAG, jo)) {
-                    data = jo.getJSONObject("data");
-                    if (data.optBoolean("canSendEnergy", false)) {
-                        int receivedEnergyAmount = data.getInt("receivedEnergyAmount");
-                        Log.forest("森林集市🛍️完成[线上逛街]#产生[" + receivedEnergyAmount + "g能量]");
-                        Toast.show("森林集市🛍️完成[线上逛街]#产生[" + receivedEnergyAmount + "g能量]");
-                        if (receivedEnergyAmount > 0) {
-                            totalCollected += receivedEnergyAmount;
-                            Statistics.addData(Statistics.DataType.COLLECTED, receivedEnergyAmount);
-                        }
-                    }
+                if (!MessageUtil.checkSuccess(TAG, jo)) {
+                    TimeUtil.sleep(1000);
+                    continue;
                 }
+                data = jo.getJSONObject("data");
+                int receivedEnergyAmount = data.optInt("receivedEnergyAmount", 0);
+                if (receivedEnergyAmount > 0) {
+                    Log.forest("森林集市🛍️完成[线上逛街]#产生[" + receivedEnergyAmount + "g能量]");
+                    Toast.show("森林集市🛍️完成[线上逛街]#产生[" + receivedEnergyAmount + "g能量]");
+                    totalCollected += receivedEnergyAmount;
+                    Statistics.addData(Statistics.DataType.COLLECTED, receivedEnergyAmount);
+                    return;
+                }
+                TimeUtil.sleep(1000);
             }
         } catch (Throwable t) {
             Log.i(TAG, "sendEnergyByAction err:");
@@ -2571,6 +2582,12 @@ public class AntForestV2 extends ModelTask {
             TimeUtil.sleep(500);
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.forest("森林任务🧾️完成[" + taskTitle + "]");
+                return true;
+            }
+            // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）
+            if (TaskAlternative.hit(jo, sceneCode)) {
+                TaskAlternative.trigger(null, taskType, taskTitle, taskType, sceneCode,
+                        "森林任务", msg -> Log.forest(msg));
                 return true;
             }
             Log.record("完成任务[" + taskTitle + "]失败");

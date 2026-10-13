@@ -10,6 +10,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import com.surexu.sesame.hook.Toast;
+import com.surexu.sesame.model.base.TaskAlternative;
 import com.surexu.sesame.util.Log;
 import com.surexu.sesame.util.MessageUtil;
 import com.surexu.sesame.util.Statistics;
@@ -191,11 +192,17 @@ public class ForestChouChouLe {
                             } else {
                                 result = new JSONObject(AntForestRpcCall.finishTaskopengreen(taskType, taskSceneCode));
                             }
-                            //检查并标记黑名单任务
-                            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntForestHuntTaskList", taskName, result);
                             if (MessageUtil.checkSuccess(TAG, result)) {
                                 Log.forest("森林寻宝🧾完成[" + taskName + "]");
                                 doublecheck = true;
+                            } else if (TaskAlternative.hit(result, taskSceneCode)) {
+                                // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）
+                                TaskAlternative.trigger(null, taskType, taskName, taskType, taskSceneCode,
+                                        "森林寻宝", msg -> Log.forest(msg));
+                                doublecheck = true;
+                            } else {
+                                //检查并标记黑名单任务（400000040 走兜底时不拉黑）
+                                MessageUtil.checkResultCodeAndMarkTaskBlackList("AntForestHuntTaskList", taskName, result);
                             }
                             continue;
                         }
@@ -203,11 +210,17 @@ public class ForestChouChouLe {
                             //兜底完成任务操作
                             TimeUtil.sleep(1000);
                             JSONObject result = new JSONObject(AntForestRpcCall.finishTaskopengreen(taskType, taskSceneCode));
-                            //检查并标记黑名单任务
-                            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntForestHuntTaskList", taskName, result);
                             if (MessageUtil.checkSuccess(TAG, result)) {
                                 Log.forest("森林寻宝🧾完成[" + taskName + "]");
                                 doublecheck = true;
+                            } else if (TaskAlternative.hit(result, taskSceneCode)) {
+                                // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）
+                                TaskAlternative.trigger(null, taskType, taskName, taskType, taskSceneCode,
+                                        "森林寻宝", msg -> Log.forest(msg));
+                                doublecheck = true;
+                            } else {
+                                //检查并标记黑名单任务（400000040 走兜底时不拉黑）
+                                MessageUtil.checkResultCodeAndMarkTaskBlackList("AntForestHuntTaskList", taskName, result);
                             }
                         }
                     }
