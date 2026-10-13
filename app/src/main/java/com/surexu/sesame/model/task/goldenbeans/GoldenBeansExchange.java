@@ -135,6 +135,12 @@ public final class GoldenBeansExchange {
             long userRemaining = dailyBeanLimit > 0
                     ? Math.max(dailyBeanLimit - exchangedToday, 0) : Long.MAX_VALUE;
             long available = Math.max(Math.min(serverLimit, userRemaining), 0);
+            // beanReward 是「1 芝麻粒可换的金豆数」，所以兑换数量必须是它的整数倍，
+            // 否则等价于要换 12.5 个芝麻粒，服务端会拒为「兑换数量不正确」。
+            // 例：单日上限 1000、beanReward 80 → 实际兑换 960（12 个芝麻粒）。
+            if (beanReward > 0) {
+                available = available / beanReward * beanReward;
+            }
 
             Log.goldenBeans("金豆芝麻粒换豆资格🔍页面[" + pageOpened + "]芝麻粒[" + currentManure
                     + "]可换芝麻粒[" + effectiveExchangeManure + "]单粒换豆[" + beanReward
