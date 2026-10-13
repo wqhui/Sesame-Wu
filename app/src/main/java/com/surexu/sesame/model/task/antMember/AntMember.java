@@ -56,6 +56,9 @@ public class AntMember extends ModelTask {
             "玩游戏赢最高8888元红包", // 动态 taskId，需游戏内事件，ILLEGAL_ARGUMENT promiseActivityExtCheck
             "订阅炼金签到提醒"        // joinActivity 返回 PROMISE_TEMPLATE_NOT_EXIST
     ));
+
+    /** 游戏中心宝箱每日上限（首页 {@code taskModule.dailyTaskCertCntUpperLimit} 的兜底值）。 */
+    private static final int GAME_CENTER_CERT_LIMIT = 30;
     
     @Override
     public String getName() {
@@ -216,7 +219,9 @@ public class AntMember extends ModelTask {
                 checkAndDoSignIn();
                 //查询并处理任务列表
                 queryAndProcessTaskList();
-                
+                //游戏中心任务奖励（整场景一键领取；游戏类任务需真实游玩才能推进，不做完成尝试）
+                gameCenterTaskPrize();
+
                 //查询玩乐豆小球列表，有则领取
                 queryPointBallList();
                 
@@ -291,6 +296,30 @@ public class AntMember extends ModelTask {
                     }
                 }
                 
+                // 游戏中心任务流里的任务也要进候选，否则用户看不到、也无法手动勾选
+                // （原读取的 v4.queryTaskList 实测恒返回空 data，连带这里一直拿不到任务）
+                for (int feedPage = 0; feedPage < 5; feedPage++) {
+                    jo = new JSONObject(AntMemberRpcCall.gameCenterGameFeeds(feedPage, 10));
+                    if (!MessageUtil.checkSuccess(TAG, jo)) {
+                        break;
+                    }
+                    JSONObject feedsData = jo.optJSONObject("data");
+                    JSONArray feedsList = feedsData == null ? null : feedsData.optJSONArray("feedsList");
+                    if (feedsList == null || feedsList.length() == 0) {
+                        break;
+                    }
+                    for (int i = 0; i < feedsList.length(); i++) {
+                        JSONObject feed = feedsList.optJSONObject(i);
+                        String title = feed == null ? "" : gameCenterTaskTitle(feed);
+                        if (!title.isEmpty()) {
+                            AntMemberTaskListMap.add(title, title);
+                        }
+                    }
+                    if (!feedsData.optBoolean("haveNextPage", false)) {
+                        break;
+                    }
+                }
+
                 //保存任务到配置文件
                 AntMemberTaskListMap.save();
                 Log.record("同步任务🉑会员任务列表");
@@ -1145,7 +1174,12 @@ public class AntMember extends ModelTask {
                 // doTaskSend 常被 400000040 拒绝，改用另一种实现方案（见 TaskAlternative）
                 String sceneCode = taskObj.optString("sceneCode", "").trim();
                 if (TaskAlternative.hit(doTaskjo, sceneCode)) {
-                    TaskAlternative.trigger(pendingVerifyTasks, taskId, subTitle, taskId, sceneCode,
+                    // bizKey 优先取任务自带的：游戏中心任务流的 bizKey/gameId 与 v3 的 taskId 不是一回事
+                    String bizKey = taskObj.optString("bizKey", "").trim();
+                    if (bizKey.isEmpty()) {
+                        bizKey = taskId;
+                    }
+                    TaskAlternative.trigger(pendingVerifyTasks, taskId, subTitle, bizKey, sceneCode,
                             AntMemberRpcCall.DO_FARM_TASK_VERSION,
                             "游戏中心", msg -> Log.other(msg));
                 } else {
@@ -1196,7 +1230,6 @@ public class AntMember extends ModelTask {
         TaskAlternative.verify(pendingVerifyTasks, VERIFY_CFG, () -> {
             Set<String> notDone = new LinkedHashSet<>();
             collectNotDoneIds(AntMemberRpcCall.queryModularTaskList(), notDone);
-            collectNotDoneIds(AntMemberRpcCall.queryTaskList(), notDone);
             return notDone;
         });
     }
@@ -1214,20 +1247,6 @@ public class AntMember extends ModelTask {
                     if (taskList == null) continue;
                     for (int j = 0; j < taskList.length(); j++) {
                         JSONObject task = taskList.optJSONObject(j);
-                        if (task == null) continue;
-                        if ("NOT_DONE".equals(task.optString("taskStatus"))) {
-                            String id = task.optString("taskId");
-                            if (id != null && !id.isEmpty()) out.add(id);
-                        }
-                    }
-                }
-            }
-            JSONObject gameTaskModule = data.optJSONObject("gameTaskModule");
-            if (gameTaskModule != null) {
-                JSONArray gameTaskList = gameTaskModule.optJSONArray("gameTaskList");
-                if (gameTaskList != null) {
-                    for (int i = 0; i < gameTaskList.length(); i++) {
-                        JSONObject task = gameTaskList.optJSONObject(i);
                         if (task == null) continue;
                         if ("NOT_DONE".equals(task.optString("taskStatus"))) {
                             String id = task.optString("taskId");
@@ -1330,24 +1349,87 @@ public class AntMember extends ModelTask {
         }
     }
 
-    public static void queryTaskList() {
+    /**
+     * 游戏中心（会员场景 xlyy_WJCNJT）宝箱领取。
+     * <p>任务流 {@code queryGameFeeds} 里的条目都是「玩游戏得1个宝箱」（只有
+     * gameId/cardId/appId + taskDesc，没有 taskId/taskStatus）；官方客户端在该场景同样只查不写
+     * （query* + batchReceiveTaskPrize），宝箱由游戏侧上报才 +1——实测 doFarmTask 的
+     * bizKey/taskSceneCode 七种组合全回 307「任务不存在」，所以这里不对任务流发完成请求，
+     * 只在首页报有待领时把宝箱领掉；任务名仍进「会员任务」黑名单候选，供手动剔除。
+     * <p>待领判据取官方字段：{@code taskModule.needReceive} / {@code needReceiveTaskCertCnt}，
+     * 上限 {@code reachTaskCertLimit}（{@code dailyTaskCertCntUpperLimit}，30/天）。
+     */
+    public static void gameCenterTaskPrize() {
         try {
-            JSONObject jsonObject = new JSONObject(AntMemberRpcCall.queryTaskList());
-            if (!MessageUtil.checkSuccess(TAG, jsonObject)) {
+            JSONObject homeJo = new JSONObject(AntMemberRpcCall.gameCenterHomePage());
+            if (!MessageUtil.checkSuccess(TAG, homeJo)) {
+                Log.record("游戏中心首页异常：" + homeJo);
                 return;
             }
-            if (!jsonObject.has("data")) {
+            JSONObject homeData = homeJo.optJSONObject("data");
+            JSONObject taskModule = homeData == null ? null : homeData.optJSONObject("taskModule");
+            if (taskModule == null) {
                 return;
             }
-            JSONArray gameTaskList = jsonObject.getJSONObject("data").optJSONObject("gameTaskModule").optJSONArray("gameTaskList");
-            for (int i = 0; i < gameTaskList.length(); i++) {
-                processTask(gameTaskList.getJSONObject(i));
+            if (taskModule.optBoolean("reachTaskCertLimit", false)) {
+                Log.record("游戏中心宝箱已达今日上限（"
+                        + taskModule.optString("taskProgressDesc", GAME_CENTER_CERT_LIMIT + "/天") + "）");
+                return;
             }
+            boolean needReceive = homeData.has("taskPrizePopup") || taskModule.optBoolean("needReceive", false)
+                    || taskModule.optInt("needReceiveTaskCertCnt", 0) > 0;
+            if (!needReceive) {
+                return;
+            }
+
+            JSONObject receiveJo = new JSONObject(AntMemberRpcCall.batchReceiveTaskPrize());
+            if (!MessageUtil.checkSuccess(TAG, receiveJo)) {
+                Log.record("游戏中心宝箱领取失败：" + receiveJo);
+                return;
+            }
+            JSONObject receiveData = receiveJo.optJSONObject("data");
+            JSONObject prizePopup = receiveData == null ? null : receiveData.optJSONObject("prizePopup");
+            String tip = prizePopup == null ? "" : prizePopup.optString("subTitle", "").trim();
+            if (tip.isEmpty() && prizePopup != null) {
+                tip = prizePopup.optString("actionText", "").trim();
+            }
+            String desc = taskModule.optString("taskProgressDesc", "").trim();
+            Log.other("游戏中心🎁领取宝箱" + (tip.isEmpty() ? "" : "#" + tip) + (desc.isEmpty() ? "" : "#" + desc));
         }
         catch (Throwable t) {
-            Log.i(TAG, "queryModularTaskList err:");
+            Log.i(TAG, "gameCenterTaskPrize err:");
             Log.printStackTrace(TAG, t);
         }
+    }
+
+    /**
+     * 游戏中心任务流条目在「会员任务｜黑名单列表」里的标题（如「九梦仙域：玩游戏得1个宝箱」）。
+     * <p>字段实测：{@code mainTitle}=游戏名、{@code subTitle}=宣传语、
+     * {@code taskDesc}=「玩游戏得1个宝箱」、{@code taskTagText}=「玩游戏得」。
+     */
+    private static String gameCenterTaskTitle(JSONObject feed) {
+        String title = firstNonEmpty(feed, "mainTitle", "subTitle");
+        String taskDesc = firstNonEmpty(feed, "taskDesc", "taskTagText");
+        if (title.isEmpty()) {
+            title = taskDesc;
+        } else if (!taskDesc.isEmpty() && !title.contains(taskDesc)) {
+            title = title + "：" + taskDesc;
+        }
+        if (title.isEmpty()) {
+            title = firstNonEmpty(feed, "gameId", "cardId", "appId");
+        }
+        return title;
+    }
+
+    /** 按顺序取第一个非空字符串字段。 */
+    private static String firstNonEmpty(JSONObject jo, String... keys) {
+        for (String key : keys) {
+            String value = jo.optString(key, "").trim();
+            if (!value.isEmpty()) {
+                return value;
+            }
+        }
+        return "";
     }
     
     /**
