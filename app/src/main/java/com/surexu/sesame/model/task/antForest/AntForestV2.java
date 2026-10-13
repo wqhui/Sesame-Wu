@@ -403,9 +403,7 @@ public class AntForestV2 extends ModelTask {
             if (youthPrivilege.getValue()) {
                 // 青春特权道具（双击卡/能量罩/加速器）改走 listTaskopengreen：
                 // 原实现用的 queryTaskList 对本场景返回空 forestTasksNew，三项道具从未触发领取
-                Log.forest("青春特权道具🔍开始查询");
                 queryVitalityYouthTaskList();
-                Log.forest("青春特权道具🔍查询结束");
             }
             //连续兑换使用道具卡片
             continuousUseCardOptions();

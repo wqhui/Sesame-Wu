@@ -29,6 +29,12 @@ public class MessageUtil {
 
     public static void printErrorMessage(String tag, JSONObject jo, String errorMessageField) {
         try {
+            if (isUnsupportedRpc(jo)) {
+                // 400000040「不支持rpc调用」不代表任务做不了（调用方会转另一种实现方案）：
+                // 只写运行日志、不记模块错误，避免把预期失败当成错误刷屏
+                Log.i(tag, jo.toString());
+                return;
+            }
             if (isServerBusy(jo)) {
                 // 102 高频错误：只打一行 JSON，避免 memo + JSON 刷两条
                 Log.i(tag, jo.toString());
