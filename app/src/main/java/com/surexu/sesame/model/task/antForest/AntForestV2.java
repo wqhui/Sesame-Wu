@@ -3601,9 +3601,17 @@ public class AntForestV2 extends ModelTask {
      * <p>原先只查 SC_ASSETS 的第一页 ⇒ 权益列表只有一小部分，想兑换的权益选不到，
      * 兑换时报「活力兑换🎐找不到要兑换的权益！」；改为按官方实测的 5 个 labelType
      * 分别拉取，并用响应里的 hasMore 翻页。
+     * <p>当日标记的判断放在方法内部：除了 {@link #vitalityExchangeBenefit()}，
+     * 兑换道具等路径也会直接调用它，那些路径同样需要「当日只拉一次」——
+     * 否则单轮最多 5 分类 × 10 页的请求会被反复发出。
+     *
+     * @return 是否真的取到 SKU（取不到时留给下一轮重试）
      */
-    private void getAllSkuInfo() {
+    private boolean getAllSkuInfo() {
         try {
+            if (Status.hasFlagToday("forest::vitalitySkuList")) {
+                return true;
+            }
             int got = 0;
             for (String labelType : VITALITY_LABEL_TYPES) {
                 int cnt = 0;
@@ -3629,9 +3637,15 @@ public class AntForestV2 extends ModelTask {
             }
             VitalityBenefitIdMap.save(UserIdMap.getCurrentUid());
             Log.i(TAG, "活力值商店列表：共取" + got + "条，清单共" + VitalityBenefitIdMap.getMap().size() + "条");
+            if (got > 0) {
+                // 拉到了才打当日标记；拉不到留给下一轮重试
+                Status.flagToday("forest::vitalitySkuList");
+            }
+            return got > 0;
         } catch (Throwable th) {
             Log.i(TAG, "getAllSkuInfo err:");
             Log.printStackTrace(TAG, th);
+            return false;
         }
     }
 
