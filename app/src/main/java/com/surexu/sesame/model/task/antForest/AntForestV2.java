@@ -1743,12 +1743,7 @@ public class AntForestV2 extends ModelTask {
                             }
                         }
 
-                        // 3. 批量移除白名单任务（从现有列表中删除）
-                        for (String task : whiteList) {
-                            if (currentValues.contains(task)) {
-                                currentValues.remove(task);
-                            }
-                        }
+                        MessageUtil.registerTaskWhiteList("AntForestVitalityTaskList", whiteList);
                     }
                     // 4. 保存配置
                     if (ConfigV2.save(UserIdMap.getCurrentUid(), false)) {
@@ -1816,12 +1811,7 @@ public class AntForestV2 extends ModelTask {
                             }
                         }
 
-                        // 3. 批量移除白名单任务（从现有列表中删除）
-                        for (String task : whiteList) {
-                            if (currentValues.contains(task)) {
-                                currentValues.remove(task);
-                            }
-                        }
+                        MessageUtil.registerTaskWhiteList("AntForestHuntTaskList", whiteList);
                     }
                     // 4. 保存配置
                     if (ConfigV2.save(UserIdMap.getCurrentUid(), false)) {

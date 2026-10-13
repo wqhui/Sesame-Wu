@@ -195,12 +195,7 @@ public class AntDodo extends ModelTask {
                             }
                         }
 
-                        // 3. 批量移除白名单任务（从现有列表中删除）
-                        for (String task : whiteList) {
-                            if (currentValues.contains(task)) {
-                                currentValues.remove(task);
-                            }
-                        }
+                        MessageUtil.registerTaskWhiteList("AntDodoTaskList", whiteList);
                     }
                     // 4. 保存配置
                     if (ConfigV2.save(UserIdMap.getCurrentUid(), false)) {

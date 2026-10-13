@@ -2,6 +2,11 @@ package com.surexu.sesame.util;
 
 import org.json.JSONObject;
 
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
 import com.surexu.sesame.data.ConfigV2;
 import com.surexu.sesame.data.ModelFields;
 import com.surexu.sesame.data.modelFieldExt.SelectModelField;
@@ -354,7 +359,33 @@ public class MessageUtil {
         }
     }
 
+    /**
+     * 各任务列表的白名单：键为 listTitle（字段名，与 {@link #MarkTaskBlackList} 的 listTitle 一致），
+     * 值为不应被「自动拉黑」机制添加的任务标题集合。
+     * <p>只用于拦截自动拉黑入口（{@link #MarkTaskBlackList}），
+     * <b>绝不删除用户手动加入黑名单的条目</b>——原先各模块的初始化代码会遍历白名单
+     * 从列表里 remove，把用户手动加的黑名单条目一起删掉。
+     * <p>由各模块初始化时通过 {@link #registerTaskWhiteList} 登记。
+     */
+    private static final Map<String, Set<String>> TASK_WHITE_LIST = new HashMap<>();
+
+    /**
+     * 登记某任务列表的白名单（仅阻止自动拉黑添加，不删除任何已有条目）。
+     */
+    public static void registerTaskWhiteList(String listTitle, Set<String> whiteList) {
+        if (listTitle == null || whiteList == null || whiteList.isEmpty()) {
+            return;
+        }
+        TASK_WHITE_LIST.put(listTitle, new HashSet<>(whiteList));
+    }
+
     public static void MarkTaskBlackList(String ModelFieldsType, String listTitle, String TaskListName, String taskTitle) {
+        // 白名单拦截：白名单任务只由「用户手动」决定是否拉黑，自动拉黑机制不插手
+        Set<String> white = TASK_WHITE_LIST.get(listTitle);
+        if (white != null && white.contains(taskTitle)) {
+            Log.record("[" + TaskListName + "]任务[" + taskTitle + "]在白名单中，跳过自动拉黑");
+            return;
+        }
         ConfigV2 config = ConfigV2.INSTANCE;
         ModelFields TaskModelFields = config.getModelFieldsMap().get(ModelFieldsType);
         SelectModelField TaskSelectModelField = (SelectModelField) TaskModelFields.get(listTitle);

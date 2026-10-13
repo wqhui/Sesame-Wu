@@ -290,12 +290,7 @@ public class AntStall extends ModelTask {
                     currentValues = AntStallTaskList.getValue();//该处直接返回列表地址
                     if (currentValues != null) {
                         
-                        // 3. 批量移除白名单任务（从现有列表中删除）
-                        for (String task : whiteList) {
-                            if (currentValues.contains(task)) {
-                                currentValues.remove(task);
-                            }
-                        }
+                        MessageUtil.registerTaskWhiteList("AntStallTaskList", whiteList);
                     }
                     // 4. 保存配置
                     if (ConfigV2.save(UserIdMap.getCurrentUid(), false)) {
