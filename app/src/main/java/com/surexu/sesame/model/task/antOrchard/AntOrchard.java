@@ -2,6 +2,7 @@ package com.surexu.sesame.model.task.antOrchard;
 
 import com.surexu.sesame.data.ConfigV2;
 import com.surexu.sesame.entity.AlipayAntOrchardTaskList;
+import com.surexu.sesame.entity.AlipayOrchardChouChouLeTaskList;
 import com.surexu.sesame.entity.AlipayMemberCreditSesameTaskList;
 import com.surexu.sesame.entity.AlipayPlantScene;
 import com.surexu.sesame.entity.AlipayUser;
@@ -36,6 +37,7 @@ import java.util.Set;
 import com.surexu.sesame.util.*;
 import com.surexu.sesame.util.idMap.AntFarmDoFarmTaskListMap;
 import com.surexu.sesame.util.idMap.AntOrchardTaskListMap;
+import com.surexu.sesame.util.idMap.OrchardChouChouLeTaskListMap;
 import com.surexu.sesame.util.idMap.MemberCreditSesameTaskListMap;
 import com.surexu.sesame.util.idMap.PlantSceneIdMap;
 import com.surexu.sesame.util.idMap.UserIdMap;
@@ -85,6 +87,8 @@ public class AntOrchard extends ModelTask {
     private BooleanModelField orchardPlantNew;
     private BooleanModelField drawGameCenterAward;
     private BooleanModelField orchardChouChouLe;
+    private BooleanModelField AutoOrchardChouChouLeTaskList;
+    private SelectModelField OrchardChouChouLeTaskList;
     private ChoiceModelField driveAnimalType;
     private SelectModelField driveAnimalList;
     private BooleanModelField batchHireAnimal;
@@ -117,6 +121,8 @@ public class AntOrchard extends ModelTask {
         modelFields.addField(orchardSpreadManureSceneList = new SelectAndCountModelField("orchardSpreadManureSceneList", "农场施肥 | 场景列表", new LinkedHashMap<>(), AlipayPlantScene::getList, "请填写每日施肥次数"));
         modelFields.addField(drawGameCenterAward = new BooleanModelField("drawGameCenterAward", "农场乐园 | 游戏宝箱", true));
         modelFields.addField(orchardChouChouLe = new BooleanModelField("orchardChouChouLe", "抽抽乐 | 自动完成与抽奖", false));
+        modelFields.addField(AutoOrchardChouChouLeTaskList = new BooleanModelField("AutoOrchardChouChouLeTaskList", "抽抽乐任务 | 自动黑名单", true).setDependsOn("orchardChouChouLe"));
+        modelFields.addField(OrchardChouChouLeTaskList = new SelectModelField("OrchardChouChouLeTaskList", "抽抽乐任务 | 黑名单列表", new LinkedHashSet<>(), AlipayOrchardChouChouLeTaskList::getList).setDependsOn("AutoOrchardChouChouLeTaskList"));
         //modelFields.addField(driveAnimalType = new ChoiceModelField("driveAnimalType", "驱赶小鸡 | 动作", DriveAnimalType.NONE, DriveAnimalType.nickNames));
         //modelFields.addField(driveAnimalList = new SelectModelField("driveAnimalList", "驱赶小鸡 | 好友列表", new LinkedHashSet<>(), AlipayUser::getList));
         //modelFields.addField(batchHireAnimal = new BooleanModelField("batchHireAnimal", "捉鸡除草 | 开启", false));
@@ -292,6 +298,16 @@ public class AntOrchard extends ModelTask {
                 JSONObject bizInfo = base.optJSONObject("bizInfo");
                 String title = bizInfo != null ? bizInfo.optString("title", taskType) : taskType;
 
+                // 候选入库：供「抽抽乐任务 | 黑名单列表」下拉勾选（含服务端返回的全部任务）
+                OrchardChouChouLeTaskListMap.add(title, title);
+
+                // 黑名单任务跳过（用户手动加入的、以及自动拉黑机制加入的）
+                if (Boolean.TRUE.equals(AutoOrchardChouChouLeTaskList.getValue())
+                        && OrchardChouChouLeTaskList.getValue().contains(title)) {
+                    Log.record("农场抽抽乐⏭️[" + title + "]在黑名单中，跳过");
+                    continue;
+                }
+
                 if ("FINISHED".equals(taskStatus)) {
                     sleepWithJitter(executeInterval.getValue());
                     JSONObject recv = new JSONObject(AntOrchardRpcCall.receiveDrawTaskAward(sceneCode, taskType));
@@ -322,10 +338,14 @@ public class AntOrchard extends ModelTask {
                             Log.farm("农场抽抽乐⚗任务完成[" + title + "]#备用接口");
                         } else {
                             Log.record("农场抽抽乐⚗任务完成失败[" + title + "]#" + alt);
+                            // 两条腿都失败：按既有自动拉黑规则记账（白名单任务会被拦下）
+                            MessageUtil.checkResultCodeAndMarkTaskBlackList("OrchardChouChouLeTaskList", title, alt);
                         }
                     }
                 }
             }
+            // 候选清单落盘，供配置页下拉读取
+            OrchardChouChouLeTaskListMap.save();
         }
         catch (Throwable t) {
             Log.printStackTrace(TAG, t);

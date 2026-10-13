@@ -644,6 +644,14 @@ public class FileUtil {
         return file;
     }
     
+    public static File getOrchardChouChouLeTaskListMapFile() {
+        File file = new File(MAIN_DIRECTORY_FILE, "OrchardChouChouLeTask.json");
+        if (file.exists() && file.isDirectory()) {
+            file.delete();
+        }
+        return file;
+    }
+
     public static File getAntStallTaskListMapFile() {
         File file = new File(MAIN_DIRECTORY_FILE, "AntStallTask.json");
         if (file.exists() && file.isDirectory()) {

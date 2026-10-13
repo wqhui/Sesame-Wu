@@ -164,6 +164,7 @@ public class BaseModel extends Model {
             AntOceanAntiepTaskListMap.clear();
             AntOceanFishBlackListMap.clear();
             AntOrchardTaskListMap.clear();
+            OrchardChouChouLeTaskListMap.clear();
             AntStallTaskListMap.clear();
             AntSportsTaskListMap.clear();
             AntMemberTaskListMap.clear();

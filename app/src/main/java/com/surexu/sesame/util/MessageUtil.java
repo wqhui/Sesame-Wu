@@ -254,6 +254,13 @@ public class MessageUtil {
                     }
                     break;
 
+                //农场抽抽乐任务AntOrchard
+                case "OrchardChouChouLeTaskList":
+                    if (canAddBlackList) {
+                        MarkTaskBlackList("AntOrchard", listTitle, "农场抽抽乐任务", taskTitle);
+                    }
+                    break;
+
                 //金豆夺宝任务goldenbeans
                 case "GoldenBeansTaskList": {
                     // 错误码依次取 code / resultCode / errorCode（不同接口字段不统一）

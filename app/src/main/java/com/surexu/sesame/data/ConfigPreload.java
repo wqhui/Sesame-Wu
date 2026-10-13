@@ -12,6 +12,7 @@ import com.surexu.sesame.util.idMap.AntMemberTaskListMap;
 import com.surexu.sesame.util.idMap.AntOceanAntiepTaskListMap;
 import com.surexu.sesame.util.idMap.AntOceanFishBlackListMap;
 import com.surexu.sesame.util.idMap.AntOrchardTaskListMap;
+import com.surexu.sesame.util.idMap.OrchardChouChouLeTaskListMap;
 import com.surexu.sesame.util.idMap.AntSportsTaskListMap;
 import com.surexu.sesame.util.idMap.AntStallTaskListMap;
 import com.surexu.sesame.util.idMap.BeachIdMap;
@@ -70,6 +71,7 @@ public final class ConfigPreload {
         AntOceanAntiepTaskListMap.load();
         AntOceanFishBlackListMap.load();
         AntOrchardTaskListMap.load();
+        OrchardChouChouLeTaskListMap.load();
         AntStallTaskListMap.load();
         AntSportsTaskListMap.load();
         PathThemeMapListMap.load();
