@@ -6,6 +6,7 @@ import org.json.JSONObject;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import com.surexu.sesame.hook.ApplicationHook;
 import com.surexu.sesame.util.Log;
@@ -26,6 +27,54 @@ public final class TaskAlternative {
     /** 默认 version，各模块可沿用自己那份。 */
     public static final String DEFAULT_VERSION = "1.8.2302070202.46";
 
+    /**
+     * 交易/履约类任务的 bizKey 长拼音词（≥6 字母）。这类任务只能靠真实交易完成，
+     * 用 doFarmTask 伪申报会被判风险操作（服务端回 1009 风控），一律不发。
+     * <p>长度足够区分，用子串匹配。
+     */
+    private static final String[] TRANSACTION_LONG_KEYWORDS = {
+            // 支付 / 下单 / 缴费 / 充值（拼音连写）
+            "xiadan", "zhifu", "goumai", "jiaofei", "huankuan", "chongzhi",
+            // 履约：寄件 / 回收
+            "kuaidi", "huishou",
+            // 酒店
+            "jiudian",
+    };
+
+    /**
+     * 英文短词（≤5 字母）：两侧不得紧邻字母，否则会被任意编码串夹带而误命中。
+     * <p>实测「逛羊舍喂小羊」等良民任务曾被短词夹带误判为交易类并永久拉黑。
+     */
+    private static final String[] TRANSACTION_SHORT_KEYWORDS = {
+            "pay", "charge",
+            // 租赁 / 出行 / 机票 / 余额宝
+            "zulin", "zuche", "dache", "jipiao", "yuebao",
+    };
+
+    /** {@code _cz} 后跟数字（充值 N 元）的判据，如 {@code 2026cc_cz6ylyb_fz}。 */
+    private static final Pattern CZ_AMOUNT = Pattern.compile("_cz[0-9]");
+
+    /** bizKey 是否属于交易/履约类（下单、支付、购买、缴费、还款、充值、淘宝）。 */
+    public static boolean isTransactionTask(String bizKey) {
+        if (bizKey == null || bizKey.isEmpty()) {
+            return false;
+        }
+        String key = bizKey.toLowerCase();
+        for (String keyword : TRANSACTION_LONG_KEYWORDS) {
+            if (key.contains(keyword)) {
+                return true;
+            }
+        }
+        for (String keyword : TRANSACTION_SHORT_KEYWORDS) {
+            // 两侧不得紧邻字母：避免 pay/charge/dache 等短词被任意编码串夹带误命中
+            if (Pattern.compile("(?<![a-z])" + keyword + "(?![a-z])").matcher(key).find()) {
+                return true;
+            }
+        }
+        // 游戏内充值：game_cz 明确，或 _cz 后跟数字（裸 _cz 结尾不算，避免误伤含 cz 的普通任务）
+        return key.contains("game_cz") || CZ_AMOUNT.matcher(key).find();
+    }
+
     /** 日志出口——委托给调用方，便于区分模块日志前缀。 */
     public interface LogSink {
         void log(String message);
@@ -38,6 +87,10 @@ public final class TaskAlternative {
 
     /** doFarmTask payload，返回原始响应字符串。 */
     public static String request(String bizKey, String taskSceneCode, String version) {
+        if (isTransactionTask(bizKey)) {
+            Log.i("doFarmTask⏭️跳过交易/履约类任务#bizKey=" + bizKey + "，不自动申报");
+            return "{}";
+        }
         String args = "[{\"bizKey\":\"" + bizKey + "\",\"requestType\":\"RPC\","
                 + "\"sceneCode\":\"ANTFARM\",\"source\":\"H5\","
                 + "\"taskSceneCode\":\"" + taskSceneCode + "\","
@@ -93,6 +146,10 @@ public final class TaskAlternative {
                                       String taskTitle, String bizKey, String taskSceneCode,
                                       String version, String logPrefix, LogSink sink) {
         try {
+            if (isTransactionTask(bizKey)) {
+                Log.i(logPrefix + "⏭️跳过[" + taskTitle + "]#bizKey=" + bizKey + "，交易/履约类不自动申报");
+                return null;
+            }
             JSONObject doFarmJo = doFarmTask(bizKey, taskSceneCode, version);
             if (pending != null && taskId != null && !taskId.isEmpty()) {
                 pending.put(taskId, taskTitle);
