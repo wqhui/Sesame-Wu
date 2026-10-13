@@ -60,6 +60,9 @@ public class AntMember extends ModelTask {
 
     /** 游戏中心宝箱每日上限（首页 {@code taskModule.dailyTaskCertCntUpperLimit} 的兜底值）。 */
     private static final int GAME_CENTER_CERT_LIMIT = 30;
+
+    /** 会员签到页任务最多翻多少页：只防服务端 pageNo 不生效时死循环。 */
+    private static final int MAX_SIGN_PAGE = 8;
     
     @Override
     public String getName() {
@@ -527,36 +530,57 @@ public class AntMember extends ModelTask {
      */
     private void signPageTaskList() {
         try {
-            do {
-                JSONObject jo = new JSONObject(AntMemberRpcCall.signPageTaskList());
-                randomSleep(1200, 2200);
-                boolean doubleCheck = false;
-                if (!MessageUtil.checkResultCode(TAG + " signPageTaskList", jo)) {
-                    return;
-                }
-                if (!jo.has("categoryTaskList")) {
-                    return;
-                }
-                JSONArray categoryTaskList = jo.getJSONArray("categoryTaskList");
-                for (int i = 0; i < categoryTaskList.length(); i++) {
-                    jo = categoryTaskList.getJSONObject(i);
-                    JSONArray taskList = jo.getJSONArray("taskList");
-                    String type = jo.getString("type");
-                    if (Objects.equals("BROWSE", type)) {
-                        // doBrowseTask 内部已按 applyTask / executeTask 逐步随机延迟
-                        doubleCheck = doBrowseTask(taskList);
+            // 分页拉取签到页任务。原先无 pageNo，签到页任务多于 1 页时只会处理第一页。
+            // 服务端若忽略 pageNo（恒返回第一页），下面的 id 去重会在第二页立刻结束，
+            // 行为与原先「只查一次」完全一致，故本改动是安全的。
+            String session = java.util.UUID.randomUUID().toString();
+            Set<Long> seenTaskIds = new HashSet<>();
+            for (int page = 1; page <= MAX_SIGN_PAGE; page++) {
+                boolean hasNextPage = false;
+                while (true) {
+                    JSONObject jo = new JSONObject(AntMemberRpcCall.signPageTaskList(page, session));
+                    randomSleep(1200, 2200);
+                    boolean doubleCheck = false;
+                    if (!MessageUtil.checkResultCode(TAG + " signPageTaskList", jo)) {
+                        return;
                     }
-                    else {
-                        ExtensionsHandle.handleAlphaRequest("antMember", "doMoreTask", jo);
-                        randomSleep(1500, 3000);
+                    if (!jo.has("categoryTaskList")) {
+                        return;
                     }
+                    JSONArray categoryTaskList = jo.getJSONArray("categoryTaskList");
+                    // 本页是否出现了没见过的任务 id：一个都没有说明分页到底了
+                    boolean anyNewTask = false;
+                    for (int i = 0; i < categoryTaskList.length(); i++) {
+                        JSONObject category = categoryTaskList.getJSONObject(i);
+                        JSONArray taskList = category.getJSONArray("taskList");
+                        for (int k = 0; k < taskList.length(); k++) {
+                            JSONObject task = taskList.optJSONObject(k);
+                            JSONObject cfg = task == null ? null : task.optJSONObject("taskConfigInfo");
+                            if (cfg != null && cfg.has("id") && seenTaskIds.add(cfg.getLong("id"))) {
+                                anyNewTask = true;
+                            }
+                        }
+                        String type = category.getString("type");
+                        if (Objects.equals("BROWSE", type)) {
+                            // doBrowseTask 内部已按 applyTask / executeTask 逐步随机延迟
+                            doubleCheck = doBrowseTask(taskList);
+                        }
+                        else {
+                            ExtensionsHandle.handleAlphaRequest("antMember", "doMoreTask", category);
+                            randomSleep(1500, 3000);
+                        }
+                    }
+                    if (doubleCheck) {
+                        // 本页仍有任务被推进：重查本页，直到没有新进展
+                        continue;
+                    }
+                    hasNextPage = anyNewTask;
+                    break;
                 }
-                if (doubleCheck) {
-                    continue;
+                if (!hasNextPage) {
+                    break;
                 }
-                break;
             }
-            while (true);
         }
         catch (Throwable t) {
             Log.i(TAG, "signPageTaskList err:");
@@ -2435,23 +2459,26 @@ public class AntMember extends ModelTask {
                 String taskCode = taskMaterial.optString("taskCode", "");
                 // 根据 taskCode 执行不同的操作
                 if ("WELFARE_PLUS_ANT_FOREST".equals(taskCode) || "WELFARE_PLUS_ANT_OCEAN".equals(taskCode)) {
-                    if ("WELFARE_PLUS_ANT_FOREST".equals(taskCode)) {
-                        //String forestHomePageResponse = AntMemberRpcCall.queryforestHomePage();
-                        //TimeUtil.sleep(2000);
-                        String forestTaskResponse = AntMemberRpcCall.forestTask();
-                        TimeUtil.sleep(500);
-                        String forestreceiveTaskAward = AntMemberRpcCall.forestreceiveTaskAward();
+                    boolean isForest = "WELFARE_PLUS_ANT_FOREST".equals(taskCode);
+                    String appletName = taskBaseInfo != null
+                            ? taskBaseInfo.optString("appletName", "Unknown Applet") : "Unknown Applet";
+                    // 原先这两个响应都被丢弃（赋值给局部变量后不看），失败也照打「完成」日志、
+                    // 奖励实际没领到。现在两步都看结果：领到才记完成，失败按既有规则拉黑
+                    JSONObject listJo = new JSONObject(
+                            isForest ? AntMemberRpcCall.forestTask() : AntMemberRpcCall.oceanTask());
+                    if (!MessageUtil.checkResultCode(TAG + " 快递活力值任务列表", listJo)) {
+                        Log.i(TAG, "快递活力值任务列表查询失败: " + listJo);
                     }
-                    else if ("WELFARE_PLUS_ANT_OCEAN".equals(taskCode)) {
-                        //String oceanHomePageResponse = AntMemberRpcCall.queryoceanHomePage();
-                        //TimeUtil.sleep(2000);
-                        String oceanTaskResponse = AntMemberRpcCall.oceanTask();
-                        TimeUtil.sleep(500);
-                        String oceanreceiveTaskAward = AntMemberRpcCall.oceanreceiveTaskAward();
-                    }
-                    if (taskBaseInfo != null) {
-                        String appletName = taskBaseInfo.optString("appletName", "Unknown Applet");
-                        Log.other("我的快递💌完成[" + appletName + "]");
+                    TimeUtil.sleep(500);
+                    String awardRes = isForest ? AntMemberRpcCall.forestreceiveTaskAward()
+                            : AntMemberRpcCall.oceanreceiveTaskAward();
+                    JSONObject awardJo = new JSONObject(awardRes);
+                    if (MessageUtil.checkResultCode(TAG + " 快递活力值领奖", awardJo)) {
+                        Log.other("我的快递💌完成[" + appletName + "]#活力值奖励已领取");
+                    } else {
+                        MessageUtil.checkResultCodeAndMarkTaskBlackList("AntMemberTaskList", appletName, awardJo);
+                        Log.other("我的快递💌[" + appletName + "]#活力值奖励未领取#"
+                                + awardJo.optString("resultView", awardRes));
                     }
                 }
                 if (taskMaterial == null || !taskMaterial.has("taskId")) {

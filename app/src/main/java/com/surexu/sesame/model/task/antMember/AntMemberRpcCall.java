@@ -37,8 +37,17 @@ public class AntMemberRpcCall {
     }
 
     /* 会员任务 */
-    public static String signPageTaskList() {
-        return ApplicationHook.requestString("alipay.antmember.biz.rpc.membertask.h5.signPageTaskList", "[{\"sourceBusiness\":\"antmember\",\"spaceCode\":\"ant_member_xlight_task\"}]");
+    /**
+     * 签到页任务列表（分页）。
+     *
+     * <p>{@code pageNo} 从 1 开始；{@code session} 同一轮内复用同一个值，服务端据此串起分页。
+     * 服务端若忽略这两个参数（恒返回第一页），调用方的 id 去重会让循环在第二页立刻结束，
+     * 行为与原先「只查一次」一致。
+     */
+    public static String signPageTaskList(int pageNo, String session) {
+        return ApplicationHook.requestString("alipay.antmember.biz.rpc.membertask.h5.signPageTaskList",
+                "[{\"pageNo\":" + pageNo + ",\"pageSize\":8,\"session\":\"" + session
+                        + "\",\"sourceBusiness\":\"antmember\",\"spaceCode\":\"ant_member_xlight_task\"}]");
     }
 
     public static String applyTask(String darwinName, Long taskConfigId) {
