@@ -2528,6 +2528,29 @@ public class AntForestV2 extends ModelTask {
     }
 
     /**
+     * 森林任务完成上报（<b>不写黑名单</b>）。
+     * <p>容器型父任务下的行为子任务（无纸化阅读、电子小票等）属真实低碳行为，需用户真实操作后
+     * 服务端才判定完成；失败只代表本次未完成，不代表永远做不了。若走 {@link #finishTask}
+     * 会被 {@code checkResultCodeAndMarkTaskBlackList} 写进「活力值 | 黑名单列表」，
+     * 污染用户配置、并与同名顶层任务互相干扰。
+     */
+    private Boolean finishTaskNoBlacklist(String sceneCode, String taskType, String taskTitle) {
+        try {
+            JSONObject jo = new JSONObject(AntForestRpcCall.finishTask(sceneCode, taskType));
+            TimeUtil.sleep(500);
+            if (MessageUtil.checkSuccess(TAG, jo)) {
+                Log.forest("森林任务🧾️完成[" + taskTitle + "]");
+                return true;
+            }
+            Log.record("完成任务[" + taskTitle + "]失败");
+        } catch (Throwable t) {
+            Log.i(TAG, "finishTaskNoBlacklist err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return false;
+    }
+
+    /**
      * 容器型父任务下「已完成但未领奖」的子任务领奖。
      * <p>这类容器的行为子任务被判定完成后不会自动发放，必须逐个 {@code receiveTaskAward}；
      * 原来只处理 TODO 子任务，已完成的那部分奖励就一直挂在列表里领不到（TEST_LEAF_TASK 曾长期如此）。
@@ -2573,7 +2596,8 @@ public class AntForestV2 extends ModelTask {
                 String taskStatus = taskBaseInfo.getString("taskStatus");
                 if (TaskStatus.TODO.name().equals(taskStatus)) {
                     if (bizInfo.optBoolean("autoCompleteTask")) {
-                        finishTask(sceneCode, taskType, taskTitle);
+                        // 容器子任务失败不写黑名单：见 finishTaskNoBlacklist 的说明
+                        finishTaskNoBlacklist(sceneCode, taskType, taskTitle);
                         changed = true;
                     }
                 }
