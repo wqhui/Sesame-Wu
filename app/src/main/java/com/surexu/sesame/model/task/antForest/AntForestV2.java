@@ -438,6 +438,13 @@ public class AntForestV2 extends ModelTask {
                 Log.printStackTrace(TAG, t);
             }
 
+            // PK榜收取与「自己能量」「好友榜能量」同属收能量操作，必须放在只收能量守卫之外。
+            // 原先它在守卫块内，设置「只收能量时间」时会被一起跳过，与 collectSelfEnergy()
+            // 和好友榜收取（均已在块外）行为不一致。
+            if (pkEnergy.getValue()) {
+                collectPKEnergy();
+            }
+
             if (!TaskCommon.IS_ENERGY_TIME && selfHomeObject != null) {
                 String whackMoleStatus = selfHomeObject.optString("whackMoleStatus");
                 if (Objects.equals("CAN_PLAY", whackMoleStatus) || Objects.equals("CAN_INITIATIVE_PLAY", whackMoleStatus) || Objects.equals("NEED_MORE_FRIENDS", whackMoleStatus)) {
@@ -549,10 +556,6 @@ public class AntForestV2 extends ModelTask {
 
                 if (!wateringExecutedThisRound) {
                     waterFriendEnergy();
-                }
-
-                if (pkEnergy.getValue()) {
-                    collectPKEnergy();
                 }
 
                 // 组队合种浇水
