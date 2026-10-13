@@ -1638,30 +1638,62 @@ public class AntMember extends ModelTask {
                 int needCompleteNum = toCompleteVO.has("needCompleteNum") ? toCompleteVO.getInt("needCompleteNum") : 1;
                 int completedNum = toCompleteVO.optInt("completedNum", 0);
                 String s = null;
+                String recordId = null;
                 JSONObject responseObj = null;
 
-                // 官方走 CreditAccumulateStrategyRpcManager.taskFeedback（actionType=TO_COMPLETE
-                // + bizType=LIFE_RECORD + sceneCode=zml + version=new），全程不发
-                // PromiseRpcManager.joinActivity/pushActivity。原先的 join（领取）+ push（完成）链
-                // 服务端会拒——「存在进行中的生活记录」（PROMISE_HAS_PROCESSING_TEMPLATE）/
-                // 「参数[promiseActivityExtCheck]不是有效的入参」（ILLEGAL_ARGUMENT），
-                // 且只会在服务端留下一条永远「进行中」的生活记录，故整段废弃
-                // （原判据 toCompleteVO.has("todayFinish") 也失效：服务端根本不返回该字段）
+                // 官方链路为三段：PromiseRpcManager.joinActivity（拿 data.recordId）
+                // → CreditAccumulateStrategyRpcManager.taskFeedback → PromiseRpcManager.pushActivity（带 recordId）
+                // 注意：只发中间的 taskFeedback 时接口照样返回 success（data:true），但任务状态不推进，
+                // 会表现为「日志报完成、实际未完成、每轮都报」，故 join/push 都必须发。
+                if (!toCompleteVO.has("todayFinish")) {
+                    // 领取任务
+                    s = AntMemberRpcCall.joinSesameTask(taskTemplateId);
+                    responseObj = new JSONObject(s);
+                    //检查并标记黑名单任务
+                    MessageUtil.checkResultCodeAndMarkTaskBlackList("MemberCreditSesameTaskList", taskTitle, responseObj);
+                    TimeUtil.sleep(200);
+                    if (!MessageUtil.checkResultCode(TAG, responseObj)) {
+                        Log.error(TAG + "芝麻信用💳领取任务[" + taskTitle + "]失败#" + s);
+                        continue;
+                    }
+                    recordId = responseObj.getJSONObject("data").getString("recordId");
+                }
+                else {
+                    if (!toCompleteVO.has("recordId")) {
+                        Log.error(TAG + "芝麻信用💳任务[" + taskTitle + "未获取到]recordId#" + toCompleteVO);
+                        continue;
+                    }
+                    recordId = toCompleteVO.getString("recordId");
+                }
 
-                // 完成任务：官方实测走 taskFeedback，不再走 PromiseRpcManager.pushActivity
+                // 完成任务：三段链路 join → taskFeedback → push 须依次全部发送。
+                // 只发中间的 taskFeedback 时接口照样返回 success（data:true），但任务状态不推进，
+                // 会表现为「日志报完成、实际未完成、每轮都报」
                 for (int j = completedNum; j < needCompleteNum; j++) {
                     s = AntMemberRpcCall.feedBackSesameTaskNew(taskTemplateId);
                     TimeUtil.sleep(2000);
                     responseObj = new JSONObject(s);
                     //检查并标记黑名单任务
                     MessageUtil.checkResultCodeAndMarkTaskBlackList("MemberCreditSesameTaskList", taskTitle, responseObj);
-                    
-                    if (MessageUtil.checkResultCode(TAG, responseObj)) {
-                        Log.record("芝麻信用💳完成任务[" + taskTitle + "]#(" + (j + 1) + "/" + needCompleteNum + "天)");
+
+                    if (!MessageUtil.checkResultCode(TAG, responseObj)) {
+                        Log.error("芝麻信用💳完成任务[" + taskTitle + "]taskFeedback未受理#" + s);
+                        break;
                     }
-                    else {
-                        Log.error("芝麻信用💳完成任务[" + taskTitle + "]失败#" + s);
+
+                    // push：带 recordId 收尾，任务状态才真正推进
+                    JSONObject pushJo = new JSONObject(AntMemberRpcCall.finishSesameTask(recordId));
+                    TimeUtil.sleep(500);
+                    if ("ILLEGAL_ARGUMENT".equals(pushJo.optString("resultCode"))) {
+                        // 真实跳转类任务不可能自动完成，服务端固定拒 push：一次即拉黑，该错误不再打印
+                        MessageUtil.MarkTaskBlackList("AntMember", "MemberCreditSesameTaskList", "芝麻粒任务", taskTitle);
+                        Log.other("芝麻信用💳[" + taskTitle + "]#真实跳转类，无法自动完成，已加入黑名单");
+                        break;
                     }
+                    if (!MessageUtil.checkResultCode(TAG, pushJo)) {
+                        Log.other("芝麻信用💳[" + taskTitle + "]push被拒#不影响完成判定");
+                    }
+                    Log.record("芝麻信用💳完成任务[" + taskTitle + "]#(" + (j + 1) + "/" + needCompleteNum + "天)");
                 }
                 
                 jo = new JSONObject(AntMemberRpcCall.queryCreditFeedback());
