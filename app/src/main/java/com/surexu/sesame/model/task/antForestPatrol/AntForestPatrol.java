@@ -15,6 +15,7 @@ import com.surexu.sesame.model.base.TaskCommon;
 import com.surexu.sesame.util.Log;
 import com.surexu.sesame.util.MessageUtil;
 import com.surexu.sesame.util.Status;
+import com.surexu.sesame.util.Statistics;
 import com.surexu.sesame.util.StringUtil;
 import com.surexu.sesame.util.TimeUtil;
 import com.surexu.sesame.util.idMap.UserIdMap;
@@ -196,6 +197,9 @@ public class AntForestPatrol extends ModelTask {
                     int energy = ext.optInt("energy", 0);
                     Log.forest(PREFIX + "收取[" + optString(
                             optJSON(ext, "animal"), "name") + "]派遣能量[" + energy + "g]");
+                    if (energy > 0) {
+                        Statistics.addData(Statistics.DataType.COLLECTED, energy);
+                    }
                 }
                 queryLegacyAnimals(); // 刷新状态
                 return; // 每次只收一个

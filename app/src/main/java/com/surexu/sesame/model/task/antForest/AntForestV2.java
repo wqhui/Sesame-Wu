@@ -459,8 +459,9 @@ public class AntForestV2 extends ModelTask {
                     if (collectWateringBubble.getValue()) {
                         JSONArray wateringBubbles = selfHomeObject.has("wateringBubbles") ? selfHomeObject.getJSONArray("wateringBubbles") : new JSONArray();
                         if (wateringBubbles.length() > 0) {
-                            int collected = 0;
                             for (int i = 0; i < wateringBubbles.length(); i++) {
+                                // 每颗金球单独计数：原先声明在循环外，bubbles 为空时会复用上一次的值重复计入
+                                int collected = 0;
                                 JSONObject wateringBubble = wateringBubbles.getJSONObject(i);
                                 String bizType = wateringBubble.getString("bizType");
                                 String friendShowName = UserIdMap.getShowName(wateringBubble.getString("userId"));
@@ -470,7 +471,7 @@ public class AntForestV2 extends ModelTask {
                                         if (MessageUtil.checkResultCode("收取[我]的浇水金球", joEnergy)) {
                                             JSONArray bubbles = joEnergy.getJSONArray("bubbles");
                                             for (int j = 0; j < bubbles.length(); j++) {
-                                                collected = bubbles.getJSONObject(j).getInt("collectedEnergy");
+                                                collected += bubbles.getJSONObject(j).getInt("collectedEnergy");
                                             }
 
                                             if (collected > 0) {
@@ -505,7 +506,7 @@ public class AntForestV2 extends ModelTask {
                                         if (MessageUtil.checkResultCodeString("收取[" + friendShowName + "]的复活回赠金球", joEnergy)) {
                                             JSONArray bubbles = joEnergy.getJSONArray("bubbles");
                                             for (int j = 0; j < bubbles.length(); j++) {
-                                                collected = bubbles.getJSONObject(j).getInt("collectedEnergy");
+                                                collected += bubbles.getJSONObject(j).getInt("collectedEnergy");
                                             }
                                             if (collected > 0) {
                                                 String msg = "收取金球🍯[" + friendShowName + "]复活回赠[" + collected + "g]";
@@ -1858,6 +1859,10 @@ public class AntForestV2 extends ModelTask {
             int zulinshangpinliulan = energyGenerated.getInt("zulinshangpinliulan");
             Log.forest("绿色租赁🛍️完成[线上逛街]#产生[" + zulinshangpinliulan + "g能量]");
             Toast.show("绿色租赁🛍️完成[线上逛街]#产生[" + zulinshangpinliulan + "g能量]");
+            if (zulinshangpinliulan > 0) {
+                totalCollected += zulinshangpinliulan;
+                Statistics.addData(Statistics.DataType.COLLECTED, zulinshangpinliulan);
+            }
         } catch (Throwable t) {
             Log.i(TAG, "greenRent err:");
             Log.printStackTrace(TAG, t);
@@ -1921,6 +1926,10 @@ public class AntForestV2 extends ModelTask {
                         int receivedEnergyAmount = data.getInt("receivedEnergyAmount");
                         Log.forest("森林集市🛍️完成[线上逛街]#产生[" + receivedEnergyAmount + "g能量]");
                         Toast.show("森林集市🛍️完成[线上逛街]#产生[" + receivedEnergyAmount + "g能量]");
+                        if (receivedEnergyAmount > 0) {
+                            totalCollected += receivedEnergyAmount;
+                            Statistics.addData(Statistics.DataType.COLLECTED, receivedEnergyAmount);
+                        }
                     }
                 }
             }
@@ -1950,7 +1959,9 @@ public class AntForestV2 extends ModelTask {
                             if (!signRecord.getBoolean("signed")) {
                                 JSONObject resData2 = new JSONObject(AntForestRpcCall.antiepSign(signId, "ANTFOREST_ENERGY_SIGN", UserIdMap.getCurrentUid()));
                                 if (MessageUtil.checkSuccess(TAG, resData2)) {
-                                    Log.forest("过期能量💊[" + signRecord.getInt("awardCount") + "g]");
+                                    int expiredEnergy = signRecord.getInt("awardCount");
+                                    Log.forest("过期能量💊[" + expiredEnergy + "g]");
+                                    Statistics.addData(Statistics.DataType.COLLECTED, expiredEnergy);
                                 }
                             }
                             break;
