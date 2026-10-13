@@ -476,7 +476,13 @@ public class AntSports extends ModelTask {
         return false;
     }
 
+    /** 运动「做任务得运动币:签到」当日完成标记（服务端回读 signed=true 才落） */
+    private static final String FLAG_SIGN_IN_COIN_TASK = "sports::signInCoinTask";
+
     private void signInCoinTask() {
+        if (Status.hasFlagToday(FLAG_SIGN_IN_COIN_TASK)) {
+            return;
+        }
         try {
             JSONObject jo = new JSONObject(AntSportsRpcCall.signInCoinTask());
 
@@ -493,6 +499,8 @@ public class AntSports extends ModelTask {
                     //                        Log.record("没有签到");
                 }
             } else {
+                // 服务端回读确认「今日已签到」：落当日标记，后续运行不再调签到接口
+                Status.flagToday(FLAG_SIGN_IN_COIN_TASK);
                 Log.record("运动签到今日已签到");
             }
         } catch (Throwable t) {

@@ -15,6 +15,7 @@ import com.surexu.sesame.model.base.TaskAlternative;
 import com.surexu.sesame.util.Log;
 import com.surexu.sesame.util.MessageUtil;
 import com.surexu.sesame.util.RandomUtil;
+import com.surexu.sesame.util.Status;
 import com.surexu.sesame.util.TimeUtil;
 import com.surexu.sesame.util.idMap.GoldenBeansTaskListMap;
 import com.surexu.sesame.util.idMap.UserIdMap;
@@ -107,7 +108,15 @@ public final class GoldenBeansTasks {
      *
      * @return 签到后的同步响应，供后续弹窗与任务使用
      */
+    /** 金豆签到当日完成标记：按入口区分（农场 / 炼金各自的签到列表互不相通） */
+    private static String signFlag(GoldenBeansEntry entry) {
+        return "goldenBeans::sign::" + entry.bizType;
+    }
+
     private JSONObject doSign(JSONObject indexJo, GoldenBeansEntry entry, int interval) {
+        if (Status.hasFlagToday(signFlag(entry))) {
+            return null;
+        }
         try {
             JSONObject signInfo = indexJo.optJSONObject("signInfo");
             if (signInfo == null) {
@@ -121,7 +130,12 @@ public final class GoldenBeansTasks {
             }
             for (int i = 0; i < signList.length(); i++) {
                 JSONObject sign = signList.optJSONObject(i);
-                if (sign == null || !sign.optBoolean("today", false) || sign.optBoolean("signed", false)) {
+                if (sign != null && sign.optBoolean("today", false) && sign.optBoolean("signed", false)) {
+                    // 本轮主页 signInfo 里今日项已 signed=true：服务端回读确认，落当日标记
+                    Status.flagToday(signFlag(entry));
+                    break;
+                }
+                if (sign == null || !sign.optBoolean("today", false)) {
                     continue;
                 }
                 String signKey = sign.optString("signKey", "").trim();
@@ -141,6 +155,8 @@ public final class GoldenBeansTasks {
                         goldenbeansRpcCall.pullOf(entry.bizType, entry.source,
                                 "JAR_INFO", "SIGN", "MARKETING_POPUP", "TASK_LIST"));
                 if (GoldenBeansSupport.todaySigned(syncResponse)) {
+                    // 服务端回读已确认今日签到：落当日标记，后续运行不再查询/提交该入口签到
+                    Status.flagToday(signFlag(entry));
                     int awardCount = GoldenBeansSupport.awardCount(signResponse);
                     if (awardCount <= 0) {
                         awardCount = sign.optInt("awardCount", 0);
