@@ -967,7 +967,7 @@ public class AntMember extends ModelTask {
                     String wua = getWuaByReflection();
                     String source = "DNHZ_NC_zhimajingnangSF";
                     
-                    JSONObject spreadManureData = new JSONObject(AntOrchardRpcCall.orchardSpreadManure(false, wua));
+                    JSONObject spreadManureData = new JSONObject(AntOrchardRpcCall.orchardSpreadManure("main", false, wua));
                     
                     if (!"100".equals(spreadManureData.optString("resultCode"))) {
                         continue;

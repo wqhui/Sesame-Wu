@@ -643,8 +643,17 @@ public class AntOrchard extends ModelTask {
         try {
             String sceneName = scene.name();
             String wua = getWua();
-            String result = AntOrchardRpcCall.orchardSpreadManure(useBatchSpread.getValue(), wua);
+            String result = AntOrchardRpcCall.orchardSpreadManure(sceneName, useBatchSpread.getValue(), wua);
             JSONObject jo = new JSONObject(result);
+
+            // 场景侧的业务拒绝（P03 场景未就绪 / P14 摇钱树已达持仓金额上限）再请求也不会变，
+            // 打当日标记后当天不再重放批量请求，也避免被当成 error 打印
+            String resultCode = jo.optString("resultCode", "");
+            if ("P03".equals(resultCode) || "P14".equals(resultCode)) {
+                Status.flagToday("spreadManureLimit:" + sceneName, userId);
+                Log.record("农场施肥⏭️[" + sceneName + "]被拒：" + jo.optString("memo", resultCode));
+                return false;
+            }
 
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return false;
@@ -1453,7 +1462,7 @@ public class AntOrchard extends ModelTask {
                             for (int j = 0; j < need; j++) {
                                 // 修复：传递正确的wua参数
                                 String wua = getWua();
-                                String spreadResultStr = AntOrchardRpcCall.orchardSpreadManure(false, wua);
+                                String spreadResultStr = AntOrchardRpcCall.orchardSpreadManure("main", false, wua);
                                 Log.record("施肥第 " + (j + 1) + " 次结果：" + spreadResultStr);
                                 JSONObject resultJson = new JSONObject(spreadResultStr);
                                 if (!MessageUtil.checkResultCode(TAG, resultJson)) {
