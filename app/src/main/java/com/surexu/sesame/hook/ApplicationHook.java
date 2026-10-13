@@ -300,8 +300,15 @@ public class ApplicationHook {
                 });
                 Log.i(TAG, "hook login resume (fallback) successfully");
             } catch (Throwable t) {
-                Log.i(TAG, "hook login resume err:");
-                Log.printStackTrace(TAG, t);
+                // 该兜底 hook 只在部分版本存在 AlipayLogin.onResume 时才生效；
+                // 当前支付宝版本没有 onResume（主 hook 是上面的 LauncherActivity）属预期情况，
+                // 不打错误堆栈——否则每次启动/重开都刷 30+ 行
+                if (String.valueOf(t.getMessage()).contains("Method not found")) {
+                    Log.i(TAG, "hook login resume (fallback) 跳过: " + t.getMessage());
+                } else {
+                    Log.i(TAG, "hook login resume err:");
+                    Log.printStackTrace(TAG, t);
+                }
             }
             try {
                 XHelpers.findAndHookMethod("android.app.Service", classLoader, "onCreate", new XC_MethodHook() {

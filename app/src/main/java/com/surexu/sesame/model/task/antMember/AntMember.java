@@ -2015,7 +2015,13 @@ public class AntMember extends ModelTask {
                 String alchemyRes = AntMemberRpcCall.doAlchemy();
                 JSONObject alchemyJo = new JSONObject(alchemyRes);
                 if (!checkAlchemyRes(alchemyJo)) {
-                    Log.error("芝麻炼金⚗炼金失败#" + alchemyJo.optString("resultView", alchemyRes));
+                    String resultView = alchemyJo.optString("resultView", alchemyRes);
+                    if (resultView.contains("盖帽")) {
+                        // 服务端「盖帽值」（每日炼金上限）拦截：属正常终止条件，不是错误
+                        Log.record("芝麻炼金⚗已达每日上限#" + resultView);
+                    } else {
+                        Log.error("芝麻炼金⚗炼金失败#" + resultView);
+                    }
                     break;
                 }
                 JSONObject alData = alchemyJo.optJSONObject("data");
@@ -2196,6 +2202,14 @@ public class AntMember extends ModelTask {
                     JSONObject finishJo = new JSONObject(finishRes);
                     if (checkAlchemyRes(finishJo)) {
                         Log.other("芝麻炼金⚗[任务完成] " + title + "#获得" + task.optInt("rewardAmount", 0) + "粒");
+                    }
+                    else if ("ILLEGAL_ARGUMENT".equals(finishJo.optString("resultCode"))
+                            && finishJo.optString("resultView").contains("promiseActivityExtCheck")) {
+                        // 真实跳转/游戏内事件类任务：服务端固定拒 push，自动化不可能完成。
+                        // 记入炼金黑名单（同一进程内后续轮次不再尝试），并按提示级别记日志而非 ERROR，
+                        // 否则每天都会把这批任务重试一遍并刷一屏错误
+                        ALCHENY_BLACKLIST_TITLES.add(title);
+                        Log.other("芝麻炼金⚗[" + title + "]#需真实参与，无法自动完成，已跳过");
                     }
                     else {
                         Log.error("芝麻炼金⚗攒粒任务 finish 失败: " + title + " - " + finishRes);
