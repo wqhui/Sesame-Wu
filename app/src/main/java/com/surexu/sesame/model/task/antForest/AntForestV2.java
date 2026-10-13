@@ -87,6 +87,9 @@ public class AntForestV2 extends ModelTask {
 
     private static final String TAG = AntForestV2.class.getSimpleName();
 
+    /** 森林乐园限定任务单轮最多重拉次数：只防服务端恒回 TODO 时死循环。 */
+    private static final int MAX_OPTIONAL_PLAY_ROUNDS = 2;
+
     private static final AverageMath offsetTimeMath = new AverageMath(5);
 
     private static final Map<String, Long> usingProps = new ConcurrentHashMap<>();
@@ -2888,9 +2891,10 @@ public class AntForestV2 extends ModelTask {
     //乐园限定活动
     private void queryOptionalPlay() {
         try {
-            boolean doubleCheck = true;
-            while (doubleCheck) {
-                doubleCheck = false;
+            int round = 0;
+            while (round++ < MAX_OPTIONAL_PLAY_ROUNDS) {
+                // 单轮是否有新进展：无进展即跳出，防服务端恒回 TODO 时空转
+                boolean progressed = false;
                 JSONObject jo = new JSONObject(AntForestRpcCall.queryOptionalPlay());
                 if (!MessageUtil.checkSuccess(TAG, jo)) {
                     return;
@@ -2945,14 +2949,17 @@ public class AntForestV2 extends ModelTask {
                         }
                         if (TaskStatus.FINISHED.name().equals(taskStatus)) {
                             if (finishTask(sceneCode, taskType, title + "(" + (rightsTimes + 1) + "/" + rightsTimesLimit + ")")) {
-                                doubleCheck = true;
+                                progressed = true;
                             }
                         } else {
                             if (finishTask(sceneCode, taskType, title)) {
-                                doubleCheck = true;
+                                progressed = true;
                             }
                         }
                     }
+                }
+                if (!progressed) {
+                    break;
                 }
             }
         } catch (Throwable th) {
