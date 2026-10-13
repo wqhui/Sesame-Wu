@@ -373,6 +373,28 @@ public class MessageUtil {
     }
 
     /**
+     * 判断响应是否为「可重试的临时故障」，用于决定是否留到下一轮再试（而非当场拉黑）。
+     * <p>注意：不含 102（服务端繁忙），调用方若两者都要判，需写成
+     * {@code isRetryable(jo) || isServerBusy(jo)}。
+     */
+    public static boolean isRetryable(JSONObject jo) {
+        if (jo == null) {
+            return false;
+        }
+        String code = jo.optString("code", "").trim();
+        if (code.isEmpty()) {
+            code = jo.optString("resultCode", "").trim();
+        }
+        if (code.isEmpty()) {
+            code = jo.optString("errorCode", "").trim();
+        }
+        return jo.optBoolean("retryable", false)
+                || jo.optBoolean("retriable", false)
+                || "3000".equals(code)
+                || "REMOTE_INVOKE_EXCEPTION".equals(code);
+    }
+
+    /**
      * 判断响应是否为「服务端繁忙」（102），用于日志降噪。
      */
     public static boolean isServerBusy(JSONObject jo) {

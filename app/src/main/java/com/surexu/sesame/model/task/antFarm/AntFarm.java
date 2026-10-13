@@ -25,6 +25,7 @@ import com.surexu.sesame.data.modelFieldExt.ChoiceModelField;
 import com.surexu.sesame.entity.AlipayUser;
 import com.surexu.sesame.entity.CustomOption;
 import com.surexu.sesame.entity.FarmOrnaments;
+import com.surexu.sesame.model.base.TaskAlternative;
 import com.surexu.sesame.model.base.TaskCommon;
 import com.surexu.sesame.model.extensions.ExtensionsHandle;
 import com.surexu.sesame.model.normal.answerAI.AnswerAI;
@@ -2975,6 +2976,10 @@ public class AntFarm extends ModelTask {
      */
     private void queryOptionalPlay() {
         try {
+            // 每个任务本轮最多上报一次：同一次运行内响应"成功"不代表服务端真的落态
+            // （实测「抢先试玩爆款新游」这类 COUNT_DOWN 广告任务恒回成功却一直是 TODO），
+            // 若不记已试集合会在多轮里重复领奖 + 重复申报
+            Set<String> attempted = new HashSet<>();
             for (int round = 0; round < 3; round++) {
                 JSONObject jo = new JSONObject(AntFarmRpcCall.queryOptionalPlay());
                 if (!MessageUtil.checkSuccess(TAG, jo)) {
@@ -3003,6 +3008,20 @@ public class AntFarm extends ModelTask {
                     if (taskType.isEmpty()) {
                         continue;
                     }
+                    // 同一 taskType 可能分多阶段（rightsTimes 递增），用序号区分，避免误判为已试
+                    String attemptKey = taskType + "#" + task.optInt("rightsTimes");
+
+                    // 底线：交易/支付/充值类一律不申报、一次即拉黑，绝不伪造。
+                    // 必须同时查 groupId：充值的 taskType 可能不含关键词，真正的判据在 groupId
+                    String groupId = task.optString("groupId");
+                    if (TaskAlternative.isTransactionTask(taskType)
+                            || TaskAlternative.isTransactionTask(groupId)
+                            || TaskAlternative.isTransactionTask(sceneCode)) {
+                        MessageUtil.MarkTaskBlackList("AntFarm", "AntFarmDrawMachineTaskList",
+                                "庄园乐园限定任务", title);
+                        Log.farm("小鸡乐园⏭️交易/履约类[" + title + "]#不申报，已拉黑");
+                        continue;
+                    }
 
                     if ("FINISHED".equals(taskStatus)) {
                         // 前置条件未满足时保留待领取，不领奖也不算进展
@@ -3016,6 +3035,9 @@ public class AntFarm extends ModelTask {
                                 : task.optInt("nextStageAwardCount"));
                         if (awardCountForReceive <= 0) {
                             Log.farm("小鸡乐园🎖️[" + title + "]缺少可领取奖励数量，跳过");
+                            continue;
+                        }
+                        if (!attempted.add(attemptKey + "@award")) {
                             continue;
                         }
                         JSONObject joReceived = new JSONObject(
@@ -3039,10 +3061,16 @@ public class AntFarm extends ModelTask {
                         if ("RECEIVED".equals(taskStatus) && rightsTimesLimit > 0 && rightsTimes >= rightsTimesLimit) {
                             continue;
                         }
+                        if (!attempted.add(attemptKey)) {
+                            continue;
+                        }
                         JSONObject joFinished = new JSONObject(AntFarmRpcCall.finishLeyuanTask(sceneCode, taskType));
                         if (MessageUtil.checkSuccess(TAG, joFinished)) {
                             Log.farm("小鸡乐园🧾[" + title + "]已提交，下轮回查领奖");
                             progressed = true;
+                        } else if (MessageUtil.isRetryable(joFinished) || MessageUtil.isServerBusy(joFinished)) {
+                            // 可重试/服务端繁忙不拉黑，留给下一轮
+                            Log.record("小鸡乐园🧾[" + title + "]任务完成暂不可用:" + joFinished);
                         } else {
                             Log.record("小鸡乐园🧾[" + title + "]任务完成失败:" + joFinished);
                         }
