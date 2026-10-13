@@ -53,6 +53,7 @@ import com.surexu.sesame.entity.VitalityBenefit;
 import com.surexu.sesame.entity.AlipayForestHunt;
 import com.surexu.sesame.hook.ApplicationHook;
 import com.surexu.sesame.hook.Toast;
+import com.surexu.sesame.model.base.TaskAlternative;
 import com.surexu.sesame.model.base.TaskCommon;
 import com.surexu.sesame.model.extensions.ExtensionsHandle;
 import com.surexu.sesame.model.normal.base.BaseModel;
@@ -2535,13 +2536,20 @@ public class AntForestV2 extends ModelTask {
     private Boolean finishTask(String sceneCode, String taskType, String taskTitle) {
         try {
             JSONObject jo = new JSONObject(AntForestRpcCall.finishTask(sceneCode, taskType));
-            //检查并标记黑名单任务
-            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntForestVitalityTaskList", taskTitle, jo);
             TimeUtil.sleep(500);
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.forest("森林任务🧾️完成[" + taskTitle + "]");
                 return true;
             }
+            // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）。
+            // 原先裸调 finishTask 会把它直接吞成 false，导致兜底永不触发；此处也不应因此拉黑
+            if (TaskAlternative.hit(jo, sceneCode)) {
+                TaskAlternative.trigger(null, taskType, taskTitle, taskType, sceneCode,
+                        "森林任务", msg -> Log.forest(msg));
+                return true;
+            }
+            //检查并标记黑名单任务
+            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntForestVitalityTaskList", taskTitle, jo);
             Log.record("完成任务[" + taskTitle + "]失败");
         } catch (Throwable t) {
             Log.i(TAG, "finishTask err:");
