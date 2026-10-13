@@ -21,6 +21,7 @@ import com.surexu.sesame.model.extensions.ExtensionsHandle;
 import com.surexu.sesame.model.task.antGame.GameCenterPlayRpcCall;
 import com.surexu.sesame.model.task.antOrchard.AntOrchardRpcCall;
 import com.surexu.sesame.util.*;
+import com.surexu.sesame.util.idMap.AlchemyAutoBlacklistMap;
 import com.surexu.sesame.util.idMap.AntFarmDoFarmTaskListMap;
 import com.surexu.sesame.util.idMap.AntMemberTaskListMap;
 import com.surexu.sesame.util.idMap.MemberBenefitIdMap;
@@ -1953,6 +1954,67 @@ public class AntMember extends ModelTask {
         }
     }
 
+    /**
+     * 按服务端错误码判定炼金任务是否「确定做不了」，是则写入动态黑名单并落盘。
+     *
+     * <p>参照 Sesame-AG 的 {@code TaskBlacklist.autoAddToBlacklist}：只认少数**确定性**错误码，
+     * 未知码一律不拉黑——偶发失败/服务端抖动不该被当成永久失败误杀。按 templateId 存而非标题
+     * （标题是「玩寻道大千」式动态文案，会随活动改版失效）。
+     *
+     * @return 是否已判定为「做不了」并落盘（true 时调用方按提示级别记日志，不打 ERROR）
+     */
+    private static boolean autoBlacklistAlchemyTask(String templateId, String title, JSONObject jo) {
+        if (templateId == null || templateId.trim().isEmpty()) {
+            return false;
+        }
+        String errorCode = jo.optString("resultCode", "").trim();
+        if (errorCode.isEmpty()) {
+            errorCode = jo.optString("errorCode", "").trim();
+        }
+        String resultView = jo.optString("resultView", "");
+        String reason;
+        switch (errorCode) {
+            case "400000040":
+                reason = "不支持rpc调用";
+                break;
+            case "20020012":
+                reason = "任务ID为空或无效";
+                break;
+            case "ILLEGAL_ARGUMENT":
+                // 仅当服务端明确指认 promiseActivityExtCheck 时才算「需真实参与」；
+                // 其它参数错误可能只是本次请求有问题，不拉黑
+                if (!resultView.contains("promiseActivityExtCheck")) {
+                    return false;
+                }
+                reason = "需真实参与(promiseActivityExtCheck)";
+                break;
+            case "TASK_ID_INVALID":
+                reason = "任务ID非法";
+                break;
+            case "PROMISE_TEMPLATE_NOT_EXIST":
+                reason = "生活记录模板不存在";
+                break;
+            case "FAKE_SUCCESS":
+                reason = "检测到伪成功";
+                break;
+            case "AD_TRAFFIC_RISK":
+            case "217":
+            case "61002":
+                reason = "广告流量风控";
+                break;
+            default:
+                // 未知错误码：可能是偶发/服务端抖动，不拉黑，留给下轮重试
+                return false;
+        }
+        if (AlchemyAutoBlacklistMap.contains(templateId)) {
+            return true;
+        }
+        AlchemyAutoBlacklistMap.add(templateId, title);
+        AlchemyAutoBlacklistMap.save();
+        Log.other("芝麻炼金⚗[" + title + "]#" + reason + "，无法自动完成，已加入跳过列表");
+        return true;
+    }
+
     private void doSesameAlchemy() {
         // 限时任务（早/午/晚饭）每次 run 都尝试，饭点窗口内即可完成，不占每日总 flag
         doSesameAlchemyLimitedTasks();
@@ -2168,7 +2230,10 @@ public class AntMember extends ModelTask {
                 }
 
                 // 默认黑名单：这些模板/标题通过 RPC 必然返回 ILLEGAL_ARGUMENT / PROMISE_TEMPLATE_NOT_EXIST
-                if (ALCHENY_BLACKLIST_TEMPLATE_IDS.contains(templateId) || ALCHENY_BLACKLIST_TITLES.contains(title)) {
+                // 动态黑名单：运行时按服务端错误码判定后落盘（见 autoBlacklistAlchemyTask），跨启动生效
+                if (ALCHENY_BLACKLIST_TEMPLATE_IDS.contains(templateId)
+                        || ALCHENY_BLACKLIST_TITLES.contains(title)
+                        || AlchemyAutoBlacklistMap.contains(templateId)) {
                     Log.record("芝麻炼金⚗[黑名单跳过] " + title);
                     continue;
                 }
@@ -2203,13 +2268,8 @@ public class AntMember extends ModelTask {
                     if (checkAlchemyRes(finishJo)) {
                         Log.other("芝麻炼金⚗[任务完成] " + title + "#获得" + task.optInt("rewardAmount", 0) + "粒");
                     }
-                    else if ("ILLEGAL_ARGUMENT".equals(finishJo.optString("resultCode"))
-                            && finishJo.optString("resultView").contains("promiseActivityExtCheck")) {
-                        // 真实跳转/游戏内事件类任务：服务端固定拒 push，自动化不可能完成。
-                        // 记入炼金黑名单（同一进程内后续轮次不再尝试），并按提示级别记日志而非 ERROR，
-                        // 否则每天都会把这批任务重试一遍并刷一屏错误
-                        ALCHENY_BLACKLIST_TITLES.add(title);
-                        Log.other("芝麻炼金⚗[" + title + "]#需真实参与，无法自动完成，已跳过");
+                    else if (autoBlacklistAlchemyTask(templateId, title, finishJo)) {
+                        // 服务端按错误码明确判定做不了：已落盘跳过，日志按提示级别记而非 ERROR
                     }
                     else {
                         Log.error("芝麻炼金⚗攒粒任务 finish 失败: " + title + " - " + finishRes);

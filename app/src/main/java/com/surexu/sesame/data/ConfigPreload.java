@@ -2,6 +2,7 @@ package com.surexu.sesame.data;
 
 import com.surexu.sesame.util.FileUtil;
 import com.surexu.sesame.util.StringUtil;
+import com.surexu.sesame.util.idMap.AlchemyAutoBlacklistMap;
 import com.surexu.sesame.util.idMap.AnimalIdMap;
 import com.surexu.sesame.util.idMap.AntDodoTaskListMap;
 import com.surexu.sesame.util.idMap.AntFarmDoFarmTaskListMap;
@@ -72,6 +73,7 @@ public final class ConfigPreload {
         AntOceanFishBlackListMap.load();
         AntOrchardTaskListMap.load();
         OrchardChouChouLeTaskListMap.load();
+        AlchemyAutoBlacklistMap.load();
         AntStallTaskListMap.load();
         AntSportsTaskListMap.load();
         PathThemeMapListMap.load();
