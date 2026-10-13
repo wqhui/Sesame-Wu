@@ -107,10 +107,15 @@ public final class GoldenBeansGameCenter {
                 int remaining = Math.max(candidate.remainingRewards(), remainingDraws);
                 Log.goldenBeans("金豆乐园🎮游玩[" + gameTask.getTitle() + "]#目标[" + remaining + "]");
                 GoldenBeansSupport.pause(interval);
-                int successes = gameTask.reportSync("金豆乐园:" + gameTask.getTitle(), remaining);
+                // 金豆乐园场景必须使用专用上报渠道 "goldenbean"，否则游戏服接受上报（code=1）
+                // 但支付宝侧权益不推进，表现为「砸蛋/游戏任务无效」
+                int successes = gameTask.reportDetailed("金豆乐园:" + gameTask.getTitle(), remaining,
+                        goldenbeansRpcCall.GAME_CHANNEL, true).getSuccessfulReports();
                 if (successes <= 0) {
-                    Log.record("金豆乐园⚠️[" + gameTask.getTitle() + "]上报失败");
-                    return false;
+                    // 单款失败只跳过该款、继续尝试其它款（candidate 已进 attempted，本轮不会重选）；
+                    // 原先直接 return 会中断整个乐园流程，导致当天砸蛋次数填不满
+                    Log.record("金豆乐园⚠️[" + gameTask.getTitle() + "]上报失败#跳过该款");
+                    continue;
                 }
 
                 JSONObject after = GoldenBeansSupport.parse(goldenbeansRpcCall.fetchGameList());
