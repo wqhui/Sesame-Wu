@@ -6,6 +6,8 @@ import org.json.JSONObject;
 import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.surexu.sesame.hook.Toast;
 import com.surexu.sesame.util.Log;
@@ -19,6 +21,9 @@ import com.surexu.sesame.util.idMap.UserIdMap;
 public class ForestChouChouLe {
 
     private static final String TAG = ForestChouChouLe.class.getSimpleName();
+
+    /** 能量奖励的数值写在 prizeName 里（如 188g能量），prizeNum 只是份数 */
+    private static final Pattern ENERGY_PRIZE_PATTERN = Pattern.compile("(\\d+)g能量");
 
     void chouChouLe(Boolean ForestHuntDraw, Boolean ForestHuntHelp, Set<String> shareIds, Boolean NORMALForestHuntHelp, Boolean ACTIVITYForestHuntHelp, Set<String> AntForestHuntTaskList) {
         try {
@@ -227,7 +232,13 @@ public class ForestChouChouLe {
                             Log.forest("森林寻宝🎁领取[" + prizeName + "*" + prizeNum + "]" + "#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
                             Toast.show("森林寻宝🎁领取[" + prizeName + "*" + prizeNum + "]");
                             if (prizeName.contains("g能量")) {
-                                Statistics.addData(Statistics.DataType.COLLECTED, prizeNum);
+                                // 记能量值而非份数：prizeName 里带的是能量值（如 188g能量），
+                                // prizeNum 只是份数，直接记 prizeNum 会按"个数"入账（实测每天少记数百克）
+                                Matcher energyMatcher = ENERGY_PRIZE_PATTERN.matcher(prizeName);
+                                if (energyMatcher.find()) {
+                                    Statistics.addData(Statistics.DataType.COLLECTED,
+                                            Integer.parseInt(energyMatcher.group(1)) * prizeNum);
+                                }
                             }
                         } else {
                             blance--;
