@@ -708,24 +708,19 @@ fun LogsTab(activity: MiuixMainActivity) {
     Spacer(Modifier.height(16.dp))
 }
 
-/** 日志条目行：点按整行进入对应日志详情；右侧开关控制是否记录 */
+/**
+ * 日志条目行：点按整行进入对应日志详情，右侧 miuix 原生箭头（[ArrowPreference] 自带）提示可进入；
+ * 右侧开关控制是否记录。点开关不会误触发进入详情——[Switch] 自身会消费点击事件。
+ */
 @Composable
 fun LogSwitchRow(title: String, checked: Boolean, onClick: () -> Unit, onCheckedChange: (Boolean) -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = title,
-            modifier = Modifier.weight(1f),
-            fontSize = 16.sp,
-            color = MiuixTheme.colorScheme.onBackground
-        )
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
+    ArrowPreference(
+        title = title,
+        onClick = onClick,
+        endActions = {
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        }
+    )
 }
 
 /** 打开日志查看器(显示指定日志类型的全部条目) */

@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -30,7 +31,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,7 +47,6 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import java.io.File
 
@@ -109,20 +108,26 @@ class MiuixLogViewerActivity : MiuixBaseActivity() {
  * 日志详情页:展示指定类目的全部条目卡片。
  * 仿 LSPosed 日志界面:每条目一张卡(标签 + 时间 + 正文)。
  *
- * 实时刷新:页面打开期间每 2 秒重读当日日志文件,新条目自动出现;
- * 默认跟随最新(滚动到底部),用户手动上滑查看历史时暂停自动滚动,
- * 滑回底部后恢复跟随 —— 与 GR 版从支付宝切回即看到新日志的体验对齐并更进一步。
+ * 实时刷新:页面打开期间每 2 秒重读当日日志文件,新条目自动出现。
+ * 列表为**倒序**(最新在最上):打开即看到最新一条,无需初始滚动。
+ * 新条目插在头部,用户向下翻历史时不会被拽走;
+ * 只有用户本来就停在顶部时才自动跟随最新,滚回顶部即恢复跟随。
+ * 正文支持长按选中复制。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun LogScreen(activity: MiuixLogViewerActivity, logType: LogType) {
     val context = LocalContext.current
-    val file = logType.file
+    // 只在进入时取一次文件:LogType.file 的 getter 内部有磁盘 I/O(exists/createNewFile 等),
+    // 不能放在组合里每次重组都求值
+    val file = remember(logType) { logType.file }
     var entries by remember(logType) { mutableStateOf(loadLogEntries(file)) }
     val listState = rememberLazyListState()
-    var followTail by remember(logType) { mutableStateOf(true) }
+    // 倒序展示:最新的日志在最上面。asReversed() 是 O(1) 的视图,不会复制列表
+    val displayEntries = entries.asReversed()
 
-    // 轮询刷新:打开期间每 2 秒重读文件,内容有变化则更新列表
+    // 轮询刷新:打开期间每 2 秒重读文件,内容有变化则更新列表。
+    // 新条目插在列表头部,用户向下翻历史时不会被拽走;仅当用户本来就停在顶部时才跟随最新。
     LaunchedEffect(file) {
         while (isActive) {
             delay(2000)
@@ -131,27 +136,17 @@ fun LogScreen(activity: MiuixLogViewerActivity, logType: LogType) {
             if (fresh.size != old.size ||
                 (fresh.isNotEmpty() && old.isNotEmpty() && fresh.last() != old.last())
             ) {
+                // 必须在写入 entries 之前判定:写入后 LazyColumn 会按 key 锚定当前可见项,
+                // 把 firstVisibleItemIndex 从 0 顶到 1,那时再读就永远判断不出"原本停在顶部"了。
+                val wasAtTop = listState.firstVisibleItemIndex == 0 &&
+                    listState.firstVisibleItemScrollOffset == 0
                 entries = fresh
-                if (followTail && fresh.isNotEmpty()) {
-                    listState.scrollToItem(index = fresh.size - 1)
+                if (wasAtTop && fresh.isNotEmpty()) {
+                    // 非挂起 API:把"顶部"登记给下一次测量,并跳过 key 锚定。
+                    // 不阻塞轮询,也不会和用户的手势抢滚动。
+                    listState.requestScrollToItem(0)
                 }
             }
-        }
-    }
-
-    // 跟随判定:用户滚动到接近底部(最后2项内)视为"跟随最新",上滑看历史则暂停跟随
-    LaunchedEffect(listState) {
-        snapshotFlow {
-            val info = listState.layoutInfo
-            val lastVisible = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-            info.totalItemsCount == 0 || lastVisible >= info.totalItemsCount - 2
-        }.collect { atBottom -> followTail = atBottom }
-    }
-
-    // 首次进入直接定位到最新一条(底部)
-    LaunchedEffect(file, entries.size) {
-        if (followTail && entries.isNotEmpty()) {
-            listState.scrollToItem(index = entries.size - 1)
         }
     }
 
@@ -202,7 +197,10 @@ fun LogScreen(activity: MiuixLogViewerActivity, logType: LogType) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
-                itemsIndexed(entries, key = { _, e -> "${e.lineNumber}-${e.hashCode()}" }) { _, entry ->
+                itemsIndexed(
+                    items = displayEntries,
+                    key = { _, e -> "${e.lineNumber}-${e.hashCode()}" }
+                ) { _, entry ->
                     LogEntryCard(entry)
                 }
             }
@@ -239,11 +237,14 @@ fun LogEntryCard(entry: LogEntry) {
         }
         if (entry.body.isNotBlank()) {
             Spacer(Modifier.height(4.dp))
-            Text(
-                text = entry.body,
-                fontSize = 13.sp,
-                color = MiuixTheme.colorScheme.onBackground
-            )
+            // 正文可长按选中复制,方便把日志贴到 issue / 群里
+            SelectionContainer {
+                Text(
+                    text = entry.body,
+                    fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onBackground
+                )
+            }
         }
     }
 }
