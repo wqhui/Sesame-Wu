@@ -398,7 +398,8 @@ public class AntOrchard extends ModelTask {
                     } else {
                         int remain = limit - smashed;
                         if (remain > 0) {
-                            GameTask.Orchard_ncscc.report("农场", remain);
+                            // 进度日志走庄园系通道：农场与庄园共用「庄园记录」（见 Log.farm 注释）
+                            GameTask.Orchard_ncscc.report("农场", remain, Log::farm);
                         }
                     }
                 }

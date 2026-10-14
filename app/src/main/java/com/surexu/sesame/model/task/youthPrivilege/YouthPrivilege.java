@@ -108,7 +108,7 @@ public class YouthPrivilege extends ModelTask {
     @Override
     public Boolean check() {
         if (TaskCommon.IS_ENERGY_TIME) {
-            Log.record(PREFIX + "任务暂停⏸️当前为仅收能量时间");
+            Log.member(PREFIX + "任务暂停⏸️当前为仅收能量时间");
             return false;
         }
         return true;
@@ -174,9 +174,9 @@ public class YouthPrivilege extends ModelTask {
                 confirmCheckIn();
             } else if (ACTION_CHECKED_IN.equals(action)) {
                 Status.flagToday(FLAG_CHECK_IN_DONE);
-                Log.forest(PREFIX + "签到已完成#action=" + action);
+                Log.member(PREFIX + "签到已完成#action=" + action);
             } else {
-                Log.forest(PREFIX + "签到暂不处理#action=" + (action.isEmpty() ? "UNKNOWN" : action));
+                Log.member(PREFIX + "签到暂不处理#action=" + (action.isEmpty() ? "UNKNOWN" : action));
             }
         } catch (Throwable th) {
             Log.i(TAG, "checkIn err:");
@@ -197,7 +197,7 @@ public class YouthPrivilege extends ModelTask {
             String action = checkInInfo == null ? "" : checkInInfo.optString("action");
             if (ACTION_CHECKED_IN.equals(action)) {
                 Status.flagToday(FLAG_CHECK_IN_DONE);
-                Log.forest(PREFIX + "签到回查确认完成");
+                Log.member(PREFIX + "签到回查确认完成");
             } else {
                 Log.error(TAG + " " + "青春特权签到执行成功但未确认进展#action="
                         + (action.isEmpty() ? "UNKNOWN" : action) + " raw=" + confirmation);
@@ -276,9 +276,9 @@ public class YouthPrivilege extends ModelTask {
             }
             if (allResolved) {
                 Status.flagToday(FLAG_TASKS_DONE);
-                Log.forest(PREFIX + "任务服务端已无待处理项");
+                Log.member(PREFIX + "任务服务端已无待处理项");
             } else {
-                Log.forest(PREFIX + "任务仍有待回查项，下轮继续");
+                Log.member(PREFIX + "任务仍有待回查项，下轮继续");
             }
         } catch (Throwable th) {
             Log.i(TAG, "youthTasks err:");
@@ -288,7 +288,7 @@ public class YouthPrivilege extends ModelTask {
 
     private void logTaskAction(String action, String taskCode, JSONObject response) {
         if (isYouthSuccess(response)) {
-            Log.forest(PREFIX + "任务[" + action + "]已受理 code=" + taskCode);
+            Log.member(PREFIX + "任务[" + action + "]已受理 code=" + taskCode);
         } else {
             Log.error(TAG + " " + "青春特权任务[" + action + "]失败 code=" + taskCode + " raw=" + response);
         }
@@ -357,15 +357,15 @@ public class YouthPrivilege extends ModelTask {
             }
             List<JSONObject> confirmed = filterConfirmed(daily);
             if (!confirmed.isEmpty()) {
-                Log.forest(PREFIX + "体验金当日发放已确认#" + describeAwards(confirmed));
+                Log.member(PREFIX + "体验金当日发放已确认#" + describeAwards(confirmed));
                 return;
             }
             if (!daily.isEmpty()) {
-                Log.forest(PREFIX + "体验金当日已有订单但券状态未确认，保留后续查询");
+                Log.member(PREFIX + "体验金当日已有订单但券状态未确认，保留后续查询");
                 return;
             }
             if (Status.hasFlagToday(FLAG_TRIAL_TRIGGERED)) {
-                Log.forest(PREFIX + "体验金当日已触发过领取，本轮仅回查");
+                Log.member(PREFIX + "体验金当日已触发过领取，本轮仅回查");
                 return;
             }
 
@@ -381,9 +381,9 @@ public class YouthPrivilege extends ModelTask {
             List<JSONObject> afterConfirmed = afterDaily == null ? new ArrayList<>() : filterConfirmed(afterDaily);
             // 日奖励不以月奖励代替，日奖励未确认时保留后续查询
             if (!afterConfirmed.isEmpty()) {
-                Log.forest(PREFIX + "体验金当日发放确认#" + describeAwards(afterConfirmed));
+                Log.member(PREFIX + "体验金当日发放确认#" + describeAwards(afterConfirmed));
             } else {
-                Log.forest(PREFIX + "体验金当日到账未确认，保留后续查询");
+                Log.member(PREFIX + "体验金当日到账未确认，保留后续查询");
             }
         } catch (Throwable th) {
             Log.i(TAG, "trialPrize err:");
@@ -514,7 +514,7 @@ public class YouthPrivilege extends ModelTask {
             }
             if (progressed) {
                 Status.flagToday(FLAG_MONTHLY_DONE);
-                Log.forest(PREFIX + "每月理财福利已处理");
+                Log.member(PREFIX + "每月理财福利已处理");
             }
         } catch (Throwable th) {
             Log.i(TAG, "monthly err:");
@@ -569,7 +569,7 @@ public class YouthPrivilege extends ModelTask {
                         JSONObject result = new JSONObject(
                                 YouthPrivilegeRpcCall.receiveMonthlyPrivilege(privilegeId, MONTHLY_MODULE_ID));
                         if (isYouthSuccess(result)) {
-                            Log.forest(PREFIX + "每月理财福利[" + item.optString("title", privilegeId) + "]已领取");
+                            Log.member(PREFIX + "每月理财福利[" + item.optString("title", privilegeId) + "]已领取");
                             claimed = true;
                         } else {
                             Log.error(TAG + " " + "青春每月权益领取失败 id=" + privilegeId + " raw=" + result);
@@ -616,15 +616,15 @@ public class YouthPrivilege extends ModelTask {
             String status = index.optString("multiDrawsLotteryStatus");
             if ("LIMIT".equals(status)) {
                 Status.clearFlag(FLAG_MULTI_DRAWS_PENDING);
-                Log.forest(PREFIX + "十连抽额度已用完，当前余额#" + index.optString("totalAmount"));
+                Log.member(PREFIX + "十连抽额度已用完，当前余额#" + index.optString("totalAmount"));
                 return;
             }
             if (!"DRAW".equals(status)) {
-                Log.forest(PREFIX + "十连抽当前不可执行#status=" + status);
+                Log.member(PREFIX + "十连抽当前不可执行#status=" + status);
                 return;
             }
             if (Status.hasFlagToday(FLAG_MULTI_DRAWS_PENDING)) {
-                Log.forest(PREFIX + "十连抽已有请求待确认，仅回查额度，暂不再次消费");
+                Log.member(PREFIX + "十连抽已有请求待确认，仅回查额度，暂不再次消费");
                 return;
             }
             BigDecimal cost = toDecimal(index.optString("multiDrawsCost"));
@@ -634,7 +634,7 @@ public class YouthPrivilege extends ModelTask {
                 return;
             }
             if (balance.compareTo(cost) < 0) {
-                Log.forest(PREFIX + "十连抽余额不足#余额=" + balance + " 成本=" + cost);
+                Log.member(PREFIX + "十连抽余额不足#余额=" + balance + " 成本=" + cost);
                 return;
             }
 
@@ -656,7 +656,7 @@ public class YouthPrivilege extends ModelTask {
                     if (prize == null) {
                         continue;
                     }
-                    Log.forest(PREFIX + "十连抽🎁[" + prize.optString("title") + "] " + prize.optString("subTitle"));
+                    Log.member(PREFIX + "十连抽🎁[" + prize.optString("title") + "] " + prize.optString("subTitle"));
                 }
             } else if (result != null) {
                 Log.error(TAG + " " + "青春豆十连抽失败，不立即重试:" + result);
@@ -670,7 +670,7 @@ public class YouthPrivilege extends ModelTask {
             }
             if ("LIMIT".equals(confirmed.optString("multiDrawsLotteryStatus"))) {
                 Status.clearFlag(FLAG_MULTI_DRAWS_PENDING);
-                Log.forest(PREFIX + "十连抽额度已确认消耗，剩余余额#" + confirmed.optString("totalAmount"));
+                Log.member(PREFIX + "十连抽额度已确认消耗，剩余余额#" + confirmed.optString("totalAmount"));
             } else {
                 Log.error(TAG + " " + "青春豆十连抽额度尚未确认变化，不重复抽取:" + confirmed);
             }

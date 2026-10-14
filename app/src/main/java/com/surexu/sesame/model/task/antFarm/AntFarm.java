@@ -2171,7 +2171,7 @@ public class AntFarm extends ModelTask {
                     } else {
                         // 留痕：标题被服务端改得完全不像时会落到这里（并可能被自动拉黑），
                         // 日志里的 bizKey/taskId 用于后续把分派改成稳定字段
-                        Log.other("饲料任务⚠️未完成[" + title + "]#bizKey=" + bizKey + "#taskId=" + taskId + "#taskType=" + taskType);
+                        Log.farm("饲料任务⚠️未完成[" + title + "]#bizKey=" + bizKey + "#taskId=" + taskId + "#taskType=" + taskType);
                     }
                 }
             }
@@ -3899,7 +3899,7 @@ public class AntFarm extends ModelTask {
                             int beforeUsed = beforeRights != null ? beforeRights.optInt("usedQuota", used) : used;
                             int beforeQuota = beforeRights != null ? beforeRights.optInt("quotaCanUse", quotaCanUse) : quotaCanUse;
                             // report 是异步线程，上报完立刻回读会读到旧状态，这里用同步版
-                            int successes = GameTask.Farm_ddply.reportSync("庄园", remainToTask);
+                            int successes = GameTask.Farm_ddply.reportSync("庄园", remainToTask, Log::farm);
                             if (successes > 0) {
                                 JSONObject afterJo = new JSONObject(AntFarmRpcCall.queryGameList());
                                 JSONObject afterRights = afterJo.optJSONObject("gameCenterDrawRights");

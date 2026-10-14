@@ -2823,7 +2823,7 @@ public class AntForestV2 extends ModelTask {
                     || "NOT_TRIGGER".equals(sljydStatus);
 
             if (shouldReport) {
-                GameTask.Forest_sljyd.report("森林", 1);
+                GameTask.Forest_sljyd.report("森林", 1, Log::forest);
                 Status.flagToday("EnergyRain::PlayGame");
                 return;
             }
@@ -2900,7 +2900,7 @@ public class AntForestV2 extends ModelTask {
                 // 2. 判断是否需要刷任务
                 int remainToTask = limitCount - usedCount;
                 if (remainToTask > 0) {
-                    GameTask.Forest_slxcc.report("森林", remainToTask);
+                    GameTask.Forest_slxcc.report("森林", remainToTask, Log::forest);
                 } else {
                     Log.record("今日森林乐园游戏任务已满额");
                 }

@@ -75,7 +75,8 @@ public class AntForestPatrol extends ModelTask {
     @Override
     public Boolean check() {
         if (TaskCommon.IS_ENERGY_TIME) {
-            Log.record(PREFIX + "任务暂停⏸️当前为仅收能量时间");
+            // 与其他模块一致：「任务暂停」属于用户可见状态，进业务日志而非仅运行日志
+            Log.forest(PREFIX + "任务暂停⏸️当前为仅收能量时间");
             return false;
         }
         return true;

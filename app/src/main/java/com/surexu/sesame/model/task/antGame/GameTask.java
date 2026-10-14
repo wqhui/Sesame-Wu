@@ -5,6 +5,7 @@ import static com.surexu.sesame.hook.AlipayMiniMarkHelper.getAlipayMiniMark;
 import com.surexu.sesame.hook.AlipayMiniMarkHelper;
 import com.surexu.sesame.hook.ApplicationHook;
 import com.surexu.sesame.hook.AuthCodeHelper;
+import com.surexu.sesame.model.base.TaskAlternative.LogSink;
 import com.surexu.sesame.util.Log;
 import com.surexu.sesame.util.idMap.UserIdMap;
 
@@ -210,14 +211,25 @@ public enum GameTask {
     }
 
     /**
-     * 外部调用：执行上报任务（异步）
+     * 外部调用：执行上报任务（异步，进度日志走「其他记录」）
      * @param gameType 日志展示用的场景名
      * @param eggCount 目标蛋数量
      */
     public void report(String gameType, int eggCount) {
+        report(gameType, eggCount, Log::other);
+    }
+
+    /**
+     * 外部调用：执行上报任务（异步），并指定进度日志通道。
+     *
+     * @param gameType       日志展示用的场景名
+     * @param eggCount       目标蛋数量
+     * @param progressLogger 进度日志通道；森林传 {@code Log::forest}，庄园传 {@code Log::farm}
+     */
+    public void report(String gameType, int eggCount, LogSink progressLogger) {
         new Thread(() -> {
             Log.record("开始执行🚀" + gameType + "游戏任务:目标" + eggCount + "个蛋");
-            ReportResult result = reportDetailed(gameType, eggCount, this.channel, true);
+            ReportResult result = reportDetailed(gameType, eggCount, this.channel, true, progressLogger);
             if (result.isCompleted()) {
                 Log.record(gameType + "游戏任务🏁已完成[" + result.getSuccessfulReports()
                         + "/" + result.getRequiredSuccesses() + "]");
@@ -230,7 +242,7 @@ public enum GameTask {
     }
 
     /**
-     * 同步执行上报任务，返回成功上报次数。
+     * 同步执行上报任务，返回成功上报次数（进度日志走「其他记录」）。
      * 用于需要等待结果并回查服务端状态的场景（如金豆乐园游戏权益）。
      *
      * @param gameType 日志展示用的场景名
@@ -238,7 +250,19 @@ public enum GameTask {
      * @return 成功上报的次数，失败返回已成功的次数
      */
     public int reportSync(String gameType, int eggCount) {
-        return reportDetailed(gameType, eggCount, this.channel, true).getSuccessfulReports();
+        return reportSync(gameType, eggCount, Log::other);
+    }
+
+    /**
+     * 同步执行上报任务，返回成功上报次数，并指定进度日志通道。
+     *
+     * @param gameType       日志展示用的场景名
+     * @param eggCount       目标蛋数量
+     * @param progressLogger 进度日志通道；庄园传 {@code Log::farm}
+     * @return 成功上报的次数，失败返回已成功的次数
+     */
+    public int reportSync(String gameType, int eggCount, LogSink progressLogger) {
+        return reportDetailed(gameType, eggCount, this.channel, true, progressLogger).getSuccessfulReports();
     }
 
     /** 同步执行上报任务并返回结构化结果 */
@@ -247,10 +271,7 @@ public enum GameTask {
     }
 
     /**
-     * 同步执行上报任务，返回结构化结果。
-     * <p>
-     * 与旧实现相比：请求次数改为「所需成功次数 + 1 次兜底」，进度按 requestsPerEgg 汇报，
-     * 失败时保留服务端原始响应，便于调用方决定是否回查。
+     * 同步执行上报任务，返回结构化结果（进度日志走「其他记录」）。
      *
      * @param gameType             日志展示用的场景名
      * @param eggCount             目标蛋数量
@@ -259,6 +280,29 @@ public enum GameTask {
      */
     public ReportResult reportDetailed(String gameType, int eggCount, String actionFinishChannel,
                                       boolean includeSafetyReport) {
+        return reportDetailed(gameType, eggCount, actionFinishChannel, includeSafetyReport, Log::other);
+    }
+
+    /**
+     * 同步执行上报任务，返回结构化结果，并指定进度日志通道。
+     * <p>
+     * 与旧实现相比：请求次数改为「所需成功次数 + 1 次兜底」，进度按 requestsPerEgg 汇报，
+     * 失败时保留服务端原始响应，便于调用方决定是否回查。
+     * <p>
+     * 进度日志的通道必须由调用方决定，不能由本模块写死：GameTask 是枚举单例，而
+     * {@link #matchAppId} 会让同一款游戏（如 {@code Farm_ddply}）既被庄园调用、也被金豆乐园调用，
+     * 所以「当前属于哪个业务」只有调用方知道。原先固定走 {@link Log#other}，
+     * 导致金豆乐园的游戏进度串进「其他记录」。
+     *
+     * @param gameType             日志展示用的场景名
+     * @param eggCount             目标蛋数量
+     * @param actionFinishChannel  上报使用的 action_finish_channel
+     * @param includeSafetyReport  是否额外多发一次作为网络兜底
+     * @param progressLogger       进度日志通道；庄园/农场/森林传 {@code Log::other}，
+     *                             金豆乐园传 {@code Log::goldenBeans}
+     */
+    public ReportResult reportDetailed(String gameType, int eggCount, String actionFinishChannel,
+                                      boolean includeSafetyReport, LogSink progressLogger) {
         if (eggCount <= 0) {
             return new ReportResult(eggCount, 0, 0, 0, "");
         }
@@ -286,7 +330,7 @@ public enum GameTask {
             }
             successfulReports++;
             if (i % this.requestsPerEgg == 0) {
-                Log.other("游戏进度📈" + gameType + "[" + i + "/" + requiredSuccesses
+                progressLogger.log("游戏进度📈" + gameType + "[" + i + "/" + requiredSuccesses
                         + "](达成" + (i / this.requestsPerEgg) + "个)");
             }
             if (i < totalReports) {

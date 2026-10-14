@@ -171,6 +171,13 @@ public class Log {
         goldenBeansLogger.i(s);
     }
 
+    /**
+     * 庄园系日志：蚂蚁庄园 + 芭芭农场 + 蚂蚁新村 共用一条通道（界面显示为「庄园/农场/新村」）。
+     * <p>
+     * 三者有真实上下游关系（芭芭农场的肥料即庄园小鸡的饲料），合并不再细分；
+     * 各类内容靠消息前缀区分（如「芭芭农场🌳」「农场抽抽乐⚗」「庄园通知📣」）。
+     * 注意配置页仍把 庄园/农场/新村 列为三个平级分组，日志维度上它们是同一个类目。
+     */
     public static void farm(String s) {
         if (!com.surexu.sesame.data.AppConfig.INSTANCE.getEnableFarmLog()) {
             return;

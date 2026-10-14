@@ -57,7 +57,7 @@ import java.io.File
 enum class LogType(val displayName: String) {
     FOREST("森林记录"),
     GOLDENBEANS("金豆记录"),
-    FARM("庄园记录"),
+    FARM("庄园/农场/新村"),
     MEMBER("会员记录"),
     OTHER("其他记录"),
     DEBUG("抓包记录"),

@@ -652,7 +652,7 @@ fun LogsTab(activity: MiuixMainActivity) {
             if (!it) FileUtil.clearLog("forest")
         }
         var farm by remember { mutableStateOf(AppConfig.INSTANCE.enableFarmLog ?: true) }
-        LogSwitchRow("庄园记录", farm, onClick = { openLog(activity, LogType.FARM) }) {
+        LogSwitchRow("庄园/农场/新村", farm, onClick = { openLog(activity, LogType.FARM) }) {
             farm = it
             AppConfig.INSTANCE.enableFarmLog = it
             AppConfig.save()
