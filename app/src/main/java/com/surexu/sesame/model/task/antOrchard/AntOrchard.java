@@ -121,7 +121,7 @@ public class AntOrchard extends ModelTask {
         modelFields.addField(orchardSpreadManureSceneList = new SelectAndCountModelField("orchardSpreadManureSceneList", "农场施肥 | 场景列表", new LinkedHashMap<>(), AlipayPlantScene::getList, "请填写每日施肥次数"));
         modelFields.addField(drawGameCenterAward = new BooleanModelField("drawGameCenterAward", "农场乐园 | 游戏宝箱", true));
         modelFields.addField(orchardChouChouLe = new BooleanModelField("orchardChouChouLe", "抽抽乐 | 自动完成与抽奖", false));
-        // 注：Sure-Xu 的 ModelField 没有 M 的 setDependsOn（条件显示）机制，
+        // 注：Sesame-Wu 的 ModelField 没有 M 的 setDependsOn（条件显示）机制，
         // 故这两个字段不挂依赖、始终显示；勾选与否由各自开关自行判断
         modelFields.addField(AutoOrchardChouChouLeTaskList = new BooleanModelField("AutoOrchardChouChouLeTaskList", "抽抽乐任务 | 自动黑名单", true));
         modelFields.addField(OrchardChouChouLeTaskList = new SelectModelField("OrchardChouChouLeTaskList", "抽抽乐任务 | 黑名单列表", new LinkedHashSet<>(), AlipayOrchardChouChouLeTaskList::getList));

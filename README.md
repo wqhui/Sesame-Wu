@@ -1,11 +1,11 @@
-# Sure-Xu
+# Sesame-Wu
 
-[![License](https://img.shields.io/github/license/755596985/Sure-Xu.svg)](LICENSE)
-[![Release](https://img.shields.io/github/v/release/755596985/Sure-Xu)](https://github.com/755596985/Sure-Xu/releases)
+[![License](https://img.shields.io/github/license/wqhui/Sesame-Wu.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/wqhui/Sesame-Wu)](https://github.com/wqhui/Sesame-Wu/releases)
 
-> **拟态奶白 · 悬浮导航 · 温柔的 Sure-Xu**
+> **Sesame-Wu**
 >
-> Sure-Xu 是芝麻粒系列的个人定制分支——在开源生态的能力之上，用一套完整的**拟态（Neumorphism / Soft UI）奶白设计语言**重新诠释界面：所有元素与背景同色，仅靠柔和的双向光照塑造体积，悬浮式底部导航栏像一枚浮在奶白底面上的胶囊。
+> Sesame-Wu 是芝麻粒系列的个人定制分支——在开源生态的能力之上，用一套完整的**拟态（Neumorphism / Soft UI）设计语言**重新诠释界面：所有元素与背景同色，仅靠柔和的双向光照塑造体积，悬浮式底部导航栏像一枚浮在底面上的胶囊。
 
 ## 界面特色
 
@@ -19,37 +19,23 @@
 | 🎨 **全新图标** | 奶白拟态容器 + 暖橙种子图标，与应用主题浑然一体 |
 | 📖 **重写的关于页** | 项目介绍、版本下载、开源许可一目了然 |
 
-## 下载
-
-最新版 **v1.5.0**（三个版本按需选择）：
-
-| 版本 | 用途 | APK |
-| --- | --- | --- |
-| **Normal**（推荐） | 新框架 libxposed API 102，适用于 LSPosed 等新框架、较新 Android 系统 | [Sure-Xu-Normal-1.5.0.apk](https://github.com/755596985/Sure-Xu/releases/download/v1.5.0/Sure-Xu-Normal-1.5.0.apk) |
-| Compatible | 新框架较低版本依赖构建（libxposed API 102），Normal 在自己的环境不生效/异常时改用 | [Sure-Xu-Compatible-1.5.0.apk](https://github.com/755596985/Sure-Xu/releases/download/v1.5.0/Sure-Xu-Compatible-1.5.0.apk) |
-| Legacy | 老框架传统 Xposed API ≤93（assets/xposed_init 声明），适用于传统 Xposed / EdXposed 等老框架 | [Sure-Xu-Legacy-1.5.0.apk](https://github.com/755596985/Sure-Xu/releases/download/v1.5.0/Sure-Xu-Legacy-1.5.0.apk) |
-
-- 全部版本与 sha256 校验见 [Releases](https://github.com/755596985/Sure-Xu/releases)（仅保留最新版产物）
-- **是否需要 root**：本模块**不免root**，但配合**免root框架**（VirtualXposed / 应用分身 / LSPatch 等）**无需 root** 也能正常使用；有 root 则直接用 LSPosed
-
-> ⚠️ **签名说明**：v1.3.0 起签名更换为新密钥，v1.2.0 及更早版本无法覆盖安装，需先卸载旧版；v1.3.0 之后的更新可正常覆盖升级。
 
 ## 快速上手
 
-1. 安装 APK，在 LSPosed（或 VirtualXposed / 应用分身 / LSPatch 等免root框架）中启用 Sure-Xu 模块，作用域勾选**支付宝**
+1. 安装 APK，在 LSPosed（或 VirtualXposed / 应用分身 / LSPatch 等免root框架）中启用 Sesame-Wu 模块，作用域勾选**支付宝**
 2. 强制停止支付宝后重新打开，模块自动注入
-3. 打开 Sure-Xu App：**首页**看运行状态与数据统计 → **配置**里调任务参数 → **日志**里查收执行记录
+3. 打开 Sesame-Wu App：**首页**看运行状态与数据统计 → **配置**里调任务参数 → **日志**里查收执行记录
 
 主要能力（继承自芝麻粒生态）：蚂蚁森林能量收取/浇水、庄园喂养与任务、海洋、果园、运动等自动化，全部任务可在配置页独立开关。
 
-**新增 · 饿了么果园**：基于抓包接口新增营养果园（KB_ORCHARD）模块，支持收水滴（未来水 / 签到奖励）、阳光卡任务领奖、自动浇水，接口经宿主 mtop 反射调用（mtop.ele.me），免额外 SDK 依赖。
+- **是否需要 root**：本模块**不免root**，但配合**免root框架**（VirtualXposed / 应用分身 / LSPatch 等）**无需 root** 也能正常使用；有 root 则直接用 LSPosed
 
 ## 本地构建
 
 ```bash
 # 环境：JDK 17+ / Android SDK（platforms;android-37, build-tools）
 ./gradlew assembleNormalRelease
-# 产物：app/build/outputs/apk/normal/release/Sure-Xu-Normal-x.y.z.apk（已签名）
+# 产物：app/build/outputs/apk/normal/release/Sesame-Wu-Normal-x.y.z.apk（已签名）
 ```
 
 签名读取 `app/keystore.properties`（不入库，格式见下），首次克隆后需自备：

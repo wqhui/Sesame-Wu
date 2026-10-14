@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * Sure-Xu 拟态（Neumorphism / Soft UI）设计系统。
+ * Sesame-Wu 拟态（Neumorphism / Soft UI）设计系统。
  *
  * 核心思想：界面元素与背景使用**同一奶白基色**，
  * 完全依靠柔和的双向光照（左上高光 + 右下阴影）塑造体积感——

@@ -43,7 +43,7 @@ android {
         compose = true
     }
     ext {
-        applicationName = "Sure-Xu"
+        applicationName = "Sesame-Wu"
         applicationType = "Normal"
     }
 
@@ -122,7 +122,7 @@ androidComponents {
     onVariants(selector().withBuildType('release')) { variant ->
         variant.outputs.each { output ->
             def appType = variant.name.startsWith('legacy') ? 'Legacy' : variant.name.startsWith('compatible') ? 'Compatible' : 'Normal'
-            output.outputFileName.set("Sure-Xu-${appType}-${project.appVersion}.apk")
+            output.outputFileName.set("Sesame-Wu-${appType}-${project.appVersion}.apk")
         }
     }
 }

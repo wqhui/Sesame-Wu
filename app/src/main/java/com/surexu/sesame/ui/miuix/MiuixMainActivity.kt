@@ -138,7 +138,7 @@ class MiuixMainActivity : MiuixBaseActivity() {
                         updateSubTitle(RunType.MODEL)
                         handler.removeCallbacks(titleRunner)
                         if (isClick) {
-                            ToastUtil.show(context, "Sure-Xu 加载状态正常")
+                            ToastUtil.show(context, "Sesame-Wu 加载状态正常")
                             isClick = false
                         }
                     }
@@ -407,7 +407,7 @@ fun HomeTab(activity: MiuixMainActivity) {
     val version = ViewAppInfo.getAppVersion()
 
     Text(
-        text = "Sure-Xu",
+        text = "Sesame-Wu",
         fontSize = 34.sp,
         fontWeight = FontWeight.Bold,
         color = MiuixTheme.colorScheme.onBackground,

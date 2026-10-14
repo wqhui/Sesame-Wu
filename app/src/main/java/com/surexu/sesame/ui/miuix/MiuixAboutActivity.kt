@@ -103,14 +103,14 @@ fun AboutScreen(activity: MiuixAboutActivity) {
                     .padding(18.dp)
             ) {
                 Text(
-                    text = "一个把温暖握在手里的 Sure-Xu。",
+                    text = "一个把温暖握在手里的 Sesame-Wu。",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
                     color = MiuixTheme.colorScheme.onBackground
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Sure-Xu 是芝麻粒系列的个人定制分支：拟态（Soft UI）奶白界面、悬浮式底部导航，延续蚂蚁森林收能量与庄园打理的自动化能力。基于开源的 Sesame-M 演化而来，同样遵循 GPL-3.0 完整开源。",
+                    text = "Sesame-Wu 是芝麻粒系列的个人定制分支：拟态（Soft UI）奶白界面、悬浮式底部导航，延续蚂蚁森林收能量与庄园打理的自动化能力。基于开源的 Sesame-M 演化而来，同样遵循 GPL-3.0 完整开源。",
                     fontSize = 13.sp,
                     lineHeight = 20.sp,
                     color = MiuixTheme.colorScheme.onSurfaceSecondary,
@@ -129,11 +129,11 @@ fun AboutScreen(activity: MiuixAboutActivity) {
             ) {
                 ArrowPreference(
                     title = "在 GitHub 查看源码",
-                    onClick = { openWebUrl(activity, "https://github.com/755596985/Sure-Xu") }
+                    onClick = { openWebUrl(activity, "https://github.com/wqhui/Sesame-Wu") }
                 )
                 ArrowPreference(
                     title = "下载最新版本",
-                    onClick = { openWebUrl(activity, "https://github.com/755596985/Sure-Xu/releases") }
+                    onClick = { openWebUrl(activity, "https://github.com/wqhui/Sesame-Wu/releases") }
                 )
             }
             Spacer(Modifier.height(16.dp))

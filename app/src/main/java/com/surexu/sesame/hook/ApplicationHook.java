@@ -75,7 +75,7 @@ import com.surexu.sesame.util.idMap.UserIdMap;
 import lombok.Getter;
 
 /**
- * Sure-Xu 核心业务（框架无关）。
+ * Sesame-Wu 核心业务（框架无关）。
  *
  * <p>不依赖 libxposed 或传统 Xposed 任何 API：仅通过
  * {@link com.surexu.sesame.util.XHelpers} 与
@@ -593,7 +593,7 @@ public class ApplicationHook {
             }
             initializing = true;
             final Boolean f = force;
-            new Thread(() -> runInit(f), "Sure-Xu-InitHandler").start();
+            new Thread(() -> runInit(f), "Sesame-Wu-InitHandler").start();
             return null;
         }
         return runInit(force);
@@ -640,8 +640,8 @@ public class ApplicationHook {
 
                 boolean enableModule = Model.getModel(BaseModel.class).getEnableField().getValue();
                 if (!enableModule) {
-                    Log.record("Sure-Xu 已禁用");
-                    Toast.show("Sure-Xu 已禁用");
+                    Log.record("Sesame-Wu 已禁用");
+                    Toast.show("Sesame-Wu 已禁用");
                     return false;
                 }
                 if (BaseModel.getBatteryPerm().getValue() && !init && !PermissionUtil.checkBatteryPermissions()) {
@@ -741,7 +741,7 @@ public class ApplicationHook {
                 BaseModel.initData();
                 BaseModel.initRpcRequest();
                 Log.record("加载完成");
-                Toast.show("Sure-Xu 加载成功");
+                Toast.show("Sesame-Wu 加载成功");
                 init = true;
             }
             offline = false;
@@ -750,7 +750,7 @@ public class ApplicationHook {
         } catch (Throwable th) {
             Log.i(TAG, "startHandler err:");
             Log.printStackTrace(TAG, th);
-            Toast.show("Sure-Xu 加载失败");
+            Toast.show("Sesame-Wu 加载失败");
             return false;
         } finally {
             initializing = false;

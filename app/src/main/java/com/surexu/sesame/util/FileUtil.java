@@ -16,8 +16,7 @@ import java.util.Locale;
 public class FileUtil {
     private static final String TAG = FileUtil.class.getSimpleName();
     //路径
-    public static final String LEGACY_DIRECTORY_NAME = "sesame-M"; // 旧版目录名，用于一次性迁移
-    public static final String CONFIG_DIRECTORY_NAME = "Sure-Xu";
+    public static final String CONFIG_DIRECTORY_NAME = "Sesame-Wu";
     public static final File MAIN_DIRECTORY_FILE = getMainDirectoryFile();
     public static final File CONFIG_DIRECTORY_FILE = getConfigDirectoryFile();
     public static final File LOG_DIRECTORY_FILE = getLogDirectoryFile();
@@ -226,102 +225,12 @@ public class FileUtil {
         String storageDirStr = Environment.getExternalStorageDirectory() + File.separator + "Android" + File.separator + "media" + File.separator + ClassUtil.PACKAGE_NAME;
         File storageDir = new File(storageDirStr);
         File mainDir = new File(storageDir, CONFIG_DIRECTORY_NAME);
-        if (mainDir.exists()) {
-            if (mainDir.isFile()) {
-                mainDir.delete();
-                mainDir.mkdirs();
-            }
+        if (mainDir.exists() && mainDir.isFile()) {
+            // 目录名被同名文件占位：先删掉，让 mkdirs 能正常建目录
+            mainDir.delete();
         }
-        else {
-            mainDir.mkdirs();
-            // 首次升级：把旧版 sesame-M 目录内容迁移进 Sure-Xu（保留旧目录作回退，不删除）
-            migrateLegacyDirectory(new File(storageDir, LEGACY_DIRECTORY_NAME), mainDir);
-            /*File oldDirectory = new File(Environment.getExternalStorageDirectory(), CONFIG_DIRECTORY_NAME);
-            if (oldDirectory.exists()) {
-                File deprecatedFile = new File(oldDirectory, "deprecated");
-                if (!deprecatedFile.exists()) {
-                    copyFile(oldDirectory, mainDirectory, "config.json");
-                    copyFile(oldDirectory, mainDirectory, "friendId.list");
-                    copyFile(oldDirectory, mainDirectory, "cooperationId.list");
-                    copyFile(oldDirectory, mainDirectory, "reserveId.list");
-                    copyFile(oldDirectory, mainDirectory, "statistics.json");
-                    copyFile(oldDirectory, mainDirectory, "cityCode.json");
-                    try {
-                        deprecatedFile.createNewFile();
-                    } catch (Throwable ignored) {
-                    }
-                }
-            }*/
-        }
+        mainDir.mkdirs();
         return mainDir;
-    }
-
-    /**
-     * 一次性迁移：把旧目录(legacyDir)的内容复制进新目录(newDir)，保留旧目录不删除。
-     * 用于 sesame-M → Sure-Xu 文件夹改名，避免用户旧配置 / 日志丢失。
-     */
-    private static void migrateLegacyDirectory(File legacyDir, File newDir) {
-        if (legacyDir == null || !legacyDir.exists() || !legacyDir.isDirectory()) {
-            return;
-        }
-        if (!newDir.exists()) {
-            newDir.mkdirs();
-        }
-        File[] children = legacyDir.listFiles();
-        if (children == null) {
-            return;
-        }
-        for (File child : children) {
-            File target = new File(newDir, child.getName());
-            try {
-                if (child.isDirectory()) {
-                    copyDirectory(child, target);
-                } else {
-                    copySingleFile(child, target);
-                }
-            } catch (Throwable t) {
-                android.util.Log.e("FileUtil-Migrate", "copy child failed: " + child.getName(), t);
-            }
-        }
-        // 注意：此处处于 FileUtil 静态初始化阶段，Log 类尚未就绪（其 logger 依赖 MAIN_DIRECTORY_FILE），
-        // 只能用框架的 android.util.Log，不能用项目内 Log，否则会触发类初始化死循环 / NPE。
-        android.util.Log.i("FileUtil-Migrate", "已迁移旧目录[" + legacyDir.getName() + "]至[" + newDir.getName() + "]（旧目录保留作回退）");
-    }
-
-    private static void copyDirectory(File srcDir, File dstDir) {
-        if (!dstDir.exists()) {
-            dstDir.mkdirs();
-        }
-        File[] files = srcDir.listFiles();
-        if (files == null) {
-            return;
-        }
-        for (File f : files) {
-            File dst = new File(dstDir, f.getName());
-            try {
-                if (f.isDirectory()) {
-                    copyDirectory(f, dst);
-                } else {
-                    copySingleFile(f, dst);
-                }
-            } catch (Throwable t) {
-                android.util.Log.e("FileUtil-Migrate", "copyDirectory failed: " + f.getName(), t);
-            }
-        }
-    }
-
-    private static void copySingleFile(File src, File dst) {
-        try {
-            // minSdk 26 (Android 8)，始终走 Files.copy；避免回退 copyTo()（其内调用项目 Log，静态初始化期不可用）
-            Files.copy(src.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
-        } catch (IOException e) {
-            android.util.Log.e("FileUtil-Migrate", "copySingleFile failed: " + src.getName(), e);
-        }
-    }
-
-    private static File getLegacyExportDirectory() {
-        String dirStr = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS) + File.separator + LEGACY_DIRECTORY_NAME;
-        return new File(dirStr);
     }
 
     private static File getLogDirectoryFile() {
@@ -713,8 +622,6 @@ public class FileUtil {
         File storageDir = new File(storageDirStr);
         if (!storageDir.exists()) {
             storageDir.mkdirs();
-            // 迁移旧版 Downloads/sesame-M（导出目录，保留旧目录作回退）
-            migrateLegacyDirectory(getLegacyExportDirectory(), storageDir);
         }
         File exportedStatisticsFile = new File(storageDir, "statistics.json");
         if (exportedStatisticsFile.exists() && exportedStatisticsFile.isDirectory()) {
@@ -797,8 +704,6 @@ public class FileUtil {
         File exportDir = new File(exportDirStr);
         if (!exportDir.exists()) {
             exportDir.mkdirs();
-            // 迁移旧版 Downloads/sesame-M（导出目录，保留旧目录作回退）
-            migrateLegacyDirectory(getLegacyExportDirectory(), exportDir);
         }
         File exportFile = new File(exportDir, file.getName());
         if (exportFile.exists() && exportFile.isDirectory()) {
