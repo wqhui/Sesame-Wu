@@ -31,6 +31,7 @@ public class AppConfig {
     private Boolean enableForestLog = true;
     private Boolean enableGoldenBeansLog = true;
     private Boolean enableFarmLog = true;
+    private Boolean enableMemberLog = true;
     private Boolean enableOtherLog = true;
     private Boolean enableDebugLog = false;
     private Boolean enableViewErrorLog = true;
@@ -68,6 +69,9 @@ public class AppConfig {
 
     public Boolean getEnableFarmLog() { return enableFarmLog; }
     public void setEnableFarmLog(Boolean value) { enableFarmLog = value; }
+
+    public Boolean getEnableMemberLog() { return enableMemberLog; }
+    public void setEnableMemberLog(Boolean value) { enableMemberLog = value; }
 
     public Boolean getEnableOtherLog() { return enableOtherLog; }
     public void setEnableOtherLog(Boolean value) { enableOtherLog = value; }

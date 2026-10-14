@@ -667,6 +667,14 @@ fun LogsTab(activity: MiuixMainActivity) {
             activity.broadcastReloadConfig()
             if (!it) FileUtil.clearLog("goldenbeans")
         }
+        var member by remember { mutableStateOf(AppConfig.INSTANCE.enableMemberLog ?: true) }
+        LogSwitchRow("会员记录", member, onClick = { openLog(activity, LogType.MEMBER) }) {
+            member = it
+            AppConfig.INSTANCE.enableMemberLog = it
+            AppConfig.save()
+            activity.broadcastReloadConfig()
+            if (!it) FileUtil.clearLog("member")
+        }
         var other by remember { mutableStateOf(AppConfig.INSTANCE.enableOtherLog ?: true) }
         LogSwitchRow("其他记录", other, onClick = { openLog(activity, LogType.OTHER) }) {
             other = it

@@ -104,6 +104,14 @@ public class Log {
                     .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
                     .build()).build();
 
+    private static final Logger memberLogger = XLog.tag("MEMBER").printers(
+            new FilePrinter.Builder(FileUtil.LOG_DIRECTORY_FILE.getPath())
+                    .fileNameGenerator(new CustomDateFileNameGenerator("member"))
+                    .backupStrategy(new NeverBackupStrategy())
+                    .cleanStrategy(new NeverCleanStrategy())
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
+                    .build()).build();
+
     private static final Logger otherLogger = XLog.tag("OTHER").printers(
             new FilePrinter.Builder(FileUtil.LOG_DIRECTORY_FILE.getPath())
                     .fileNameGenerator(new CustomDateFileNameGenerator("other"))
@@ -169,6 +177,20 @@ public class Log {
         }
         record(s);
         farmLogger.i(s);
+    }
+
+    /**
+     * 会员体系日志（会员任务 / 芝麻信用 / 芝麻炼金 / 攒芝麻分 / 商家服务 / 我的快递 / 蚂蚁保障）。
+     * <p>
+     * 原先这些内容统一走 {@link #other(String)}，导致「其他记录」里近一半是会员内容，
+     * 且与配置页已有的「会员」分组维度对不上，故拆出独立通道。
+     */
+    public static void member(String s) {
+        if (!com.surexu.sesame.data.AppConfig.INSTANCE.getEnableMemberLog()) {
+            return;
+        }
+        record(s);
+        memberLogger.i(s);
     }
 
     public static void other(String s) {

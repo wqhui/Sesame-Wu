@@ -105,7 +105,7 @@ public class AntMember extends ModelTask {
     /** 同轮核对配置（见 TaskAlternative.verify） */
     private static final TaskAlternative.VerifyConfig VERIFY_CFG = new TaskAlternative.VerifyConfig(
             "AntMember", "AntMemberTaskList", "会员任务", "游戏中心", "🎮完成", true,
-            msg -> Log.other(msg));
+            msg -> Log.member(msg));
 
     @Override
     public ModelFields getFields() {
@@ -141,7 +141,7 @@ public class AntMember extends ModelTask {
     @Override
     public Boolean check() {
         if (TaskCommon.IS_ENERGY_TIME) {
-            Log.other("任务暂停⏸️蚂蚁会员:当前为仅收能量时间");
+            Log.member("任务暂停⏸️蚂蚁会员:当前为仅收能量时间");
             return false;
         }
         return true;
@@ -476,7 +476,7 @@ public class AntMember extends ModelTask {
                 TimeUtil.sleep(500);
                 if (MessageUtil.checkResultCode(TAG, jo)) {
                     if (jo.getBoolean("autoSignInSuccess")) {
-                        Log.other("会员任务📅签到[坚持" + jo.getString("signinSumDay") + "天]#获得[" + jo.getString("signinPoint") + "积分]");
+                        Log.member("会员任务📅签到[坚持" + jo.getString("signinSumDay") + "天]#获得[" + jo.getString("signinPoint") + "积分]");
                     }
                     Status.flagToday("member::sign");
                 }
@@ -508,7 +508,7 @@ public class AntMember extends ModelTask {
                 int pointAmount = jo.getInt("pointAmount");
                 jo = new JSONObject(AntMemberRpcCall.receivePointByUser(id));
                 if (MessageUtil.checkResultCode(TAG, jo)) {
-                    Log.other("会员任务🎖️领取[" + bizTitle + "]奖励#获得[" + pointAmount + "积分]");
+                    Log.member("会员任务🎖️领取[" + bizTitle + "]奖励#获得[" + pointAmount + "积分]");
                 }
             }
             if (hasNextPage) {
@@ -655,9 +655,9 @@ public class AntMember extends ModelTask {
                     claimedCount++;
                     String stageSuffix = stageIndex > 0 ? "-阶段" + stageIndex : "";
                     if (awardPoint > 0) {
-                        Log.other("会员任务🎖️[" + title + stageSuffix + "]#获得[" + awardPoint + "积分]");
+                        Log.member("会员任务🎖️[" + title + stageSuffix + "]#获得[" + awardPoint + "积分]");
                     } else {
-                        Log.other("会员任务🎖️[" + title + stageSuffix + "]#领取阶段奖励");
+                        Log.member("会员任务🎖️[" + title + stageSuffix + "]#领取阶段奖励");
                     }
                 }
             }
@@ -771,7 +771,7 @@ public class AntMember extends ModelTask {
             }
             jo = jo.getJSONObject("data");
             String promiseName = jo.getString("promiseName");
-            Log.other("生活记录📝加入[" + promiseName + "]");
+            Log.member("生活记录📝加入[" + promiseName + "]");
         }
         catch (Throwable t) {
             Log.i(TAG, "promiseJoin err:");
@@ -857,7 +857,7 @@ public class AntMember extends ModelTask {
                     continue;
                 }
                 String ex = left == right && left == 1 ? "" : "(" + (i + 1) + "/" + right + ")";
-                Log.other("会员任务🎖️完成[" + name + ex + "]#获得[" + awardParamPoint + "积分]");
+                Log.member("会员任务🎖️完成[" + name + ex + "]#获得[" + awardParamPoint + "积分]");
                 doubleCheck = true;
             }
         }
@@ -918,7 +918,7 @@ public class AntMember extends ModelTask {
                     String openResp = AntMemberRpcCall.openBehaviorCollect(behaviorId);
                     JSONObject openJo = new JSONObject(openResp);
                     if (MessageUtil.checkResultCode(TAG, openJo)) {
-                        Log.other("攒芝麻分🧾任务领取：" + title);
+                        Log.member("攒芝麻分🧾任务领取：" + title);
                     }
                     continue;
                 }
@@ -926,7 +926,7 @@ public class AntMember extends ModelTask {
                 // 每日问答
                 if ("meiriwenda".equals(behaviorId) && "wait_doing".equals(status)) {
                     if (subTitle.contains("今日已参与")) {
-                        Log.other("攒芝麻分🧾[每日问答] " + subTitle + "（跳过答题）");
+                        Log.member("攒芝麻分🧾[每日问答] " + subTitle + "（跳过答题）");
                         continue;
                     }
                     
@@ -963,7 +963,7 @@ public class AntMember extends ModelTask {
                     // 提交答案
                     JSONObject pushJo = new JSONObject(AntMemberRpcCall.pushDailyQuizAnswer(behaviorId, bizDate, answerId, questionId, "RIGHT"));
                     if (MessageUtil.checkResultCode(TAG, pushJo)) {
-                        Log.other("攒芝麻分🎖️[每日答题成功] " + questionContent + " | 答案=" + answerContent + "(" + answerId + ")" + (subTitle.isEmpty() ? "" : " | " + subTitle));
+                        Log.member("攒芝麻分🎖️[每日答题成功] " + questionContent + " | 答案=" + answerContent + "(" + answerId + ")" + (subTitle.isEmpty() ? "" : " | " + subTitle));
                     }
                 }
                 
@@ -977,7 +977,7 @@ public class AntMember extends ModelTask {
                     jo = new JSONObject(AntMemberRpcCall.pushDailyQuizAnswer(behaviorId, bizDate, answerId, questionId, answerType));
                     
                     if (MessageUtil.checkResultCode(TAG, jo)) {
-                        Log.other("攒芝麻分🎖️[视频问答提交成功]");
+                        Log.member("攒芝麻分🎖️[视频问答提交成功]");
                     }
                 }
                 
@@ -1012,7 +1012,7 @@ public class AntMember extends ModelTask {
                     int dailyAppWateringCount = statistics == null ? 0 : statistics.optInt("dailyAppWateringCount", 0);
                     
                     Log.farm("芭芭农场🌳施肥" + dailyAppWateringCount + "次[" + stageText + "]");
-                    Log.other("攒芝麻分🎖️芭芭农场施肥[" + title + "]已施肥" + dailyAppWateringCount + "次");
+                    Log.member("攒芝麻分🎖️芭芭农场施肥[" + title + "]已施肥" + dailyAppWateringCount + "次");
                     
                 }
             }
@@ -1083,7 +1083,7 @@ public class AntMember extends ModelTask {
             int collectedAccelerateProgress = collectJson.optInt("collectedAccelerateProgress", -1);
             int currentAccelerateValue = collectJson.optInt("currentAccelerateValue", 0);
             int totalAccelerateProgress = collectJson.optInt("totalAccelerateProgress", 0);
-            Log.other("攒芝麻分🎁领取#本次加速进度:" + collectedAccelerateProgress + "(总" + totalAccelerateProgress + "%)加速倍率:" + currentAccelerateValue);
+            Log.member("攒芝麻分🎁领取#本次加速进度:" + collectedAccelerateProgress + "(总" + totalAccelerateProgress + "%)加速倍率:" + currentAccelerateValue);
         }
         catch (JSONException e) {
             Log.printStackTrace(TAG + "queryAndCollect JSON err", e);
@@ -1111,9 +1111,9 @@ public class AntMember extends ModelTask {
                 return;
             }
             for (int i = 0; i < length; i++) {
-                Log.other("黄金票🙈[" + jsonArray.getString(i) + "]");
+                Log.member("黄金票🙈[" + jsonArray.getString(i) + "]");
             }
-            Log.other("黄金票🏦本次总共获得[" + JsonUtil.getValueByPath(object, "collectedCamp.amount") + "]");
+            Log.member("黄金票🏦本次总共获得[" + JsonUtil.getValueByPath(object, "collectedCamp.amount") + "]");
         }
         catch (Throwable th) {
             Log.i(TAG, "signIn err:");
@@ -1131,7 +1131,7 @@ public class AntMember extends ModelTask {
             if (MessageUtil.checkSuccess(TAG, jsonObject)) {
                 JSONObject dataObj = jsonObject.getJSONObject("data");
                 String totalAmount = dataObj.getString("totalAmount");
-                Log.other("游戏中心🎮批量领取#获得[" + totalAmount + "玩乐豆]");
+                Log.member("游戏中心🎮批量领取#获得[" + totalAmount + "玩乐豆]");
             }
         }
         catch (Throwable t) {
@@ -1152,7 +1152,7 @@ public class AntMember extends ModelTask {
                 JSONObject toastModule = jsonObject.getJSONObject("data").getJSONObject("autoSignInToastModule");
                 String desc = toastModule.getString("desc");
                 String beanNum = desc.substring(desc.indexOf("玩乐豆+") + 4);
-                Log.other("游戏中心🎮每日签到#获得[" + beanNum + "玩乐豆]");
+                Log.member("游戏中心🎮每日签到#获得[" + beanNum + "玩乐豆]");
                 return true;
             }
         }
@@ -1190,7 +1190,7 @@ public class AntMember extends ModelTask {
             // 执行任务
             JSONObject doTaskjo = new JSONObject(AntMemberRpcCall.doTaskSend(taskId));
             if (MessageUtil.checkSuccess(TAG, doTaskjo)) {
-                Log.other("游戏中心🎮完成任务[" + subTitle + "]#待领[" + prizeAmount + "玩乐豆]");
+                Log.member("游戏中心🎮完成任务[" + subTitle + "]#待领[" + prizeAmount + "玩乐豆]");
             } else {
                 // doTaskSend 常被 400000040 拒绝，改用另一种实现方案（见 TaskAlternative）
                 String sceneCode = taskObj.optString("sceneCode", "").trim();
@@ -1202,7 +1202,7 @@ public class AntMember extends ModelTask {
                     }
                     TaskAlternative.trigger(pendingVerifyTasks, taskId, subTitle, bizKey, sceneCode,
                             AntMemberRpcCall.DO_FARM_TASK_VERSION,
-                            "游戏中心", msg -> Log.other(msg));
+                            "游戏中心", msg -> Log.member(msg));
                 } else {
                     // 检查并标记黑名单任务
                     MessageUtil.checkResultCodeAndMarkTaskBlackList("AntMemberTaskList", subTitle, doTaskjo);
@@ -1354,14 +1354,14 @@ public class AntMember extends ModelTask {
                 Log.i(TAG, "会员游戏乐园浏览奖励提交失败:" + completeRes);
                 return;
             }
-            Log.other("会员游戏乐园🎮[" + taskTitle + "]已提交，刷新任务和积分");
+            Log.member("会员游戏乐园🎮[" + taskTitle + "]已提交，刷新任务和积分");
 
             // 回查任务与积分
             GameCenterPlayRpcCall.isAccepted(
                     GameCenterPlayRpcCall.queryExternalGameCenter(scene, "", "", source, ""));
             if (!memberSignTaskId.isEmpty() && memberSignAmount > 0) {
                 JSONObject points = new JSONObject(AntMemberRpcCall.queryPointCert(1, 20));
-                Log.other("会员游戏乐园🎮[入账" + memberSignAmount + "积分] taskId=" + memberSignTaskId
+                Log.member("会员游戏乐园🎮[入账" + memberSignAmount + "积分] taskId=" + memberSignTaskId
                         + " 余额=" + JsonUtil.getValueByPath(points, "data.pointBalance"));
             }
         } catch (Throwable t) {
@@ -1415,7 +1415,7 @@ public class AntMember extends ModelTask {
                 tip = prizePopup.optString("actionText", "").trim();
             }
             String desc = taskModule.optString("taskProgressDesc", "").trim();
-            Log.other("游戏中心🎁领取宝箱" + (tip.isEmpty() ? "" : "#" + tip) + (desc.isEmpty() ? "" : "#" + desc));
+            Log.member("游戏中心🎁领取宝箱" + (tip.isEmpty() ? "" : "#" + tip) + (desc.isEmpty() ? "" : "#" + desc));
         }
         catch (Throwable t) {
             Log.i(TAG, "gameCenterTaskPrize err:");
@@ -1543,7 +1543,7 @@ public class AntMember extends ModelTask {
                 TimeUtil.sleep(300);
                 jsonObject = new JSONObject(str);
                 if (jsonObject.optBoolean("success")) {
-                    Log.other("游戏中心🎮全部领取成功[" + JsonUtil.getValueByPath(jsonObject, "data.totalAmount") + "]乐豆");
+                    Log.member("游戏中心🎮全部领取成功[" + JsonUtil.getValueByPath(jsonObject, "data.totalAmount") + "]乐豆");
                 }
                 else {
                     Log.i(TAG + ".batchReceive.batchReceivePointBall", jsonObject.optString("resultDesc"));
@@ -1588,7 +1588,7 @@ public class AntMember extends ModelTask {
                 String itemId = benefitInfo.getString("itemId");
                 if (exchangeBenefit(benefitId, itemId)) {
                     String point = pricePresentation.getString("point");
-                    Log.other("会员积分🎐兑换[" + name + "]#花费[" + point + "积分]");
+                    Log.member("会员积分🎐兑换[" + name + "]#花费[" + point + "积分]");
                 }
             }
             MemberBenefitIdMap.save(userId);
@@ -1622,7 +1622,7 @@ public class AntMember extends ModelTask {
             }
             JSONObject entrance = jo.getJSONObject("entrance");
             if (!entrance.optBoolean("openApp")) {
-                Log.other("芝麻信用💌未开通");
+                Log.member("芝麻信用💌未开通");
                 return;
             }
             
@@ -1682,7 +1682,7 @@ public class AntMember extends ModelTask {
                     continue;
                 }
                 if (!recordId.isEmpty()) {
-                    Log.other("芝麻信用💳[" + taskTitle + "]沿用进行中的记录#recordId=" + recordId);
+                    Log.member("芝麻信用💳[" + taskTitle + "]沿用进行中的记录#recordId=" + recordId);
                 } else if (toCompleteVO.has("todayFinish")) {
                     // 无可推的记录
                     Log.error(TAG + "芝麻信用💳任务[" + taskTitle + "未获取到]recordId#" + toCompleteVO);
@@ -1706,7 +1706,7 @@ public class AntMember extends ModelTask {
                                     : activeSesameRecordId(freshData, taskTemplateId);
                             if (freshRecordId != null && !freshRecordId.isEmpty()) {
                                 recordId = freshRecordId;
-                                Log.other("芝麻信用💳[" + taskTitle + "]沿用进行中的记录#recordId=" + recordId);
+                                Log.member("芝麻信用💳[" + taskTitle + "]沿用进行中的记录#recordId=" + recordId);
                             }
                         }
                         if (recordId == null || recordId.isEmpty()) {
@@ -1742,12 +1742,12 @@ public class AntMember extends ModelTask {
                 if ("ILLEGAL_ARGUMENT".equals(pushJo.optString("resultCode"))) {
                     // 真实跳转类任务不可能自动完成，服务端固定拒 push：一次即拉黑，该错误不再打印
                     MessageUtil.MarkTaskBlackList("AntMember", "MemberCreditSesameTaskList", "芝麻粒任务", taskTitle);
-                    Log.other("芝麻信用💳[" + taskTitle + "]#真实跳转类，无法自动完成，已加入黑名单");
+                    Log.member("芝麻信用💳[" + taskTitle + "]#真实跳转类，无法自动完成，已加入黑名单");
                     continue;
                 }
                 if (!MessageUtil.checkResultCode(TAG, pushJo)) {
                     // push 被 promiseActivityExtCheck 校验拒不算中止，完成与否一律由回读判定
-                    Log.other("芝麻信用💳[" + taskTitle + "]push被拒#不影响完成判定");
+                    Log.member("芝麻信用💳[" + taskTitle + "]push被拒#不影响完成判定");
                 }
                 // 上报被受理 ≠ 任务完成：登记回读，真实状态一律以回读为准
                 reported.put(taskTemplateId, taskTitle);
@@ -1770,7 +1770,7 @@ public class AntMember extends ModelTask {
                     jo = new JSONObject(AntMemberRpcCall.collectCreditFeedback(creditFeedbackId));
                     TimeUtil.sleep(300);
                     if (MessageUtil.checkResultCode(TAG, jo)) {
-                        Log.other("收芝麻粒🙇🏻‍♂️领取[" + taskTitle + "]奖励[芝麻粒*" + potentialSize + "]");
+                        Log.member("收芝麻粒🙇🏻‍♂️领取[" + taskTitle + "]奖励[芝麻粒*" + potentialSize + "]");
                     }
                 }
             }
@@ -1805,16 +1805,16 @@ public class AntMember extends ModelTask {
                     Integer before = beforeComplete.get(tid);
                     int beforeNum = before == null ? 0 : before;
                     if (!freshOk) {
-                        Log.other("芝麻信用💳[" + title + "]已上报，回读校验未执行");
+                        Log.member("芝麻信用💳[" + title + "]已上报，回读校验未执行");
                         continue;
                     }
                     String progress = freshProgress.get(tid);
                     if (progress == null) {
-                        Log.other("芝麻信用💳完成任务[" + title + "]#已不在待完成列表");
+                        Log.member("芝麻信用💳完成任务[" + title + "]#已不在待完成列表");
                         continue;
                     }
                     if ("DONE".equals(progress)) {
-                        Log.other("芝麻信用💳完成任务[" + title + "]#已标记完成");
+                        Log.member("芝麻信用💳完成任务[" + title + "]#已标记完成");
                         continue;
                     }
                     int slash = progress.indexOf('/');
@@ -1824,13 +1824,13 @@ public class AntMember extends ModelTask {
                         // 未推进：今日不再重试，避免每轮刷同一批。
                         // 不自动拉黑——这类任务服务端要求真实参与，但状态可能异步未落，
                         // 一次未推进不足以判定"做不了"，留给用户手动勾选黑名单
-                        Log.other("芝麻信用💳[" + title + "]上报未生效#仍为(" + progress + "天)，今日不再重试");
+                        Log.member("芝麻信用💳[" + title + "]上报未生效#仍为(" + progress + "天)，今日不再重试");
                         Status.flagToday("AntMember::sesame::" + title);
                     } else if (nowNum >= needNum) {
-                        Log.other("芝麻信用💳完成任务[" + title + "]#(" + progress + "天)");
+                        Log.member("芝麻信用💳完成任务[" + title + "]#(" + progress + "天)");
                     } else {
                         // 多天任务：今天只推进一份，剩下的留给次日
-                        Log.other("芝麻信用💳完成任务[" + title + "]#(" + progress + "天)，剩余次日继续");
+                        Log.member("芝麻信用💳完成任务[" + title + "]#(" + progress + "天)，剩余次日继续");
                         Status.flagToday("AntMember::sesame::" + title);
                     }
                 }
@@ -1845,7 +1845,7 @@ public class AntMember extends ModelTask {
                 jo = new JSONObject(AntMemberRpcCall.collectAllCreditFeedback());
                 if (MessageUtil.checkResultCode(TAG, jo)) {
                     String resultCode = jo.optString("resultCode");
-                    Log.other("收芝麻粒🙇🏻‍♂️[一键收取]" + resultCode);
+                    Log.member("收芝麻粒🙇🏻‍♂️[一键收取]" + resultCode);
                 }
             }
             
@@ -1885,7 +1885,7 @@ public class AntMember extends ModelTask {
                         && task.optInt("completedNum", 0) < task.optInt("needCompleteNum", 1)
                         && (recordId.isEmpty() || recordId.equals(value));
                 if (!valid) {
-                    Log.other("芝麻信用💳记录校验未通过#[" + taskTemplateId + "]跳过");
+                    Log.member("芝麻信用💳记录校验未通过#[" + taskTemplateId + "]跳过");
                     return null;
                 }
                 recordId = (String) value;
@@ -1919,7 +1919,7 @@ public class AntMember extends ModelTask {
                                     if (prize != null) {
                                         num = prize.optInt("zmlNum", prize.optJSONObject("prize") != null ? prize.optJSONObject("prize").optInt("num", 0) : 0);
                                     }
-                                    Log.other("收芝麻粒🙇🏻‍♂️领取[每日签到成功]#获得" + num + "粒");
+                                    Log.member("收芝麻粒🙇🏻‍♂️领取[每日签到成功]#获得" + num + "粒");
                                 }
                                 else {
                                     Log.error(".doSesameAlchemy#" + "签到失败:" + completeRes);
@@ -2035,7 +2035,7 @@ public class AntMember extends ModelTask {
         }
         AlchemyAutoBlacklistMap.add(templateId, title);
         AlchemyAutoBlacklistMap.save();
-        Log.other("芝麻炼金⚗[" + title + "]#" + reason + "，无法自动完成，已加入跳过列表");
+        Log.member("芝麻炼金⚗[" + title + "]#" + reason + "，无法自动完成，已加入跳过列表");
         return true;
     }
 
@@ -2123,7 +2123,7 @@ public class AntMember extends ModelTask {
                 if (levelFull) {
                     capReached = true;
                 }
-                Log.other("芝麻炼金⚗[炼金成功]#消耗" + cost + "粒 | 获得" + goldNum + "金 | 当前等级Lv." + currentLevel
+                Log.member("芝麻炼金⚗[炼金成功]#消耗" + cost + "粒 | 获得" + goldNum + "金 | 当前等级Lv." + currentLevel
                         + (levelUp ? "（升级🎉）" : "") + (levelFull ? "（满级🏆）" : ""));
                 zmlBalance -= cost;
             }
@@ -2167,7 +2167,7 @@ public class AntMember extends ModelTask {
                         num = prize.optInt("zmlNum", prize.optJSONObject("prize") != null
                                 ? prize.optJSONObject("prize").optInt("num", 0) : 0);
                     }
-                    Log.other("芝麻炼金⚗[每日签到成功]#获得" + num + "粒");
+                    Log.member("芝麻炼金⚗[每日签到成功]#获得" + num + "粒");
                 }
                 else {
                     Log.error("芝麻炼金⚗签到失败#" + completeRes);
@@ -2235,7 +2235,7 @@ public class AntMember extends ModelTask {
                     String adRes = AntMemberRpcCall.taskFinish(bizId);
                     JSONObject adJo = new JSONObject(adRes);
                     if (checkAlchemyRes(adJo) || "0".equals(adJo.optString("errCode"))) {
-                        Log.other("芝麻炼金⚗[广告任务完成] " + title + "#获得" + task.optInt("rewardAmount", 0) + "粒");
+                        Log.member("芝麻炼金⚗[广告任务完成] " + title + "#获得" + task.optInt("rewardAmount", 0) + "粒");
                     }
                     else {
                         Log.error("芝麻炼金⚗广告任务上报失败: " + title + " - " + adRes);
@@ -2296,7 +2296,7 @@ public class AntMember extends ModelTask {
                     String finishRes = AntMemberRpcCall.finishSesameTask(recordId);
                     JSONObject finishJo = new JSONObject(finishRes);
                     if (checkAlchemyRes(finishJo)) {
-                        Log.other("芝麻炼金⚗[任务完成] " + title + "#获得" + task.optInt("rewardAmount", 0) + "粒");
+                        Log.member("芝麻炼金⚗[任务完成] " + title + "#获得" + task.optInt("rewardAmount", 0) + "粒");
                     }
                     else if (autoBlacklistAlchemyTask(templateId, title, finishJo)) {
                         // 服务端按错误码明确判定做不了：已落盘跳过，日志按提示级别记而非 ERROR
@@ -2327,7 +2327,7 @@ public class AntMember extends ModelTask {
                 Log.record("芝麻炼金⚗[发现" + feedbackList.length() + "个待收取项，执行一键收取]");
                 JSONObject collectJo = new JSONObject(AntMemberRpcCall.collectAllCreditFeedback());
                 if (checkAlchemyRes(collectJo)) {
-                    Log.other("芝麻炼金⚗[一键收取成功]#收割完毕");
+                    Log.member("芝麻炼金⚗[一键收取成功]#收割完毕");
                 }
                 else {
                     Log.error("芝麻炼金⚗[一键收取失败]#" + collectJo.optString("resultView"));
@@ -2368,7 +2368,7 @@ public class AntMember extends ModelTask {
                 }
             }
             if (gotNum > 0) {
-                Log.other("芝麻炼金⚗[次日奖励领取成功]#获得" + gotNum + "粒");
+                Log.member("芝麻炼金⚗[次日奖励领取成功]#获得" + gotNum + "粒");
             }
             else {
                 Log.record("芝麻炼金⚗[次日奖励无奖励] 已领取或无可领奖励");
@@ -2419,7 +2419,7 @@ public class AntMember extends ModelTask {
                 JSONObject resJo = new JSONObject(res);
                 if (checkAlchemyRes(resJo) && resJo.optJSONObject("data") != null) {
                     JSONObject d = resJo.getJSONObject("data");
-                    Log.other("芝麻炼金⚗[领取成功] " + taskName + "#获得" + d.optInt("zmlNum", 0) + "粒");
+                    Log.member("芝麻炼金⚗[领取成功] " + taskName + "#获得" + d.optInt("zmlNum", 0) + "粒");
                 }
                 else {
                     Log.error("芝麻炼金⚗限时任务完成失败#" + res);
@@ -2474,10 +2474,10 @@ public class AntMember extends ModelTask {
                             : AntMemberRpcCall.oceanreceiveTaskAward();
                     JSONObject awardJo = new JSONObject(awardRes);
                     if (MessageUtil.checkResultCode(TAG + " 快递活力值领奖", awardJo)) {
-                        Log.other("我的快递💌完成[" + appletName + "]#活力值奖励已领取");
+                        Log.member("我的快递💌完成[" + appletName + "]#活力值奖励已领取");
                     } else {
                         MessageUtil.checkResultCodeAndMarkTaskBlackList("AntMemberTaskList", appletName, awardJo);
-                        Log.other("我的快递💌[" + appletName + "]#活力值奖励未领取#"
+                        Log.member("我的快递💌[" + appletName + "]#活力值奖励未领取#"
                                 + awardJo.optString("resultView", awardRes));
                     }
                 }
@@ -2501,7 +2501,7 @@ public class AntMember extends ModelTask {
                         // 获取 promoCampName
                         String promoCampName = extInfo.optString("promoCampName", "Unknown Promo Campaign");
                         // 输出日志信息
-                        Log.other("我的快递💌完成[" + promoCampName + "]");
+                        Log.member("我的快递💌完成[" + promoCampName + "]");
                     }
                 }
             }
@@ -2543,7 +2543,7 @@ public class AntMember extends ModelTask {
                             JSONArray prizeSendInfo = sendTriggerJson.getJSONArray("prizeSendInfo");
                             // 获取 prizeName
                             String prizeName = prizeSendInfo.getJSONObject(0).getString("prizeName");
-                            Log.other("我的快递💌完成[" + prizeName + "]");
+                            Log.member("我的快递💌完成[" + prizeName + "]");
                         }
                         else {
                             Log.i(TAG, "sendtrigger failed for taskId: " + taskId);
@@ -2572,7 +2572,7 @@ public class AntMember extends ModelTask {
                 if (MessageUtil.checkSuccess(TAG, jo)) {
                     int amount = jo.getInt("amount");
                     int consecutiveSignInDays = jo.getInt("consecutiveSignInDays");
-                    Log.other("攒消费金💰签到[坚持" + consecutiveSignInDays + "天]#获得[" + amount + "消费金]");
+                    Log.member("攒消费金💰签到[坚持" + consecutiveSignInDays + "天]#获得[" + amount + "消费金]");
                 }
             }
         }

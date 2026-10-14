@@ -925,6 +925,21 @@ public class FileUtil {
         return goldenBeansLogFile;
     }
     
+    public static File getMemberLogFile() {
+        File memberLogFile = new File(LOG_DIRECTORY_FILE, Log.getLogFileName("member"));
+        if (memberLogFile.exists() && memberLogFile.isDirectory()) {
+            memberLogFile.delete();
+        }
+        if (!memberLogFile.exists()) {
+            try {
+                memberLogFile.createNewFile();
+            }
+            catch (Throwable ignored) {
+            }
+        }
+        return memberLogFile;
+    }
+    
     public static File getOtherLogFile() {
         File otherLogFile = new File(LOG_DIRECTORY_FILE, Log.getLogFileName("other"));
         if (otherLogFile.exists() && otherLogFile.isDirectory()) {
@@ -1215,7 +1230,7 @@ public class FileUtil {
     /**
      * 清空某类日志：截断日志目录下该类别所有日期文件（保留文件本身，避免破坏已打开的句柄）
      *
-     * @param logName 日志类别名，如 runtime/record/forest/farm/other/debug/error
+     * @param logName 日志类别名，如 runtime/record/forest/farm/member/goldenbeans/other/debug/error
      */
     public static void clearLog(String logName) {
         try {

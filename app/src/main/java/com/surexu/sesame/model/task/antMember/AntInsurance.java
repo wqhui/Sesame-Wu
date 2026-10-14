@@ -61,7 +61,7 @@ public class AntInsurance {
             if (!MessageUtil.checkSuccess(TAG, jo)) {
                 return;
             } jo = jo.getJSONObject("data").getJSONObject("gainSumInsuredDTO");
-            Log.other("蚂蚁保障🛡️领取保障金#获得[" + jo.optString("gainSumInsuredYuan") + "元保额]");
+            Log.member("蚂蚁保障🛡️领取保障金#获得[" + jo.optString("gainSumInsuredYuan") + "元保额]");
         } catch (Throwable t) {
             Log.i(TAG, "gainMyAndFamilySumInsured err:"); Log.printStackTrace(TAG, t);
         }
@@ -81,7 +81,7 @@ public class AntInsurance {
                     return;
                 } JSONArray ja = jo.getJSONArray("result"); for (int i = 0; i < ja.length(); i++) {
                     jo = ja.getJSONObject(i); String prizeName = jo.getString("prizeName");
-                    Log.other("蚂蚁保障🛡️天天领取保障福利#获得[" + prizeName + "]");
+                    Log.member("蚂蚁保障🛡️天天领取保障福利#获得[" + prizeName + "]");
                 }
             } Status.flagToday("insurance::lotteryDraw");
         } catch (Throwable t) {
@@ -99,7 +99,7 @@ public class AntInsurance {
                 jo = new JSONObject(AntInsuranceRpcCall.beanSignInTrigger());
                 if (MessageUtil.checkSuccess(TAG, jo)) {
                     String prizeName = jo.getJSONObject("result").getJSONArray("prizeSendOrderDTOList").getJSONObject(0).getString("prizeName");
-                    Log.other("蚂蚁保障🛡️安心豆签到#获得[" + prizeName + "]");
+                    Log.member("蚂蚁保障🛡️安心豆签到#获得[" + prizeName + "]");
                 }
             }
         } catch (Throwable t) {
@@ -126,7 +126,7 @@ public class AntInsurance {
                 return;
             } jo = new JSONObject(AntInsuranceRpcCall.beanExchange(itemId, realConsumePointAmount));
             if (MessageUtil.checkSuccess(TAG, jo)) {
-                Log.other("蚂蚁保障🛡️安心豆兑换[" + itemName + "]#消耗[" + realConsumePointAmount + "安心豆]");
+                Log.member("蚂蚁保障🛡️安心豆兑换[" + itemName + "]#消耗[" + realConsumePointAmount + "安心豆]");
             }
         } catch (Throwable t) {
             Log.i(TAG, "beanExchange err:"); Log.printStackTrace(TAG, t);

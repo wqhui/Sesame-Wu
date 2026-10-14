@@ -41,7 +41,7 @@ public class MerchantService {
                 if (MessageUtil.checkSuccess(TAG, jo)) {
                     jo = jo.getJSONObject("data"); int todayReward = jo.getInt("todayReward");
                     String widgetName = jo.getString("widgetName");
-                    Log.other("商家服务🏪完成[" + widgetName + "]#获得[" + todayReward + "商家积分]");
+                    Log.member("商家服务🏪完成[" + widgetName + "]#获得[" + todayReward + "商家积分]");
                     signed = true;
                 }
             } if (signed) {
@@ -104,7 +104,7 @@ public class MerchantService {
             JSONObject jo = new JSONObject(MerchantServiceRpcCall.taskFinish(bizId));
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 String title = task.getString("title"); String reward = task.getString("reward");
-                Log.other("商家服务🏪[" + title + "]#获得[" + reward + "商家积分]");
+                Log.member("商家服务🏪[" + title + "]#获得[" + reward + "商家积分]");
             }
         } catch (Throwable t) {
             Log.i(TAG, "taskListProcessing err:"); Log.printStackTrace(TAG, t);
@@ -152,7 +152,7 @@ public class MerchantService {
                 JSONObject jo = new JSONObject(MerchantServiceRpcCall.taskActionProduce(actionCode));
                 if (MessageUtil.checkSuccess(TAG, jo)) {
                     String title = task.getString("title");
-                    Log.other("商家服务🏪完成[" + title + "]");
+                    Log.member("商家服务🏪完成[" + title + "]");
                 } TimeUtil.sleep(5000);
             }
         } catch (Throwable t) {
@@ -182,7 +182,7 @@ public class MerchantService {
             JSONObject jo = new JSONObject(MerchantServiceRpcCall.ballReceive(ballId));
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 jo = jo.getJSONObject("data"); String pointReceived = jo.getString("pointReceived");
-                Log.other("商家服务🏪领取[" + ballName + "]#获得[" + pointReceived + "商家积分]");
+                Log.member("商家服务🏪领取[" + ballName + "]#获得[" + pointReceived + "商家积分]");
             }
         } catch (Throwable t) {
             Log.i(TAG, "ballReceive err:"); Log.printStackTrace(TAG, t);
@@ -204,7 +204,7 @@ public class MerchantService {
                 String activityNo = jo.getString("activityNo");
                 jo = new JSONObject(MerchantServiceRpcCall.KMDKSignIn(activityNo));
                 if (MessageUtil.checkResultCode(TAG, jo)) {
-                    Log.other("商家服务🏪[开门打卡签到成功]");
+                    Log.member("商家服务🏪[开门打卡签到成功]");
                 }
             }
         } catch (Throwable t) {
@@ -229,7 +229,7 @@ public class MerchantService {
                     String activityPeriodName = jo.getString("activityPeriodName");
                     jo = new JSONObject(MerchantServiceRpcCall.KMDKSignUp(activityNo));
                     if (MessageUtil.checkSuccess(TAG, jo)) {
-                        Log.other("商家服务🏪报名[" + activityPeriodName + "开门打卡]");
+                        Log.member("商家服务🏪报名[" + activityPeriodName + "开门打卡]");
                         hasSignUp = true; break;
                     }
                 } TimeUtil.sleep(500);
