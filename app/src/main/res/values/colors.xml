@@ -4,21 +4,9 @@
          注意：这些是 Android 资源色，只服务于旧 View 体系（styles.xml / drawable / ModelField）；
          Compose 页面一律走 MiuixTheme.colorScheme，不读这里。 -->
     <color name="background">#F7F7F7</color>          <!-- miuix surface：页面底色 -->
-    <color name="secondary_text">#99000000</color>     <!-- onSurfaceVariantSummary -->
-    <color name="main_button">#FFFFFF</color>          <!-- surfaceContainer -->
-    <color name="main_button_pressed">#E8E8E8</color>  <!-- surfaceContainerHigh -->
-    <color name="main_button_text">#000000</color>     <!-- onBackground -->
     <color name="button">#3482FF</color>               <!-- primary -->
-    <color name="button_pressed">#5D9BFF</color>       <!-- primaryContainer -->
-    <color name="button_text">#FFFFFF</color>          <!-- onPrimary -->
-    <color name="dashboard_item_1">#3482FF</color>     <!-- primary -->
-    <color name="dashboard_item_2">#5D9BFF</color>     <!-- primaryContainer -->
-    <color name="dashboard_item_3">#E94634</color>     <!-- error -->
-    <color name="dashboard_item_4">#B2B2B2</color>     <!-- disabledOnSurface -->
 
     <color name="colorPrimary">#3482FF</color>         <!-- primary -->
     <color name="textColorPrimary">#000000</color>     <!-- onBackground -->
-    <color name="textColorDisable">#B2B2B2</color>     <!-- disabledOnSurface -->
-    <color name="navigationBarColor">#00FFFFFF</color>
 
 </resources>
