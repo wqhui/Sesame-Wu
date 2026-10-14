@@ -1,22 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- 奶白色（Cream）主题：与 ui/miuix/CreamTheme.kt 使用同一套色调 -->
-    <color name="background">#FAF5EC</color>
-    <color name="secondary_text">#8C8272</color>
-    <color name="main_button">#FFFDF8</color>
-    <color name="main_button_pressed">#F3E6D2</color>
-    <color name="main_button_text">#3A332A</color>
-    <color name="button">#E07A3E</color>
-    <color name="button_pressed">#C75F26</color>
-    <color name="button_text">#FFFDF8</color>
-    <color name="dashboard_item_1">#E07A3E</color>
-    <color name="dashboard_item_2">#7C9A6D</color>
-    <color name="dashboard_item_3">#D2543E</color>
-    <color name="dashboard_item_4">#D9A441</color>
+    <!-- miuix 标准浅色配色，与 MiuixBaseActivity 的 ThemeController(Light) 保持一致。
+         注意：这些是 Android 资源色，只服务于旧 View 体系（styles.xml / drawable / ModelField）；
+         Compose 页面一律走 MiuixTheme.colorScheme，不读这里。 -->
+    <color name="background">#F7F7F7</color>          <!-- miuix surface：页面底色 -->
+    <color name="secondary_text">#99000000</color>     <!-- onSurfaceVariantSummary -->
+    <color name="main_button">#FFFFFF</color>          <!-- surfaceContainer -->
+    <color name="main_button_pressed">#E8E8E8</color>  <!-- surfaceContainerHigh -->
+    <color name="main_button_text">#000000</color>     <!-- onBackground -->
+    <color name="button">#3482FF</color>               <!-- primary -->
+    <color name="button_pressed">#5D9BFF</color>       <!-- primaryContainer -->
+    <color name="button_text">#FFFFFF</color>          <!-- onPrimary -->
+    <color name="dashboard_item_1">#3482FF</color>     <!-- primary -->
+    <color name="dashboard_item_2">#5D9BFF</color>     <!-- primaryContainer -->
+    <color name="dashboard_item_3">#E94634</color>     <!-- error -->
+    <color name="dashboard_item_4">#B2B2B2</color>     <!-- disabledOnSurface -->
 
-    <color name="colorPrimary">#E07A3E</color>
-    <color name="textColorPrimary">#3A332A</color>
-    <color name="textColorDisable">#BFB6A4</color>
+    <color name="colorPrimary">#3482FF</color>         <!-- primary -->
+    <color name="textColorPrimary">#000000</color>     <!-- onBackground -->
+    <color name="textColorDisable">#B2B2B2</color>     <!-- disabledOnSurface -->
     <color name="navigationBarColor">#00FFFFFF</color>
 
 </resources>

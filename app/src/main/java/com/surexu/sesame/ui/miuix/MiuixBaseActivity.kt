@@ -31,14 +31,15 @@ open class MiuixBaseActivity : AppCompatActivity() {
     /**
      * 所有 miuix 页面统一用此方法设置内容。
      *
-     * 全量奶白色主题：明暗两套配色都注入 [CreamTheme]，并固定为 Light 模式，
-     * 因此无论系统是否处于深色模式，界面始终保持奶白色。
+     * 使用 miuix 自带的浅色配色方案（[ColorSchemeMode.Light]），固定为 Light 模式，
+     * 因此无论系统是否处于深色模式，界面始终保持浅色。
+     * 拟态设计层（[Neu]）的配色也全部从主题语义色派生，会跟随这里的方案。
      */
     protected fun setAppContent(content: @Composable () -> Unit) {
         setContent {
             val controller = remember {
-                // 位置参数：colorSchemeMode / lightColors / darkColors
-                ThemeController(ColorSchemeMode.Light, CreamTheme.colors(), CreamTheme.colors())
+                // 位置参数：colorSchemeMode / lightColors / darkColors（后两者留空即用 miuix 标准方案）
+                ThemeController(ColorSchemeMode.Light)
             }
             MiuixTheme(controller) {
                 content()
@@ -50,7 +51,7 @@ open class MiuixBaseActivity : AppCompatActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
-        // 奶白底 → 状态栏/导航栏图标一律用深色，保证始终可见
+        // 浅色底 → 状态栏/导航栏图标一律用深色，保证始终可见
         WindowCompat.getInsetsController(window, window.decorView).apply {
             isAppearanceLightStatusBars = true
             isAppearanceLightNavigationBars = true

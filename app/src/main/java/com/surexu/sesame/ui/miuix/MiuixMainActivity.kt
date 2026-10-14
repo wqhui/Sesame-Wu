@@ -450,11 +450,13 @@ fun EnergyStatsCard(activated: Boolean, version: String) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // 状态红点
+                // 状态灯：绿=已激活 / 红=未加载。这是语义状态色，miuix 配色方案没有 success 色，
+                // 故保留固定值而不从主题取（否则只能用 primary 蓝，反而不易辨识）。
                 Box(
                     Modifier
                         .size(10.dp)
                         .background(
-                            if (activated) Color(0xFF4CAF50) else Color(0xFFE0532C),
+                            if (activated) Color(0xFF4CAF50) else Color(0xFFE94634),
                             CircleShape
                         )
                 )
@@ -1103,7 +1105,7 @@ fun SettingsTab(activity: MiuixMainActivity) {
             activity.toggleHideIcon()
             iconHidden = activity.isIconHidden()
         }
-        // 界面已固定为奶白色主题（见 MiuixBaseActivity / CreamTheme），
+        // 界面固定为浅色（见 MiuixBaseActivity 的 ThemeController(Light)），
         // 原「深色模式」「跟随系统设置」开关不再生效，故移除以免误导。
     }
     Spacer(Modifier.height(16.dp))

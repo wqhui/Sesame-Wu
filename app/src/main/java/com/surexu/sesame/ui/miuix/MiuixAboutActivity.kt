@@ -110,7 +110,7 @@ fun AboutScreen(activity: MiuixAboutActivity) {
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    text = "Sesame-Wu 是芝麻粒系列的个人定制分支：拟态（Soft UI）奶白界面、悬浮式底部导航，延续蚂蚁森林收能量与庄园打理的自动化能力。基于开源的 Sesame-M 演化而来，同样遵循 GPL-3.0 完整开源。",
+                    text = "Sesame-Wu 是芝麻粒系列的个人定制分支：拟态（Soft UI）界面、悬浮式底部导航，延续蚂蚁森林收能量与庄园打理的自动化能力。基于开源的 Sesame-M 演化而来，同样遵循 GPL-3.0 完整开源。",
                     fontSize = 13.sp,
                     lineHeight = 20.sp,
                     color = MiuixTheme.colorScheme.onSurfaceSecondary,
