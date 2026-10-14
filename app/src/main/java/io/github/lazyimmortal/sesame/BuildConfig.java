@@ -5,16 +5,16 @@ package io.github.lazyimmortal.sesame;
 public final class BuildConfig {
 
     // ===== 转发自动生成的字段 =====
-    public static final boolean DEBUG = com.surexu.sesame.BuildConfig.DEBUG;
-    public static final String APPLICATION_ID = "com.surexu.sesame";
-    public static final String BUILD_TYPE = com.surexu.sesame.BuildConfig.BUILD_TYPE;
-    public static final int VERSION_CODE = com.surexu.sesame.BuildConfig.VERSION_CODE;
-    public static final String VERSION_NAME = com.surexu.sesame.BuildConfig.VERSION_NAME;
+    public static final boolean DEBUG = com.sesame.wu.BuildConfig.DEBUG;
+    public static final String APPLICATION_ID = "com.sesame.wu";
+    public static final String BUILD_TYPE = com.sesame.wu.BuildConfig.BUILD_TYPE;
+    public static final int VERSION_CODE = com.sesame.wu.BuildConfig.VERSION_CODE;
+    public static final String VERSION_NAME = com.sesame.wu.BuildConfig.VERSION_NAME;
 
     // ===== 转发自定义的字段 =====
-    public static final String GIT_COMMIT_HASH = com.surexu.sesame.BuildConfig.GIT_COMMIT_HASH;
-    public static final String GIT_BRANCH_NAME = com.surexu.sesame.BuildConfig.GIT_BRANCH_NAME;
-    public static final String BUILD_TIME = com.surexu.sesame.BuildConfig.BUILD_TIME;
+    public static final String GIT_COMMIT_HASH = com.sesame.wu.BuildConfig.GIT_COMMIT_HASH;
+    public static final String GIT_BRANCH_NAME = com.sesame.wu.BuildConfig.GIT_BRANCH_NAME;
+    public static final String BUILD_TIME = com.sesame.wu.BuildConfig.BUILD_TIME;
 
     // ===== 防止实例化 =====
     private BuildConfig() {}

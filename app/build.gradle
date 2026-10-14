@@ -25,9 +25,9 @@ android {
     def buildTime = new Date().format("yyyy-MM-dd HH:mm:ss", TimeZone.getTimeZone("Asia/Shanghai"))
 
     compileSdk 37
-    namespace 'com.surexu.sesame'
+    namespace 'com.sesame.wu'
     defaultConfig {
-        applicationId "com.surexu.sesame"
+        applicationId "com.sesame.wu"
         minSdk 26
         //noinspection ExpiredTargetSdkVersion
         targetSdk 34

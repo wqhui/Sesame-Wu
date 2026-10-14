@@ -6,9 +6,9 @@ import android.content.pm.PackageManager;
 
 import org.json.JSONObject;
 
-import com.surexu.sesame.BuildConfig;
-import com.surexu.sesame.util.Log;
-import com.surexu.sesame.util.ToastUtil;
+import com.sesame.wu.BuildConfig;
+import com.sesame.wu.util.Log;
+import com.sesame.wu.util.ToastUtil;
 
 public class LibraryUtil {
     private static final String TAG = LibraryUtil.class.getSimpleName();
