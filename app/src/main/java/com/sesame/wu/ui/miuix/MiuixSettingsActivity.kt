@@ -608,6 +608,7 @@ fun FieldItem(field: ModelField<*>, onSave: () -> Unit) {
             val options = smf?.expandValue ?: emptyList()
             val kv = field.value as? KVNode<*, *>
             val current = kv?.key?.toString()
+            val currentCount = (kv?.value as? Number)?.toInt() ?: 1
             var showDialog by remember { mutableStateOf(false) }
             ArrowPreference(
                 title = field.name ?: "",
@@ -621,6 +622,7 @@ fun FieldItem(field: ModelField<*>, onSave: () -> Unit) {
                     withCount = true,
                     options = options,
                     selectedIds = if (current != null) setOf(current) else emptySet(),
+                    selectedCounts = if (current != null) mapOf(current to currentCount) else emptyMap(),
                     onConfirm = { ids, counts ->
                         smf?.clear()
                         ids.firstOrNull()?.let { smf?.add(it, counts[it] ?: 1) }
@@ -636,11 +638,19 @@ fun FieldItem(field: ModelField<*>, onSave: () -> Unit) {
             val smf = field as? SelectAndCountModelField
             val options = smf?.expandValue ?: emptyList()
             val currentMap = field.value as? Map<*, *>
-            val current = currentMap?.keys?.mapNotNull { it?.toString() }?.toSet() ?: emptySet()
+            // 同时取出每项已保存的数量，供弹窗回填（只取 key 会让数量每次被重置为 1）
+            val currentCounts = currentMap?.entries
+                ?.mapNotNull { (k, v) ->
+                    k?.toString()?.let { key -> key to ((v as? Number)?.toInt() ?: 1) }
+                }
+                ?.toMap()
+                ?: emptyMap()
+            val current = currentCounts.keys
             var showDialog by remember { mutableStateOf(false) }
             ArrowPreference(
                 title = field.name ?: "",
-                summary = "已选 ${current.size} 项",
+                summary = if (current.isEmpty()) "未选择"
+                else "已选 ${current.size} 项 · 共 ${currentCounts.values.sum()} 次",
                 onClick = { showDialog = true }
             )
             if (showDialog) {
@@ -650,6 +660,7 @@ fun FieldItem(field: ModelField<*>, onSave: () -> Unit) {
                     withCount = true,
                     options = options,
                     selectedIds = current,
+                    selectedCounts = currentCounts,
                     onConfirm = { ids, counts ->
                         smf?.clear()
                         ids.forEach { smf?.add(it, counts[it] ?: 1) }
@@ -779,10 +790,12 @@ fun SelectionDialog(
     options: List<IdAndName>,
     selectedIds: Set<String>,
     onConfirm: (Set<String>, Map<String, Int>) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    selectedCounts: Map<String, Int> = emptyMap(),
 ) {
     var sel by remember { mutableStateOf(selectedIds) }
-    var counts by remember { mutableStateOf(selectedIds.associateWith { 1 }) }
+    // 必须回填已保存的每项数量，否则每次打开都被重置为 1，用户改完看不出效果
+    var counts by remember { mutableStateOf(selectedIds.associateWith { selectedCounts[it] ?: 1 }) }
     Dialog(onDismissRequest = onDismiss) {
         Box(
             Modifier
