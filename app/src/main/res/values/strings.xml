@@ -3,6 +3,6 @@
     <color name="color_alpha">#00000000</color>
     <color name="color_btn_down">#F0F0F0</color>
 
-    <string name="module_description">Sesame-Wu：拟态奶白版自动化模块。蚂蚁森林能量收取与庄园自动化，开源学习用途，禁止商用。</string>
+    <string name="module_description">Sesame-Wu：拟态版自动化模块。蚂蚁森林能量收取与庄园自动化，开源学习用途，禁止商用。</string>
 
 </resources>

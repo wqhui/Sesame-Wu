@@ -64,6 +64,7 @@ import com.sesame.wu.util.StringUtil
 import com.sesame.wu.util.ToastUtil
 import com.sesame.wu.util.idMap.UserIdMap
 import kotlin.math.roundToInt
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -761,11 +762,10 @@ fun EditDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(text = "取消", onClick = onDismiss)
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(text = "保存", onClick = { onConfirm(text) })
-                }
+                DialogActionButtons(
+                    onConfirm = { onConfirm(text) },
+                    onDismiss = onDismiss,
+                )
             }
         }
     }
@@ -803,11 +803,10 @@ fun SelectionDialog(
                         )
                     }
                     Spacer(Modifier.height(8.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(text = "取消", onClick = onDismiss)
-                        Spacer(Modifier.width(8.dp))
-                        TextButton(text = "保存", onClick = { onConfirm(sel, counts) })
-                    }
+                    DialogActionButtons(
+                        onConfirm = { onConfirm(sel, counts) },
+                        onDismiss = onDismiss,
+                    )
                 }
             } else {
                 // 多选：三段式布局（固定头 + 可滚体 + 固定底）
@@ -877,7 +876,12 @@ fun SelectionDialog(
                         Spacer(Modifier.weight(1f))
                         TextButton(text = "取消", onClick = onDismiss)
                         Spacer(Modifier.width(8.dp))
-                        TextButton(text = "保存", onClick = { onConfirm(sel, counts) })
+                        // 主操作按钮套主色，与「取消」区分主次
+                        TextButton(
+                            text = "保存",
+                            onClick = { onConfirm(sel, counts) },
+                            colors = ButtonDefaults.textButtonColorsPrimary(),
+                        )
                     }
                 }
             }
@@ -912,11 +916,10 @@ fun ChoiceDialog(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(text = "取消", onClick = onDismiss)
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(text = "保存", onClick = { onConfirm(sel) })
-                }
+                DialogActionButtons(
+                    onConfirm = { onConfirm(sel) },
+                    onDismiss = onDismiss,
+                )
             }
         }
     }

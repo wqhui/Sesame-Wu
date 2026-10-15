@@ -85,7 +85,6 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.RadioButtonPreference
@@ -342,8 +341,8 @@ data class NavBarTab(val label: String, val icon: ImageVector)
 /**
  * 悬浮拟态底部导航栏。
  *
- * 与背景同色的拟态胶囊从奶白底面上"浮起"，两侧留边、底部悬空，
- * 选中项以凹陷槽 + 暖橙高亮呈现，形成软按压的交互隐喻。
+ * 与背景同色的拟态胶囊从底面上"浮起"，两侧留边、底部悬空，
+ * 选中项以凹陷槽 + 主色高亮呈现，形成软按压的交互隐喻。
  */
 @Composable
 fun FloatingNavBar(
@@ -1063,11 +1062,11 @@ fun AccountPickerDialog(
                     )
                 }
                 Spacer(Modifier.height(8.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(text = "取消", onClick = onDismiss)
-                    Spacer(Modifier.width(8.dp))
-                    TextButton(text = "确定", onClick = { onSelect(sel); onDismiss() })
-                }
+                DialogActionButtons(
+                    onConfirm = { onSelect(sel); onDismiss() },
+                    onDismiss = onDismiss,
+                    confirmText = "确定",
+                )
             }
         }
     }
