@@ -21,6 +21,7 @@ import com.sesame.wu.model.task.antOcean.AntOceanRpcCall;
 import com.sesame.wu.util.Log;
 import com.sesame.wu.util.MessageUtil;
 import com.sesame.wu.util.Status;
+import com.sesame.wu.util.TaskBlacklist;
 import com.sesame.wu.util.TimeUtil;
 import com.sesame.wu.util.idMap.AntDodoTaskListMap;
 import com.sesame.wu.util.idMap.AntOceanFishBlackListMap;
@@ -139,11 +140,8 @@ public class AntDodo extends ModelTask {
             //初始化AntDodoTaskListMap
             AntDodoTaskListMap.load();
             // 1. 定义黑名单（需要添加的任务）和白名单（需要移除的任务）
-            Set<String> blackList = new HashSet<>();
-            blackList.add("惊喜任务：添加森林组件");
-            blackList.add("连续访问并主动抽卡7天");
-            blackList.add("每日任务：帮好友抽卡");
-            // 可继续添加更多黑名单任务
+            // 预置黑名单集中登记在 TaskBlacklist（含每条目的取舍理由）
+            Set<String> blackList = TaskBlacklist.presetBlackList("AntDodo", "AntDodoTaskList");
 
             Set<String> whiteList = new HashSet<>();// 从黑名单中移除该任务
             //whiteList.add("逛一芝麻树");

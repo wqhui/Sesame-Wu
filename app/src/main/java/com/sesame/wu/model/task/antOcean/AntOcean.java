@@ -23,6 +23,7 @@ import com.sesame.wu.util.MessageUtil;
 import com.sesame.wu.util.Statistics;
 import com.sesame.wu.util.Status;
 import com.sesame.wu.util.StringUtil;
+import com.sesame.wu.util.TaskBlacklist;
 import com.sesame.wu.util.TimeUtil;
 import com.sesame.wu.util.idMap.AntOceanAntiepTaskListMap;
 import com.sesame.wu.util.idMap.AntOceanFishBlackListMap;
@@ -178,9 +179,8 @@ public class AntOcean extends ModelTask {
             //初始化AntOceanAntiepTaskListMap
             AntOceanAntiepTaskListMap.load();
             // 1. 定义黑名单（需要添加的任务）和白名单（需要移除的任务）
-            Set<String> blackList = new HashSet<>();
-            blackList.add("随机任务：玩一玩得拼图");
-            // 可继续添加更多黑名单任务
+            // 预置黑名单集中登记在 TaskBlacklist（该列表原条目"玩一玩"小游戏已释放）
+            Set<String> blackList = TaskBlacklist.presetBlackList("AntOcean", "AntOceanAntiepTaskList");
 
             Set<String> whiteList = new HashSet<>();// 从黑名单中移除该任务
             //whiteList.add("逛一芝麻树");
@@ -238,9 +238,8 @@ public class AntOcean extends ModelTask {
             //初始化AntOceanFishBlackListMap
             AntOceanFishBlackListMap.load();
             // 1. 定义黑名单（需要添加的任务）和白名单（需要移除的任务）
-            blackList = new HashSet<>();
-            blackList.add("玩一玩向僵尸开炮");
-            // 可继续添加更多黑名单任务
+            // 预置黑名单集中登记在 TaskBlacklist（该列表原条目"玩一玩"小游戏已释放）
+            blackList = TaskBlacklist.presetBlackList("AntOcean", "AntOceanFishBlackList");
             whiteList = new HashSet<>();// 从黑名单中移除该任务
             //whiteList.add("逛一芝麻树");
             // 可继续添加更多白名单任务

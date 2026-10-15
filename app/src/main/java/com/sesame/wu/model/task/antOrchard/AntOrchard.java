@@ -466,17 +466,8 @@ public class AntOrchard extends ModelTask {
             //初始化AntOrchardTaskListMap
             AntOrchardTaskListMap.load();
             // 1. 定义黑名单（需要添加的任务）和白名单（需要移除的任务）
-            Set<String> blackList = new HashSet<>();
-            blackList.add("完成1笔旧衣回收");
-            blackList.add("逛助农好货得肥料");
-            blackList.add("逛一逛快手");
-            blackList.add("下载蚂蚁阿福看健康攻略");
-            blackList.add("逛一逛签到领现金");
-            blackList.add("钓鱼1次");
-            blackList.add("逛一逛闪购外卖");
-            blackList.add("完成1单手机数码回收");
-            blackList.add("逛好物最高得1500肥料");
-            // 可继续添加更多黑名单任务
+            // 预置黑名单集中登记在 TaskBlacklist（4 条浏览/游戏类已释放）
+            Set<String> blackList = TaskBlacklist.presetBlackList("AntOrchard", "AntOrchardTaskList");
 
             Set<String> whiteList = new HashSet<>();// 从黑名单中移除该任务
             //whiteList.add("逛一芝麻树");

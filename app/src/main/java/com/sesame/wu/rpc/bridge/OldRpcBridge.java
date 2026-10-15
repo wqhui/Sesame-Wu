@@ -168,6 +168,17 @@ public class OldRpcBridge implements RpcBridge {
                     String resultStr = (String) getResponseMethod.invoke(resp);
                     JSONObject resultObject = new JSONObject(resultStr);
                     rpcEntity.setResponseObject(resultObject, resultStr);
+                    // 风控硬阻塞（1009 / 访问受限）：被拦后官方连只读查询也不放行，
+                    // 必须全局停机而不是拉黑任务——拉黑单个任务没有意义（别的任务照样被拦），
+                    // 且风控是临时的，拉黑会变成永久跳过。
+                    if (TaskBlacklist.isHardBlocked(resultObject)) {
+                        if (!ApplicationHook.isOffline()) {
+                            ApplicationHook.setOffline(true);
+                            NotificationUtil.updateStatusText("命中风控，已暂停");
+                            Log.record("命中风控(1009/访问受限)，已进入离线模式");
+                        }
+                        return null;
+                    }
                     if (resultObject.optString("memo", "").contains("系统繁忙")) {
                         ApplicationHook.setOffline(true);
                         NotificationUtil.updateStatusText("系统繁忙，可能需要滑动验证");

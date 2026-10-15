@@ -16,6 +16,7 @@ import com.sesame.wu.util.Log;
 import com.sesame.wu.util.MessageUtil;
 import com.sesame.wu.util.RandomUtil;
 import com.sesame.wu.util.Status;
+import com.sesame.wu.util.TaskBlacklist;
 import com.sesame.wu.util.TimeUtil;
 import com.sesame.wu.util.idMap.GoldenBeansTaskListMap;
 import com.sesame.wu.util.idMap.UserIdMap;
@@ -476,16 +477,9 @@ public final class GoldenBeansTasks {
             // 1) 需要真实付款 / 真实业务动作
             // 2) 需要用户亲自确认
             // 3) 芝麻炼金入口的外部游戏：缺少可验证的完成闭环
-            Map<String, String> defaultBlackList = new LinkedHashMap<>();
-            defaultBlackList.put("GOLDEN_BEAN_TASK_XIANSHANGZHIFU", "线上支付");
-            defaultBlackList.put("GOLDEN_BEAN_TASK_XIANXIAZHIFU", "到店/线下支付");
-            defaultBlackList.put("GOLDEN_BEAN_TASK_YUEBAO", "余额宝真实业务动作");
-            defaultBlackList.put("TEST_PUSH_SUBSCRIBE", "订阅消息需真实确认");
-            defaultBlackList.put("ZHIMA_youxi_dageluosi", "芝麻炼金游戏·大格罗斯");
-            defaultBlackList.put("ZHIMA_youxi_zheguanwohenxing", "芝麻炼金游戏·这关我很行");
-            defaultBlackList.put("ZHIMA_youxi_hebuguowoba", "芝麻炼金游戏·喝不过我吧");
-            defaultBlackList.put("ZHIMA_youxi_wodehuayuanshijie", "芝麻炼金游戏·我的花园世界");
-            defaultBlackList.put("ZHIMA_youxi_qingyunjuezhifumo", "芝麻炼金游戏·青云诀之伏魔");
+            // 清单集中登记在 TaskBlacklist，此处只负责写入
+            Map<String, String> defaultBlackList =
+                    TaskBlacklist.presetBlackListNamed("goldenbeans", "GoldenBeansTaskList");
             Set<String> defaultKeys = new LinkedHashSet<>(defaultBlackList.keySet());
 
             for (Map.Entry<String, String> item : defaultBlackList.entrySet()) {

@@ -74,6 +74,7 @@ import com.sesame.wu.util.RandomUtil;
 import com.sesame.wu.util.Statistics;
 import com.sesame.wu.util.Status;
 import com.sesame.wu.util.StringUtil;
+import com.sesame.wu.util.TaskBlacklist;
 import com.sesame.wu.util.TimeUtil;
 import com.sesame.wu.util.idMap.AntForestHuntTaskListMap;
 import com.sesame.wu.util.idMap.AntForestVitalityTaskListMap;
@@ -1665,15 +1666,8 @@ public class AntForestV2 extends ModelTask {
             //初始化AntForestVitalityTaskListMap
             AntForestVitalityTaskListMap.load();
             // 1. 定义黑名单（需要添加的任务）和白名单（需要移除的任务）
-            Set<String> blackList = new HashSet<>();
-            blackList.add("去蚂蚁阿福健康问答");
-            blackList.add("邀请1位好友助力");
-            blackList.add("三国大冒险过1关征战");
-            blackList.add("添加组件及时收能量");
-            blackList.add("去淘宝花花乐领红包");
-            blackList.add("到店支付得50g能量");
-            blackList.add("践行绿色行为");
-            blackList.add("连续7天收自己能量");
+            // 预置黑名单集中登记在 TaskBlacklist（游戏/浏览类 2 条已释放）
+            Set<String> blackList = TaskBlacklist.presetBlackList("AntForestV2", "AntForestVitalityTaskList");
 
             // 可继续添加更多黑名单任务
 
@@ -1762,10 +1756,8 @@ public class AntForestV2 extends ModelTask {
             //初始化AntForestHuntTaskListMap
             AntForestHuntTaskListMap.load();
             // 1. 定义黑名单（需要添加的任务）和白名单（需要移除的任务）
-            blackList = new HashSet<>();
-            blackList.add("【限时】玩游戏得2次机会");
-            blackList.add("去乐园开宝箱得机会");
-            // 可继续添加更多黑名单任务
+            // 预置黑名单集中登记在 TaskBlacklist（原 2 条游戏/开宝箱类已全部释放）
+            blackList = TaskBlacklist.presetBlackList("AntForestV2", "AntForestHuntTaskList");
 
             whiteList = new HashSet<>();// 从黑名单中移除该任务
             whiteList.add("消耗活力值得机会");

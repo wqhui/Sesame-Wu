@@ -37,6 +37,7 @@ import com.sesame.wu.util.MessageUtil;
 import com.sesame.wu.util.RandomUtil;
 import com.sesame.wu.util.Status;
 import com.sesame.wu.util.StringUtil;
+import com.sesame.wu.util.TaskBlacklist;
 import com.sesame.wu.util.TimeUtil;
 import com.sesame.wu.util.idMap.AntSportsTaskListMap;
 import com.sesame.wu.util.idMap.AntStallTaskListMap;
@@ -288,8 +289,8 @@ public class AntSports extends ModelTask {
         try {
             //初始化AntSportsTaskListMap
             AntSportsTaskListMap.load();
-            Set<String> blackList = new HashSet<>();
-            blackList.add("下载登录AI健康管家");
+            // 预置黑名单集中登记在 TaskBlacklist
+            Set<String> blackList = TaskBlacklist.presetBlackList("AntSports", "AntSportsTaskList");
 
             Set<String> whiteList = new HashSet<>();// 从黑名单中移除该任务
             //whiteList.add("逛一逛树");

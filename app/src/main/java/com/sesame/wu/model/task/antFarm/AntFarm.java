@@ -518,11 +518,8 @@ public class AntFarm extends ModelTask {
         try {
             //初始化AntFarmDoFarmTaskListMap
             AntFarmDoFarmTaskListMap.load();
-            Set<String> blackList = new HashSet<>();
-            blackList.add("到店付款");
-            blackList.add("线上支付");
-            blackList.add("逛闪购外卖1元起吃");
-            blackList.add("用花呗完成一笔支付");
+            // 预置黑名单集中登记在 TaskBlacklist（含每条目的取舍理由）
+            Set<String> blackList = TaskBlacklist.presetBlackList("AntFarm", "AntFarmDoFarmTaskList");
             Set<String> whiteList = new HashSet<>();// 从黑名单中移除该任务
             //whiteList.add("逛一逛树");
             for (String task : blackList) {
@@ -575,14 +572,9 @@ public class AntFarm extends ModelTask {
 
             //初始化AntFarmDrawMachineTaskListMap
             AntFarmDrawMachineTaskListMap.load();
-            blackList = new HashSet<>();
-            blackList.add("【限时】玩游戏得新机会");
-            blackList.add("【限时】玩游戏得3次机会");
-            blackList.add("伸出援手，点亮希望");
-            blackList.add("限时玩游戏得新机会");
-            blackList.add("【限时】开宝箱得2次机会");
-            blackList.add("【限时】开宝箱得3次机会");
-            blackList.add("消耗饲料换机会");
+            // 预置黑名单集中登记在 TaskBlacklist。
+            // 原「消耗饲料换机会」及 5 条游戏/开宝箱类已释放（服务端不校验真参与，一发即 success）
+            blackList = TaskBlacklist.presetBlackList("AntFarm", "AntFarmDrawMachineTaskList");
 
             whiteList = new HashSet<>();// 从黑名单中移除该任务
             //whiteList.add("逛一逛树");

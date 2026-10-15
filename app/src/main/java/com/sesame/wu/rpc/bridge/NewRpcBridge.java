@@ -9,6 +9,7 @@ import com.sesame.wu.util.ClassUtil;
 import com.sesame.wu.util.Log;
 import com.sesame.wu.util.NotificationUtil;
 import com.sesame.wu.util.RandomUtil;
+import com.sesame.wu.util.TaskBlacklist;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
@@ -157,6 +158,16 @@ public class NewRpcBridge implements RpcBridge {
                         return rpcEntity;
                     }
                     try {
+                        // 风控硬阻塞（1009 / 访问受限）：全局停机，不拉黑任务
+                        // ——被拦后官方连只读查询也不放行，拉黑单个任务没有意义且会变成永久跳过
+                        if (TaskBlacklist.isHardBlocked(rpcEntity.getResponseObject())) {
+                            if (!ApplicationHook.isOffline()) {
+                                ApplicationHook.setOffline(true);
+                                NotificationUtil.updateStatusText("命中风控，已暂停");
+                                Log.record("命中风控(1009/访问受限)，已进入离线模式");
+                            }
+                            return null;
+                        }
                         String errorCode = (String) XHelpers.callMethod(rpcEntity.getResponseObject(), "getString", "error");
                         if ("2000".equals(errorCode)) {
                             if (!ApplicationHook.isOffline()) {
@@ -269,6 +280,16 @@ public class NewRpcBridge implements RpcBridge {
                         return rpcEntity;
                     }
                     try {
+                        // 风控硬阻塞（1009 / 访问受限）：全局停机，不拉黑任务
+                        // ——被拦后官方连只读查询也不放行，拉黑单个任务没有意义且会变成永久跳过
+                        if (TaskBlacklist.isHardBlocked(rpcEntity.getResponseObject())) {
+                            if (!ApplicationHook.isOffline()) {
+                                ApplicationHook.setOffline(true);
+                                NotificationUtil.updateStatusText("命中风控，已暂停");
+                                Log.record("命中风控(1009/访问受限)，已进入离线模式");
+                            }
+                            return null;
+                        }
                         String errorCode = (String) XHelpers.callMethod(rpcEntity.getResponseObject(), "getString", "error");
                         if ("2000".equals(errorCode)) {
                             if (!ApplicationHook.isOffline()) {
