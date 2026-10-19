@@ -2,8 +2,11 @@ package com.sesame.wu.util;
 
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -404,6 +407,29 @@ public class MessageUtil {
     }
 
     public static void MarkTaskBlackList(String ModelFieldsType, String listTitle, String TaskListName, String taskTitle) {
+        // 延迟拉黑：处于捕获模式时先入缓冲，由调用方在列表核对后决定落盘/丢弃
+        if (deferBlackList(() -> doMarkTaskBlackList(ModelFieldsType, listTitle, TaskListName, taskTitle, false))) {
+            return;
+        }
+        doMarkTaskBlackList(ModelFieldsType, listTitle, TaskListName, taskTitle, false);
+    }
+
+    /**
+     * 【底线】交易/支付类任务：拉黑时打「永久」标记，日志上与普通自动拉黑区分。
+     *
+     * <p>本项目没有「满 N 天自动解禁」机制，所有拉黑本来就不会自动解禁，
+     * 故这里与 {@link #MarkTaskBlackList} 行为一致，只改日志文案。
+     *
+     * <p><b>不走延迟拉黑缓冲</b>：缓冲的用途是「等任务列表核对后再决定是否拉黑」，
+     * 而交易/支付类没有可核对的成功路径（绝不允许被伪申报做成）。
+     */
+    public static void MarkTaskBlackListPermanent(String ModelFieldsType, String listTitle,
+                                                  String TaskListName, String taskTitle) {
+        doMarkTaskBlackList(ModelFieldsType, listTitle, TaskListName, taskTitle, true);
+    }
+
+    private static void doMarkTaskBlackList(String ModelFieldsType, String listTitle,
+                                            String TaskListName, String taskTitle, boolean permanent) {
         // 白名单拦截：白名单任务只由「用户手动」决定是否拉黑，自动拉黑机制不插手
         Set<String> white = TASK_WHITE_LIST.get(listTitle);
         if (white != null && white.contains(taskTitle)) {
@@ -412,6 +438,11 @@ public class MessageUtil {
         }
         ConfigV2 config = ConfigV2.INSTANCE;
         ModelFields TaskModelFields = config.getModelFieldsMap().get(ModelFieldsType);
+        if (TaskModelFields == null) {
+            // BLACKLIST_LIST_TARGETS 的第一项必须是模型类名，写错时这里要能看到原因而不是 NPE
+            Log.record("添加" + TaskListName + "黑名单失败：" + taskTitle + "#未找到模块[" + ModelFieldsType + "]");
+            return;
+        }
         SelectModelField TaskSelectModelField = (SelectModelField) TaskModelFields.get(listTitle);
         if (TaskSelectModelField == null) {
             Log.record("添加" + TaskListName + "黑名单失败：" + taskTitle);
@@ -421,10 +452,81 @@ public class MessageUtil {
             TaskSelectModelField.add(taskTitle, 0); // 数组类型忽略count，传0
         }
         if (ConfigV2.save(UserIdMap.getCurrentUid(), false)) {
-            Log.record("自动拉黑🏴在[" + TaskListName + "]中添加[" + taskTitle + "]黑名单:" + TaskSelectModelField.getValue());
+            Log.record((permanent ? "自动拉黑🔒永久" : "自动拉黑🏴") + "在[" + TaskListName + "]中添加["
+                    + taskTitle + "]黑名单:" + TaskSelectModelField.getValue());
         } else {
             Log.record("添加" + TaskListName + "黑名单失败：" + taskTitle);
         }
+    }
+
+    // ==================== 自动拉黑：目标反查与延迟提交 ====================
+
+    /**
+     * 按列表字段名反查拉黑目标 {@code {模块名, 列表中文名}}；未登记的列表返回 null。
+     *
+     * <p>供模块外的通用逻辑（如 {@code TaskAttemptPolicy}）在判定「该任务做不了」时按规则记账。
+     */
+    private static final Map<String, String[]> BLACKLIST_LIST_TARGETS = new LinkedHashMap<>();
+
+    static {
+        BLACKLIST_LIST_TARGETS.put("AntForestVitalityTaskList", new String[]{"AntForestV2", "蚂蚁森林活力值任务"});
+        BLACKLIST_LIST_TARGETS.put("AntForestHuntTaskList", new String[]{"AntForestV2", "蚂蚁森林抽抽乐任务"});
+        BLACKLIST_LIST_TARGETS.put("AntFarmDoFarmTaskList", new String[]{"AntFarm", "庄园饲料任务"});
+        BLACKLIST_LIST_TARGETS.put("AntFarmDrawMachineTaskList", new String[]{"AntFarm", "庄园装扮抽抽乐任务"});
+        BLACKLIST_LIST_TARGETS.put("AntDodoTaskList", new String[]{"AntDodo", "神奇物种任务"});
+        BLACKLIST_LIST_TARGETS.put("AntOceanAntiepTaskList", new String[]{"AntOcean", "神奇海洋普通任务"});
+        BLACKLIST_LIST_TARGETS.put("AntOceanFishBlackList", new String[]{"AntOcean", "神奇海洋去摸鱼任务"});
+        BLACKLIST_LIST_TARGETS.put("AntOrchardTaskList", new String[]{"AntOrchard", "农场肥料任务"});
+        BLACKLIST_LIST_TARGETS.put("OrchardChouChouLeTaskList", new String[]{"AntOrchard", "农场抽抽乐任务"});
+        BLACKLIST_LIST_TARGETS.put("GoldenBeansTaskList", new String[]{"goldenbeans", "金豆夺宝任务"});
+        BLACKLIST_LIST_TARGETS.put("AntStallTaskList", new String[]{"AntStall", "新村任务"});
+        BLACKLIST_LIST_TARGETS.put("AntSportsTaskList", new String[]{"AntSports", "运动任务"});
+        BLACKLIST_LIST_TARGETS.put("AntMemberTaskList", new String[]{"AntMember", "会员任务"});
+        BLACKLIST_LIST_TARGETS.put("MemberCreditSesameTaskList", new String[]{"AntMember", "会员芝麻信用任务芝麻粒"});
+    }
+
+    /** 按列表字段名反查拉黑目标；未登记返回 null。 */
+    public static String[] autoBlackListTarget(String listField) {
+        return BLACKLIST_LIST_TARGETS.get(listField);
+    }
+
+    /** 延迟拉黑缓冲：处于捕获模式时，拉黑动作先入缓冲，由调用方在列表核对后决定落盘/丢弃。 */
+    private static final ThreadLocal<List<Runnable>> DEFER_BLACKLIST = new ThreadLocal<>();
+
+    /** 进入延迟拉黑捕获模式。 */
+    public static void beginDeferBlackList() {
+        if (DEFER_BLACKLIST.get() == null) {
+            DEFER_BLACKLIST.set(new ArrayList<>());
+        }
+    }
+
+    /**
+     * 退出捕获模式。{@code commit=true} 时把缓冲的拉黑动作全部执行，否则丢弃。
+     */
+    public static void endDeferBlackList(boolean commit) {
+        List<Runnable> pending = DEFER_BLACKLIST.get();
+        DEFER_BLACKLIST.remove();
+        if (pending == null || !commit) {
+            return;
+        }
+        for (Runnable action : pending) {
+            try {
+                action.run();
+            } catch (Throwable t) {
+                Log.error("endDeferBlackList err:");
+                Log.printStackTrace(TAG, t);
+            }
+        }
+    }
+
+    /** 处于捕获模式时把动作入缓冲并返回 true；否则返回 false（调用方直接执行）。 */
+    private static boolean deferBlackList(Runnable action) {
+        List<Runnable> pending = DEFER_BLACKLIST.get();
+        if (pending == null) {
+            return false;
+        }
+        pending.add(action);
+        return true;
     }
 
     /**
