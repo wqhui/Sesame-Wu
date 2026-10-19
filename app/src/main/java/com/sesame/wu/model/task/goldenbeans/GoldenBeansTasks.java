@@ -387,7 +387,7 @@ public final class GoldenBeansTasks {
             if (TaskAlternative.hit(jo, entry.taskSceneCode)) {
                 TaskAlternative.trigger(pendingVerifyTasks, taskId, taskName, taskId,
                         entry.taskSceneCode,
-                        goldenbeansRpcCall.VERSION,
+                        goldenbeansRpcCall.VERSION, entry.taskSceneCode, entry.source,
                         "金豆[" + entry.alias + "]", msg -> Log.goldenBeans(msg));
                 return false;
             }

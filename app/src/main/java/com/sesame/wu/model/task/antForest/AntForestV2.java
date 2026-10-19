@@ -2547,7 +2547,9 @@ public class AntForestV2 extends ModelTask {
             // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）。
             // 原先裸调 finishTask 会把它直接吞成 false，导致兜底永不触发；此处也不应因此拉黑
             if (TaskAlternative.hit(jo, sceneCode)) {
+                // 本家场景码/来源：任务场景 + ANTFOREST（用庄园的 ANTFARM/H5 会被判「场景不合法」）
                 TaskAlternative.trigger(null, taskType, taskTitle, taskType, sceneCode,
+                        TaskAlternative.DEFAULT_VERSION, sceneCode, "ANTFOREST",
                         "森林任务", msg -> Log.forest(msg));
                 return true;
             }
@@ -2578,7 +2580,9 @@ public class AntForestV2 extends ModelTask {
             }
             // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）
             if (TaskAlternative.hit(jo, sceneCode)) {
+                // 本家场景码/来源：任务场景 + ANTFOREST（用庄园的 ANTFARM/H5 会被判「场景不合法」）
                 TaskAlternative.trigger(null, taskType, taskTitle, taskType, sceneCode,
+                        TaskAlternative.DEFAULT_VERSION, sceneCode, "ANTFOREST",
                         "森林任务", msg -> Log.forest(msg));
                 return true;
             }

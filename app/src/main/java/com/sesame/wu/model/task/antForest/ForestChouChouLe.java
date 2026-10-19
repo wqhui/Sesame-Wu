@@ -197,7 +197,9 @@ public class ForestChouChouLe {
                                 doublecheck = true;
                             } else if (TaskAlternative.hit(result, taskSceneCode)) {
                                 // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）
+                                // 本家场景码/来源：任务场景 + ADBASICLIB（用庄园的 ANTFARM/H5 会被判「场景不合法」）
                                 TaskAlternative.trigger(null, taskType, taskName, taskType, taskSceneCode,
+                                        TaskAlternative.DEFAULT_VERSION, taskSceneCode, "ADBASICLIB",
                                         "森林寻宝", msg -> Log.forest(msg));
                                 doublecheck = true;
                             } else {
@@ -215,7 +217,9 @@ public class ForestChouChouLe {
                                 doublecheck = true;
                             } else if (TaskAlternative.hit(result, taskSceneCode)) {
                                 // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）
+                                // 本家场景码/来源：任务场景 + ADBASICLIB（用庄园的 ANTFARM/H5 会被判「场景不合法」）
                                 TaskAlternative.trigger(null, taskType, taskName, taskType, taskSceneCode,
+                                        TaskAlternative.DEFAULT_VERSION, taskSceneCode, "ADBASICLIB",
                                         "森林寻宝", msg -> Log.forest(msg));
                                 doublecheck = true;
                             } else {

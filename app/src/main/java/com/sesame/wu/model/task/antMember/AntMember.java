@@ -1190,7 +1190,7 @@ public class AntMember extends ModelTask {
                         bizKey = taskId;
                     }
                     TaskAlternative.trigger(pendingVerifyTasks, taskId, subTitle, bizKey, sceneCode,
-                            AntMemberRpcCall.DO_FARM_TASK_VERSION,
+                            AntMemberRpcCall.DO_FARM_TASK_VERSION, sceneCode,
                             "游戏中心", msg -> Log.member(msg));
                 } else {
                     // 检查并标记黑名单任务
