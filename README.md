@@ -61,11 +61,11 @@ keyPassword=你的口令
 
 ## 授权说明
 
-本项目基于 [aw1y2z 版 Sesame-M](https://github.com/aw1y2z/Sesame-M) 修改而来，并沿其源流基于 [Dragon813 版 Sesame-GR](https://github.com/Dragon813/Sesame-GR)、[TKaxv-7S 版 Sesame](https://github.com/SenOffical/Sesame-TK)、[constanline 版 XQuickEnergy](https://github.com/constanline/XQuickEnergy) 与 [pansong291 版 XQuickEnergy](https://github.com/pansong291/XQuickEnergy) 开发。
+本项目基于 [aw1y2z 版 Sesame-M](https://github.com/aw1y2z/Sesame-M) 、[aoguai 版 Sesame-AG](https://github.com/Sesame-AG/Sesame-AG)修改而来，并沿其源流基于 [Dragon813 版 Sesame-GR](https://github.com/Dragon813/Sesame-GR)、[TKaxv-7S 版 Sesame](https://github.com/SenOffical/Sesame-TK)、[constanline 版 XQuickEnergy](https://github.com/constanline/XQuickEnergy) 与 [pansong291 版 XQuickEnergy](https://github.com/pansong291/XQuickEnergy) 开发。
 
 采用 **GPL-3.0** 完整开源：**禁止**商业用途，**禁止**二次修改后闭源发布。第三方组件许可证原文见 [licenses/](licenses/) 目录。
 
 ## 特别感谢
 
-- 芝麻粒生态的维护者与贡献者（TKaxv-7S、Dragon813、LazyImmortal、Fansirsqi、aw1y2z 等）
+- 芝麻粒生态的维护者与贡献者（TKaxv-7S、Dragon813、LazyImmortal、Fansirsqi、aw1y2z、aoguai 等）
 - [Miuix](https://github.com/compose-miuix-ui/miuix) 与 [libxposed](https://github.com/libxposed/api) 的开发者们
