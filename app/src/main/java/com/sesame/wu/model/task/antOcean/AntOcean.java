@@ -10,11 +10,15 @@ import com.sesame.wu.data.modelFieldExt.BooleanModelField;
 import com.sesame.wu.data.modelFieldExt.ChoiceModelField;
 import com.sesame.wu.data.modelFieldExt.SelectModelField;
 import com.sesame.wu.data.task.ModelTask;
+import com.sesame.wu.data.task.TaskAttemptPolicy;
+import com.sesame.wu.data.task.TaskAttemptPolicy.Outcome;
+import com.sesame.wu.data.task.TaskAward;
 import com.sesame.wu.entity.AlipayAntOceanAntiepTaskList;
 import com.sesame.wu.entity.AlipayAntOceanFishBlackList;
 import com.sesame.wu.entity.AlipayUser;
 import com.sesame.wu.hook.ApplicationHook;
 import com.sesame.wu.hook.Toast;
+import com.sesame.wu.model.base.TaskAlternative;
 import com.sesame.wu.model.base.TaskCommon;
 import com.sesame.wu.model.task.antFarm.AntFarm.TaskStatus;
 import com.sesame.wu.model.task.antForest.AntForestRpcCall;
@@ -902,7 +906,9 @@ public class AntOcean extends ModelTask {
                 JSONObject bizInfo = new JSONObject(jo.getString("bizInfo"));
                 String taskTitle = bizInfo.optString("taskTitle");
 
-                // 结合权益次数、已领奖次数与上限判定阶段，允许「已领取但仍有剩余额度」的任务继续推进
+                // 结合权益次数、已领奖次数与上限判定阶段，允许「已领取但仍有剩余额度」的任务继续推进。
+                // rightsTimes 同时是策略档位号：完成动作走 TaskAttemptPolicy 时进定位键，
+                // 否则首档落下的当日标记会把后续档位全挡下（见 oceanTaskKey）
                 Integer rightsTimes = optTaskProgressInt(jo, "rightsTimes");
                 Integer rightsTimesLimit = optTaskProgressInt(jo, "rightsTimesLimit");
                 if (rightsTimesLimit != null && rightsTimesLimit <= 0) {
@@ -910,6 +916,9 @@ public class AntOcean extends ModelTask {
                 }
                 Integer receivedCount = optTaskProgressInt(jo.optJSONObject("extend"), "alreadyReceiveAwardCount");
 
+                // 多档任务额度已用满：本档位循环的终态，直接跳过。
+                // 等价于 TaskAttemptPolicy.Site#exhausted 的语义（只跳过、不进黑名单），
+                // 但次数信息本轮列表已经拿到，没必要为它再发一次列表请求，故留在调度层判。
                 boolean terminal = rightsTimesLimit != null && receivedCount != null
                         && receivedCount >= rightsTimesLimit;
                 if (terminal) {
@@ -925,14 +934,14 @@ public class AntOcean extends ModelTask {
                 boolean readyToComplete = isRewardReceivedStatus(taskStatus) && rightsTimes != null
                         && rightsTimesLimit != null && rightsTimes < rightsTimesLimit;
                 if (readyToComplete) {
-                    if (!finishOceanTask(jo)) {
+                    if (!finishOceanTask(jo, rightsTimes)) {
                         continue;
                     }
                     TimeUtil.sleep(500);
                     receiveTaskAward(sceneCode, taskType, taskTitle);
                     continue;
                 }
-                if (TaskStatus.TODO.name().equals(taskStatus) && !finishOceanTask(jo)) {
+                if (TaskStatus.TODO.name().equals(taskStatus) && !finishOceanTask(jo, rightsTimes)) {
                     continue;
                 }
                 TimeUtil.sleep(500);
@@ -986,21 +995,38 @@ public class AntOcean extends ModelTask {
         try {
             JSONObject jo = new JSONObject(AntOceanRpcCall.receiveTaskAward(sceneCode, taskType));
             TimeUtil.sleep(500);
-            //检查并标记黑名单任务
-            //MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOceanAntiepTaskList", taskTitle, jo);
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 String awardCount = jo.optString("incAwardCount");
                 Log.forest("海洋任务🎖️领取[" + taskTitle + "]奖励#获得[" + awardCount + "块拼图]");
+                return;
             }
+            // 领奖收口：领奖响应不可信（102/限流可能已发放），先按任务列表复核"已领到"，
+            // 未确认才交自动拉黑（顺序由 TaskAward 固定，调用点写不反）
+            TimeUtil.sleep(800);
+            TaskAward.confirmReceivedOrBlackList("海洋任务🎖️领取",
+                    k -> probeOceanStatus(sceneCode, taskType), taskTitle, taskTitle,
+                    () -> MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOceanAntiepTaskList", taskTitle, jo),
+                    msg -> Log.forest(msg));
         } catch (Throwable t) {
             Log.i(TAG, "receiveTaskAward err:");
             Log.printStackTrace(TAG, t);
         }
     }
 
-    private Boolean finishOceanTask(JSONObject task) {
+    /**
+     * 海洋任务完成：完成与否以任务列表为准（见 {@link TaskAttemptPolicy}），响应不可信；
+     * 400000040「不支持rpc调用」由 TaskAttemptPolicy 代为伪申报。
+     *
+     * @param rightsTimes 该任务当前已用权益次数，即策略档位号（多档任务见 {@link #oceanTaskKey}）
+     */
+    private Boolean finishOceanTask(JSONObject task, Integer rightsTimes) {
         try {
             if (task.has("taskProgress")) {
+                // 进度类任务（如"连续N天来海洋"）无法用 RPC 直接完成，也不能拉黑（否则会永久跳过真任务）
+                return false;
+            }
+            // 周期/持续型任务：跳过，不尝试也不拉黑（常驻列表、每轮结果相同；静默）
+            if (TaskAttemptPolicy.isCyclicTask(task)) {
                 return false;
             }
             JSONObject bizInfo = new JSONObject(task.getString("bizInfo"));
@@ -1009,31 +1035,82 @@ public class AntOcean extends ModelTask {
             if (AntOceanAntiepTaskList.getValue().contains(taskTitle)) {
                 return false;
             }
+            String sceneCode = task.getString("sceneCode");
+            String taskType = task.getString("taskType");
             if (taskTitle.equals("每日任务：答题学海洋知识")) {
                 // 答题操作
                 if (answerQuestion()) {
                     Log.forest("海洋任务🧾完成[" + taskTitle + "]");
                     return true;
                 }
+                return false;
             }
             //不完成限时任务号容易黑
             //else if (taskTitle.startsWith("随机任务：") || taskTitle.startsWith("绿色任务：")|| taskTitle.startsWith("限时任务：")) {
-            else if (taskTitle.startsWith("随机任务：") || taskTitle.startsWith("绿色任务：")) {
-                String sceneCode = task.getString("sceneCode");
-                String taskType = task.getString("taskType");
-                JSONObject jo = new JSONObject(AntOceanRpcCall.finishTask(sceneCode, taskType));
-                //检查并标记黑名单任务
-                MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOceanAntiepTaskList", taskTitle, jo);
-                if (MessageUtil.checkSuccess(TAG, jo)) {
-                    Log.forest("海洋任务🧾完成[" + taskTitle + "]");
-                    return true;
-                }
+            if (taskTitle.startsWith("随机任务：") || taskTitle.startsWith("绿色任务：")) {
+                // 做不了的当天只试一次、临时故障留待下一轮（见 TaskAttemptPolicy）；
+                // 定位键带档位号，多档任务才能逐档推进而不是停在第一档
+                Outcome outcome = TaskAttemptPolicy.handle(
+                        oceanTaskKey(sceneCode, taskType, rightsTimes), taskTitle, null,
+                        () -> attemptFinishOceanTask(sceneCode, taskType, taskTitle), Log::forest,
+                        new TaskAttemptPolicy.Site("AntOceanAntiepTaskList", "海洋任务", taskType, sceneCode,
+                                (k) -> probeOceanStatus(sceneCode, taskType))
+                                // 本家值：任务场景 + ANTFOCEAN
+                                .withScene(sceneCode).withSource("ANTFOCEAN"));
+                return outcome == Outcome.DONE || outcome == Outcome.TRIGGERED;
             }
         } catch (Throwable t) {
             Log.i(TAG, "finishOceanTask err:");
             Log.printStackTrace(TAG, t);
         }
         return false;
+    }
+
+    /**
+     * 海洋任务完成上报：做不了的只记一行、不拉黑；"不支持rpc"交给通用类伪申报。
+     */
+    private static Outcome attemptFinishOceanTask(String sceneCode, String taskType, String taskTitle) {
+        try {
+            JSONObject jo = new JSONObject(AntOceanRpcCall.finishTask(sceneCode, taskType));
+            //检查并标记黑名单任务
+            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOceanAntiepTaskList", taskTitle, jo);
+            if (MessageUtil.checkSuccess(TAG, jo)) {
+                Log.forest("海洋任务🧾完成[" + taskTitle + "]");
+                return Outcome.DONE;
+            }
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            // 不支持rpc调用（400000040）→ 由 TaskAttemptPolicy 代为伪申报
+            if (TaskAlternative.hit(jo, sceneCode)) {
+                return Outcome.UNSUPPORTED;
+            }
+            Log.forest("海洋任务⚠️未完成[" + taskTitle + "]，需在支付宝内手动完成");
+            return Outcome.UNABLE;
+        } catch (Throwable t) {
+            Log.error("attemptFinishOceanTask err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return Outcome.RETRY;
+    }
+
+    /** 列表状态探针：重拉海洋任务列表，按 sceneCode+taskType 匹配该任务当前状态。 */
+    private static TaskAttemptPolicy.ProbeResult probeOceanStatus(String sceneCode, String taskType) {
+        // statusOf 返回 null 表示该项不匹配
+        return TaskAttemptPolicy.probeByList(TAG, AntOceanRpcCall::queryTaskList, "antOceanTaskVOList",
+                jo -> MessageUtil.checkResultCode(TAG, jo),
+                t -> sceneCode.equals(t.optString("sceneCode")) && taskType.equals(t.optString("taskType"))
+                        ? t.optString("taskStatus") : null);
+    }
+
+    /**
+     * 海洋任务的策略定位键：**档位必须进键**。
+     * <p>TaskAttemptPolicy 的「当天只试一次」按定位键记账，而多档任务（rightsTimesLimit&gt;1）
+     * 每一档都要重新完成一次；若各档共用同一个键，首档落下的当日标记会把后续档位全部挡下，
+     * 任务永远停在第一档。故用服务端下发的 rightsTimes（已用权益次数）当档位号。
+     */
+    private static String oceanTaskKey(String sceneCode, String taskType, Integer rightsTimes) {
+        return "ocean::" + sceneCode + "/" + taskType + "#" + (rightsTimes == null ? 0 : rightsTimes);
     }
 
     // 海洋答题任务
@@ -1489,22 +1566,55 @@ public class AntOcean extends ModelTask {
     }
 
     /**
-     * 完成任务
+     * 完成任务：完成与否以任务列表为准（探针复核），响应不可信；
+     * 400000040「不支持rpc调用」由 TaskAttemptPolicy 代为伪申报（同 antiep 家族）。
      */
     private boolean antfishFinishTask(String taskTitle, String taskType) {
+        Outcome outcome = TaskAttemptPolicy.handle("ocean::fish::" + taskType, taskTitle, null,
+                () -> attemptAntfishFinishTask(taskTitle, taskType), Log::forest,
+                new TaskAttemptPolicy.Site("AntOceanFishBlackList", "摸鱼任务", taskType, "ANTAIFISH",
+                        (k) -> probeAntfishStatus(taskType))
+                        // 本家值：ANTAIFISH
+                        .withScene("ANTAIFISH").withSource("ANTAIFISH"));
+        return outcome == Outcome.DONE || outcome == Outcome.TRIGGERED;
+    }
+
+    /** 摸鱼任务完成上报：做不了的只记一行、不拉黑；"不支持rpc"交给通用类伪申报 */
+    private Outcome attemptAntfishFinishTask(String taskTitle, String taskType) {
         try {
-            String result = AntOceanRpcCall.antfishFinishTask(taskType);
-            JSONObject jo = new JSONObject(result);
+            JSONObject jo = new JSONObject(AntOceanRpcCall.antfishFinishTask(taskType));
             MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOceanFishBlackList", taskTitle, jo);
             if (MessageUtil.checkResultCode(TAG, jo)) {
                 Log.forest("摸鱼任务🧾完成[" + taskTitle + "]");
-                return true;
+                return Outcome.DONE;
+            }
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            // 不支持rpc调用（400000040）→ 由 TaskAttemptPolicy 代为伪申报
+            if (TaskAlternative.hit(jo, "ANTAIFISH")) {
+                return Outcome.UNSUPPORTED;
             }
         } catch (Throwable t) {
-            Log.i(TAG, "antfishFinishTask err:");
+            Log.error("attemptAntfishFinishTask err:");
             Log.printStackTrace(TAG, t);
+            return Outcome.RETRY;
         }
-        return false;
+        return Outcome.UNABLE;
+    }
+
+    /** 列表状态探针：重拉摸鱼任务列表（ANTAIFISH），按 taskType 匹配该任务当前状态。 */
+    private static TaskAttemptPolicy.ProbeResult probeAntfishStatus(String taskType) {
+        // 摸鱼任务的状态在 taskBaseInfo 子对象内，故用 statusOf 形态：不匹配返回 null
+        return TaskAttemptPolicy.probeByList(TAG, AntOceanRpcCall::antfishListTask, "taskInfoList",
+                jo -> MessageUtil.checkResultCode(TAG, jo),
+                taskInfo -> {
+                    JSONObject base = taskInfo.optJSONObject("taskBaseInfo");
+                    if (base == null || !taskType.equals(base.optString("taskType"))) {
+                        return null;
+                    }
+                    return base.optString("taskStatus");
+                });
     }
 
     /**
