@@ -221,6 +221,9 @@ public class AntForestV2 extends ModelTask {
     private BooleanModelField medicalHealth;
     private BooleanModelField greenLife;
 
+    /** 绿植浏览（GUANG_TASK）：15g 能量 + 5 积分 + 200 水滴，独立于森林集市 */
+    private BooleanModelField marketBrowseTask;
+
     private BooleanModelField greenRent;
     private SelectModelField whoYouWantToGiveTo;
     private BooleanModelField ecoLife;
@@ -323,6 +326,7 @@ public class AntForestV2 extends ModelTask {
         modelFields.addField(collectGiftBox = new BooleanModelField("collectGiftBox", "领取礼盒", false));
         modelFields.addField(medicalHealth = new BooleanModelField("medicalHealth", "医疗健康", false));
         modelFields.addField(greenLife = new BooleanModelField("greenLife", "森林集市", false));
+        modelFields.addField(marketBrowseTask = new BooleanModelField("marketBrowseTask", "绿植浏览", false));
         modelFields.addField(greenRent = new BooleanModelField("greenRent", "绿色租赁", false));
         modelFields.addField(youthPrivilege = new BooleanModelField("youthPrivilege", "青春特权 | 森林道具", false));
         modelFields.addField(ecoLife = new BooleanModelField("ecoLife", "绿色行动 | 开启", false));
@@ -617,6 +621,11 @@ public class AntForestV2 extends ModelTask {
                 /* 森林集市 */
                 if (greenLife.getValue()) {
                     greenLife();
+                }
+
+                // 绿植浏览（独立任务，与森林集市无关）
+                if (marketBrowseTask.getValue()) {
+                    GreenPlantBrowse.run();
                 }
 
                 // 绿色租赁
