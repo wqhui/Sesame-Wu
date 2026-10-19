@@ -11,6 +11,9 @@ import java.util.Set;
 import com.sesame.wu.data.ConfigV2;
 import com.sesame.wu.data.ModelFields;
 import com.sesame.wu.data.modelFieldExt.SelectModelField;
+import com.sesame.wu.data.task.TaskAttemptPolicy;
+import com.sesame.wu.data.task.TaskAward;
+import com.sesame.wu.data.task.TaskAttemptPolicy.Outcome;
 import com.sesame.wu.model.base.TaskAlternative;
 import com.sesame.wu.util.Log;
 import com.sesame.wu.util.MessageUtil;
@@ -345,7 +348,12 @@ public final class GoldenBeansTasks {
                 if (isBlacklisted(blacklistKey, taskName)) {
                     if (STATUS_FINISHED.equals(taskStatus) || STATUS_TO_RECEIVE.equals(taskStatus)) {
                         sleepWithJitter(interval);
-                        claimAward(entry, taskId, taskName);
+                        // 领奖失败要计入未完成，下轮还会重试（与下面非黑名单分支保持一致）
+                        if (claimAward(entry, taskId, taskName)) {
+                            changed = true;
+                        } else {
+                            unresolved = true;
+                        }
                     } else {
                         Log.record("金豆[" + entry.alias + "]任务⏭️[" + taskName + "]黑名单跳过");
                     }
@@ -379,11 +387,26 @@ public final class GoldenBeansTasks {
                         continue;
                     }
                     sleepWithJitter(interval);
-                    if (finishTask(entry, taskId, taskName)) {
+                    // 多次任务（rightsTimesLimit>1）一次补齐：逐档取不同的策略键，否则第一档落下
+                    // 当日标记后后续档位全被挡下、任务停在第一档
+                    int rightsTimes = task.optInt("rightsTimes", 0);
+                    int rightsTimesLimit = task.optInt("rightsTimesLimit", 0);
+                    int remain = rightsTimesLimit > rightsTimes ? rightsTimesLimit - rightsTimes : 1;
+                    boolean anyDone = false;
+                    for (int cnt = 0; cnt < remain; cnt++) {
+                        // 最后一档才走列表复核：中间档是"里程碑"语义（列表要打满才变完成），
+                        // 按响应推进即可，否则中间档会被判"未完成"、break 掉后续档位
+                        if (!finishTask(entry, taskId, taskName, rightsTimes + cnt, cnt == remain - 1)) {
+                            break; // 做不了就收手，不再空转剩余次数
+                        }
+                        anyDone = true;
+                        sleepWithJitter(interval);
+                    }
+                    if (anyDone) {
                         handled++;
                         changed = true;
                     } else {
-                        Log.record("金豆[" + entry.alias + "]任务⚠️[" + taskName + "]完成失败["
+                        Log.goldenBeans("金豆[" + entry.alias + "]任务⚠️[" + taskName + "]完成失败["
                                 + (actionType.isEmpty() ? "UNKNOWN" : actionType) + "]");
                         unresolved = true;
                     }
@@ -394,7 +417,10 @@ public final class GoldenBeansTasks {
                 unresolved = true;
             }
 
-            verifyPendingTasks(entry);
+            // 核对本轮 doFarmTask 的结果（响应不可信，以任务列表为准）
+            if (verifyPendingTasks(entry)) {
+                changed = true;
+            }
             Log.record("金豆[" + entry.alias + "]任务🗂️共[" + total + "]个#完成[" + handled + "]个");
             if (changed) {
                 sleepWithJitter(interval);
@@ -455,39 +481,62 @@ public final class GoldenBeansTasks {
         return upper.contains("ZHIFU") || upper.contains("_PAY");
     }
 
-    private boolean finishTask(GoldenBeansEntry entry, String taskId, String taskName) {
+    private boolean finishTask(GoldenBeansEntry entry, String taskId, String taskName, int stage,
+                               boolean lastStage) {
         if (taskId == null || taskId.isEmpty()) {
             Log.goldenBeans("金豆[" + entry.alias + "]任务⚠️[" + taskName + "]缺少taskId#跳过");
             return false;
         }
+        // 做不了的当天只试一次、临时故障留待下一轮（见 TaskAttemptPolicy）
+        // 完成与否一律以任务列表为准（探针 probeGoldenBeansStatus 复核），响应不可信；
+        // 兜底后的核对仍交给本模块的 verifyPendingTasks，故 listField/bizKey 传 null（黑名单由 verify 管）
+        TaskAttemptPolicy.Site site = new TaskAttemptPolicy.Site(
+                null, "金豆[" + entry.alias + "]任务", null, entry.taskSceneCode,
+                (k) -> probeGoldenBeansStatus(entry, taskId));
+        if (!lastStage) {
+            // 多档里程碑的中间档：列表要打满才变完成，列表复核在这里永远判"未完成"，
+            // 会把成功的提交改判成做不了、break 掉后续档位（与森林兑换同形态）
+            site = site.withTrustResponse();
+        }
+        // key 带档位：多次任务每推进一档都是新的尝试，否则后续档位会被当日标记挡下
+        Outcome outcome = TaskAttemptPolicy.handle(
+                "goldenbeans::" + entry.alias + "/" + taskId + "#" + stage, taskName, null,
+                () -> attemptFinishTask(entry, taskId, taskName), msg -> Log.goldenBeans(msg), site);
+        return outcome == Outcome.DONE || outcome == Outcome.TRIGGERED;
+    }
+
+    /** 任务提交：做不了的不拉黑、交给兜底方案；其它错误码才算真做不了（仍计入自动拉黑） */
+    private Outcome attemptFinishTask(GoldenBeansEntry entry, String taskId, String taskName) {
         try {
             JSONObject jo = GoldenBeansSupport.parse(goldenbeansRpcCall.submitTaskOf(
                     entry.bizType, entry.source, entry.taskSceneCode, taskId));
             if (GoldenBeansSupport.ok(jo)) {
                 Log.goldenBeans("金豆[" + entry.alias + "]任务🧾完成[" + taskName + "]");
-                return true;
+                return Outcome.DONE;
             }
-            // 另一种实现方案（见 TaskAlternative）
+            String failMessage = GoldenBeansSupport.describe(jo);
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            // 另一种实现方案（见 TaskAlternative）；乐园游戏类任务会被提交接口以 400000040 拒绝。
+            // 本模块自行伪申报并登记同轮核对（verifyPendingTasks），故返回 FORGED 而不是交给通用类。
+            // 场景码/来源用本入口自己的（各入口不同），不能用兜底默认的庄园
             if (TaskAlternative.hit(jo, entry.taskSceneCode)) {
                 TaskAlternative.trigger(pendingVerifyTasks, taskId, taskName, taskId,
                         entry.taskSceneCode,
                         goldenbeansRpcCall.VERSION, entry.taskSceneCode, entry.source,
-                        "金豆[" + entry.alias + "]", msg -> Log.goldenBeans(msg));
-                return false;
+                        "金豆[" + entry.alias + "]任务", msg -> Log.goldenBeans(msg));
+                return Outcome.FORGED;
             }
             // 命中不可自动完成的任务时按错误特征自动加入黑名单
             MessageUtil.checkResultCodeAndMarkTaskBlackList("GoldenBeansTaskList", taskId, jo);
-            String failMessage = GoldenBeansSupport.describe(jo);
-            if (failMessage.contains("不支持rpc调用") || failMessage.contains("不支持RPC调用")) {
-                Log.goldenBeans("金豆[" + entry.alias + "]任务🏴[" + taskName + "]不支持自动化#已加入黑名单");
-                return false;
-            }
             Log.goldenBeans("金豆[" + entry.alias + "]任务⚠️[" + taskName + "]完成失败[" + failMessage + "]");
+            return Outcome.UNABLE;
         } catch (Throwable th) {
             Log.i(GoldenBeansSupport.TAG, "finishTask err:");
             Log.printStackTrace(GoldenBeansSupport.TAG, th);
         }
-        return false;
+        return Outcome.RETRY;
     }
 
     private boolean claimAward(GoldenBeansEntry entry, String taskId, String taskName) {
@@ -503,8 +552,13 @@ public final class GoldenBeansTasks {
                         + GoldenBeansSupport.awardText(jo));
                 return true;
             }
-            // 领奖失败同样按不可重试错误自动拉黑，避免每轮重复请求
-            MessageUtil.checkResultCodeAndMarkTaskBlackList("GoldenBeansTaskList", taskId, jo);
+            // 领奖收口：先按任务列表复核"已领到"，未确认才交自动拉黑（顺序由 TaskAward 固定）
+            if (TaskAward.confirmReceivedOrBlackList("金豆[" + entry.alias + "]任务🎖️领取",
+                    k -> probeGoldenBeansStatus(entry, taskId), taskId, taskName,
+                    () -> MessageUtil.checkResultCodeAndMarkTaskBlackList("GoldenBeansTaskList", taskId, jo),
+                    msg -> Log.goldenBeans(msg))) {
+                return true;
+            }
             Log.goldenBeans("金豆[" + entry.alias + "]任务⚠️领取[" + taskName + "]失败["
                     + GoldenBeansSupport.describe(jo) + "]");
         } catch (Throwable th) {
@@ -514,14 +568,53 @@ public final class GoldenBeansTasks {
         return false;
     }
 
+    /** 列表状态探针：重拉本入口任务列表，按 taskId 匹配；仅待办视为未完成（消失即已完成）。 */
+    private TaskAttemptPolicy.ProbeResult probeGoldenBeansStatus(GoldenBeansEntry entry, String taskId) {
+        try {
+            JSONObject syncJo = GoldenBeansSupport.parse(goldenbeansRpcCall.pullOf(
+                    entry.bizType, entry.source, "FARM_TASK", "TASK_LIST"));
+            if (!GoldenBeansSupport.ok(syncJo)) {
+                return TaskAttemptPolicy.ProbeResult.UNKNOWN;
+            }
+            JSONArray taskList = syncJo.optJSONArray("taskList");
+            if (taskList == null) {
+                return TaskAttemptPolicy.ProbeResult.UNKNOWN;
+            }
+            for (int i = 0; i < taskList.length(); i++) {
+                JSONObject task = taskList.optJSONObject(i);
+                if (task == null || !taskId.equals(task.optString("taskId", "").trim())) {
+                    continue;
+                }
+                String status = task.optString("taskStatus", "").trim().toUpperCase();
+                if (STATUS_TODO.equals(status)) {
+                    return TaskAttemptPolicy.ProbeResult.TODO;
+                }
+                // DONE 与 RECEIVED 同义（本文件状态分派处：两者都算"已领取"），FINISHED / TO_RECEIVE 才是"待领"
+                if (STATUS_RECEIVED.equals(status) || STATUS_DONE.equals(status)
+                        || "HAS_RECEIVED".equals(status)) {
+                    return TaskAttemptPolicy.ProbeResult.RECEIVED;
+                }
+                return TaskAttemptPolicy.ProbeResult.FINISHED;
+            }
+            // 任务已从列表消失：视为已完成且已领
+            return TaskAttemptPolicy.ProbeResult.GONE;
+        } catch (Throwable th) {
+            Log.i(GoldenBeansSupport.TAG, "probeGoldenBeansStatus err:");
+            Log.printStackTrace(GoldenBeansSupport.TAG, th);
+            return TaskAttemptPolicy.ProbeResult.UNKNOWN;
+        }
+    }
+
     /**
      * 核对「已触发但响应不可信」的任务：等几秒后重拉列表，
      * 仍为 TODO 的才计入自动拉黑。
      * <p>为什么以列表为准：{@code doFarmTask} 会回 102 等错码但任务其实已生效，
      * 服务端异步推进状态，只有列表里的 {@code taskStatus} 才是最终判据。
+     *
+     * @return 是否有任务确认完成（用于决定是否再同步一次列表）
      */
-    private void verifyPendingTasks(GoldenBeansEntry entry) {
-        TaskAlternative.verify(pendingVerifyTasks, VERIFY_CFG, () -> {
+    private boolean verifyPendingTasks(GoldenBeansEntry entry) {
+        return TaskAlternative.verify(pendingVerifyTasks, VERIFY_CFG, () -> {
             Set<String> notDone = new LinkedHashSet<>();
             collectNotDoneIds(goldenbeansRpcCall.pullOf(
                     entry.bizType, entry.source, "FARM_TASK", "TASK_LIST"), notDone);
