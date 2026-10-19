@@ -820,13 +820,24 @@ public class AntMember extends ModelTask {
                 return false;
             }
             String targetBusiness = targetBusinessArr.getString(0);
+            // targetBusiness 格式为 bizType#bizSubType#bizParam，第 1 段是 bizType。
+            // 仅处理 BROWSE 类任务：其它类型（如 CALL_APP）与 executeTask 固定的 bizType=BROWSE
+            // 组合不被服务端支持，跳过并打当日标记，避免每轮 applyTask/executeTask 反复失败刷屏
+            String[] targetBusinessArray = targetBusiness.split("#");
+            if (targetBusinessArray.length < 2 || !"BROWSE".equals(targetBusinessArray[0])) {
+                String bizType = targetBusinessArray.length > 0 ? targetBusinessArray[0] : "";
+                if (!Status.hasFlagToday("antmember::skipBizType::" + name)) {
+                    Log.record("会员任务⏭️跳过[" + name + "]#非浏览类任务(" + bizType + ")");
+                    Status.flagToday("antmember::skipBizType::" + name);
+                }
+                return false;
+            }
             for (int i = left; i <= right; i++) {
                 JSONObject jo = new JSONObject(AntMemberRpcCall.applyTask(name, id));
                 sleepWithJitter(300);
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
                     continue;
                 }
-                String[] targetBusinessArray = targetBusiness.split("#");
                 String bizType;
                 String bizParam;
                 String bizSubType;

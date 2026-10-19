@@ -362,9 +362,12 @@ public class AntForestV2 extends ModelTask {
     @Override
     public void boot(ClassLoader classLoader) {
         super.boot(classLoader);
-        FixedOrRangeIntervalLimit queryIntervalLimit = new FixedOrRangeIntervalLimit(queryInterval.getValue(), 10, 10000);
-        RpcIntervalLimit.addIntervalLimit("alipay.antforest.forest.h5.queryHomePage", queryIntervalLimit);
-        RpcIntervalLimit.addIntervalLimit("alipay.antforest.forest.h5.queryFriendHomePage", queryIntervalLimit);
+        // 两个接口各自持有独立的限流实例：IntervalLimit 的锁与时间戳都挂在实例上，
+        // 共用同一个实例会让首页与好友页互相抢节流窗口
+        RpcIntervalLimit.addIntervalLimit("alipay.antforest.forest.h5.queryHomePage",
+                new FixedOrRangeIntervalLimit(queryInterval.getValue(), 10, 10000));
+        RpcIntervalLimit.addIntervalLimit("alipay.antforest.forest.h5.queryFriendHomePage",
+                new FixedOrRangeIntervalLimit(queryInterval.getValue(), 10, 10000));
         RpcIntervalLimit.addIntervalLimit("alipay.antmember.forest.h5.collectEnergy", 0);
         RpcIntervalLimit.addIntervalLimit("alipay.antmember.forest.h5.queryEnergyRanking", 100);
         RpcIntervalLimit.addIntervalLimit("alipay.antforest.forest.h5.fillUserRobFlag", 500);
@@ -651,6 +654,10 @@ public class AntForestV2 extends ModelTask {
 
                 }
                 ForestEnergyInfo();
+
+                // 倍卡额外能量放到最后收：此时本轮的能量（含异步收取的好友能量）才累积完，
+                // 放在收取之前只能收到上一轮攒下的部分
+                collectRobExpandEnergy();
 
             }
         } catch (Throwable t) {
@@ -1476,24 +1483,71 @@ public class AntForestV2 extends ModelTask {
 
     private void updateUsingPropsEndTime(JSONObject joHomePage) {
         try {
-            JSONArray ja = joHomePage.getJSONArray("loginUserUsingPropNew");
-            if (ja.length() == 0) {
-                ja = joHomePage.getJSONArray("usingUserPropsNew");
+            // 组队版首页把在用道具放在 usingUserProps（个人版在 loginUserUsingPropNew），三个字段都取。
+            // 用 optJSONArray 而非 getJSONArray：字段缺失时不应抛异常中断整个首页处理
+            JSONArray ja = joHomePage.optJSONArray("loginUserUsingPropNew");
+            if (ja == null || ja.length() == 0) {
+                ja = joHomePage.optJSONArray("usingUserPropsNew");
+            }
+            if (ja == null || ja.length() == 0) {
+                ja = joHomePage.optJSONArray("usingUserProps");
+            }
+            if (ja == null) {
+                return;
             }
             for (int i = 0; i < ja.length(); i++) {
                 JSONObject jo = ja.getJSONObject(i);
-                String propGroup = jo.getString("propGroup");
-                Long endTime = jo.getLong("endTime");
-                String propId = jo.getString("propId");
-                String propType = jo.getString("propType");
-                usingProps.put(propGroup, endTime);
-                if (PropGroup.robExpandCard.name().equals(propGroup)) {
-                    collectRobExpandEnergy(jo.optString("extInfo"), propId, propType);
-                }
+                usingProps.put(jo.getString("propGroup"), jo.getLong("endTime"));
             }
             forestExtensions();
         } catch (Throwable th) {
             Log.i(TAG, "updateUsingPropsEndTime err:");
+            Log.printStackTrace(TAG, th);
+        }
+    }
+
+    /**
+     * 收取倍卡额外能量（本轮收尾调用）。倍卡额度是本轮收取行为累积出来的，
+     * 先收只能收到上一轮攒下的部分，本轮领到的要等到下一轮；且好友能量是异步收取，
+     * 必须等子任务跑完再查，否则查到的仍是未累积的旧值。
+     */
+    private void collectRobExpandEnergy() {
+        if (!collectRobExpandEnergyEnable.getValue()) {
+            return;
+        }
+        try {
+            JSONObject joHomePage = new JSONObject(AntForestRpcCall.queryHomePage());
+            if (MessageUtil.checkResultCode(TAG, joHomePage)) {
+                collectRobExpandEnergy(joHomePage);
+            }
+        } catch (Throwable th) {
+            Log.i(TAG, "collectRobExpandEnergy err:");
+            Log.printStackTrace(TAG, th);
+        }
+    }
+
+    /** 从首页响应里取出在用的倍卡并收取 */
+    private void collectRobExpandEnergy(JSONObject joHomePage) {
+        try {
+            // 组队版首页把在用道具放在 usingUserProps（个人版在 loginUserUsingPropNew），三个字段都取
+            JSONArray ja = joHomePage.optJSONArray("loginUserUsingPropNew");
+            if (ja == null || ja.length() == 0) {
+                ja = joHomePage.optJSONArray("usingUserPropsNew");
+            }
+            if (ja == null || ja.length() == 0) {
+                ja = joHomePage.optJSONArray("usingUserProps");
+            }
+            if (ja == null) {
+                return;
+            }
+            for (int i = 0; i < ja.length(); i++) {
+                JSONObject jo = ja.getJSONObject(i);
+                if (PropGroup.robExpandCard.name().equals(jo.getString("propGroup"))) {
+                    collectRobExpandEnergy(jo.optString("extInfo"), jo.getString("propId"), jo.getString("propType"));
+                }
+            }
+        } catch (Throwable th) {
+            Log.i(TAG, "collectRobExpandEnergy err:");
             Log.printStackTrace(TAG, th);
         }
     }
@@ -2147,7 +2201,15 @@ public class AntForestV2 extends ModelTask {
                 if (count == null || count < 0) {
                     continue;
                 }
-                while (Status.canVitalityExchangeBenefitToday(skuId, count) && exchangeBenefit(skuId)) {
+                // 失效 skuId（权益下架/换号/服务端改 ID）当日已判过就跳过，避免每轮刷屏并拖累后续任务
+                if (Status.hasFlagToday("forest::exchangeSkuMissing::" + skuId)) {
+                    continue;
+                }
+                // 每日次数之外再加硬循环上限：即便出现意外也不会空转
+                int loopCount = 0;
+                while (loopCount++ < count
+                        && Status.canVitalityExchangeBenefitToday(skuId, count)
+                        && exchangeBenefit(skuId)) {
                     TimeUtil.sleep(3000);
                 }
             }
@@ -3704,6 +3766,12 @@ public class AntForestV2 extends ModelTask {
     /** 单分类翻页上限：hasMore 异常一直为真时兜底 */
     private static final int VITALITY_ITEM_MAX_PAGES = 10;
 
+    /** 活力值商店列表拉取失败的当日重试上限：服务端持续失败时避免每轮都重拉（单轮最多 5 分类 × 10 页） */
+    private static final int VITALITY_SKU_RETRY_MAX = 3;
+
+    /** 活力值商店列表拉取失败次数的当日计数 key */
+    private static final String FLAG_VITALITY_SKU_RETRY = "forest::vitalitySkuListRetry";
+
     /**
      * 获取活力值商店所有商品信息。
      * <p>原先只查 SC_ASSETS 的第一页 ⇒ 权益列表只有一小部分，想兑换的权益选不到，
@@ -3719,6 +3787,11 @@ public class AntForestV2 extends ModelTask {
         try {
             if (Status.hasFlagToday("forest::vitalitySkuList")) {
                 return true;
+            }
+            // 失败重试上限：服务端持续失败时避免每轮都重拉（单轮最多 5 分类 × 10 页）
+            int retries = Status.getIntFlagToday(FLAG_VITALITY_SKU_RETRY);
+            if (retries >= VITALITY_SKU_RETRY_MAX) {
+                return false;
             }
             int got = 0;
             for (String labelType : VITALITY_LABEL_TYPES) {
@@ -3746,14 +3819,26 @@ public class AntForestV2 extends ModelTask {
             VitalityBenefitIdMap.save(UserIdMap.getCurrentUid());
             Log.i(TAG, "活力值商店列表：共取" + got + "条，清单共" + VitalityBenefitIdMap.getMap().size() + "条");
             if (got > 0) {
-                // 拉到了才打当日标记；拉不到留给下一轮重试
+                // 拉到了才打当日标记；拉不到留给下一轮重试（但当日重试次数有上限）
                 Status.flagToday("forest::vitalitySkuList");
+                return true;
             }
-            return got > 0;
+            accountVitalitySkuRetry();
+            return false;
         } catch (Throwable th) {
             Log.i(TAG, "getAllSkuInfo err:");
             Log.printStackTrace(TAG, th);
+            accountVitalitySkuRetry();
             return false;
+        }
+    }
+
+    /** 活力值商店列表拉取失败计数：达上限后当日不再重拉，避免每轮都重试 */
+    private static void accountVitalitySkuRetry() {
+        int tries = Status.getIntFlagToday(FLAG_VITALITY_SKU_RETRY) + 1;
+        Status.setIntFlagToday(FLAG_VITALITY_SKU_RETRY, tries);
+        if (tries >= VITALITY_SKU_RETRY_MAX) {
+            Log.i(TAG, "活力值商店列表：连续" + tries + "次未取到，今日不再重试");
         }
     }
 
@@ -3825,7 +3910,12 @@ public class AntForestV2 extends ModelTask {
         }
         JSONObject sku = skuInfo.get(skuId);
         if (sku == null) {
-            Log.record("活力兑换🎐找不到要兑换的权益！");
+            // 失效 skuId（权益下架/换号/服务端改 ID）：打当日标记，当天不再重试；
+            // 否则每轮都会遍历到它并刷一条日志，既刷屏又拖累后续任务
+            if (!Status.hasFlagToday("forest::exchangeSkuMissing::" + skuId)) {
+                Log.record("活力兑换🎐找不到要兑换的权益！" + skuId + "#今日不再尝试");
+                Status.flagToday("forest::exchangeSkuMissing::" + skuId);
+            }
             return false;
         }
         try {
