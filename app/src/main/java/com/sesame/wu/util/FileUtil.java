@@ -7,6 +7,7 @@ import com.sesame.wu.hook.Toast;
 import com.sesame.wu.model.normal.base.BaseModel;
 import java.io.*;
 import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.text.SimpleDateFormat;
@@ -910,9 +911,10 @@ public class FileUtil {
             return "";
         }
         StringBuilder result = new StringBuilder();
-        FileReader fr = null;
+        // 显式 UTF-8：FileReader 用平台默认编码，与写入侧不一致时中文键会解析失败
+        InputStreamReader fr = null;
         try {
-            fr = new FileReader(f);
+            fr = new InputStreamReader(new FileInputStream(f), StandardCharsets.UTF_8);
             char[] chs = new char[1024];
             int len;
             while ((len = fr.read(chs)) >= 0) {
@@ -943,9 +945,10 @@ public class FileUtil {
             f.getParentFile().mkdirs();
         }
         boolean success = false;
-        FileWriter fw = null;
+        // 显式 UTF-8：FileWriter 用平台默认编码，与读取侧不一致时中文键会解析失败
+        OutputStreamWriter fw = null;
         try {
-            fw = new FileWriter(f);
+            fw = new OutputStreamWriter(new FileOutputStream(f), StandardCharsets.UTF_8);
             fw.write(s);
             fw.flush();
             success = true;
@@ -968,7 +971,7 @@ public class FileUtil {
                     if (f.exists()) {
                         f.delete();
                     }
-                    FileWriter fw2 = new FileWriter(f);
+                    OutputStreamWriter fw2 = new OutputStreamWriter(new FileOutputStream(f), StandardCharsets.UTF_8);
                     fw2.write(s);
                     fw2.flush();
                     fw2.close();
@@ -989,9 +992,9 @@ public class FileUtil {
             return false;
         }
         boolean success = false;
-        FileWriter fw = null;
+        OutputStreamWriter fw = null;
         try {
-            fw = new FileWriter(f, true);
+            fw = new OutputStreamWriter(new FileOutputStream(f, true), StandardCharsets.UTF_8);
             fw.append(s);
             fw.flush();
             success = true;
@@ -1108,9 +1111,9 @@ public class FileUtil {
     
     public static Boolean clearFile(File file) {
         if (file.exists()) {
-            FileWriter fileWriter = null;
+            OutputStreamWriter fileWriter = null;
             try {
-                fileWriter = new FileWriter(file);
+                fileWriter = new OutputStreamWriter(new FileOutputStream(file), StandardCharsets.UTF_8);
                 fileWriter.write("");
                 fileWriter.flush();
                 return true;
