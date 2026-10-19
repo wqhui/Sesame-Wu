@@ -22,12 +22,16 @@ import com.sesame.wu.data.modelFieldExt.ChoiceModelField;
 import com.sesame.wu.data.modelFieldExt.IntegerModelField;
 import com.sesame.wu.data.modelFieldExt.SelectModelField;
 import com.sesame.wu.data.task.ModelTask;
+import com.sesame.wu.data.task.TaskAttemptPolicy;
+import com.sesame.wu.data.task.TaskAttemptPolicy.Outcome;
+import com.sesame.wu.data.task.TaskAward;
 import com.sesame.wu.entity.AlipayAntSportsTaskList;
 import com.sesame.wu.entity.WalkPathThemeMapList;
 import com.sesame.wu.entity.AlipayUser;
 import com.sesame.wu.entity.WalkPath;
 import com.sesame.wu.hook.ApplicationHook;
 import com.sesame.wu.hook.Toast;
+import com.sesame.wu.model.base.TaskAlternative;
 import com.sesame.wu.model.base.TaskCommon;
 import com.sesame.wu.model.extensions.ExtensionsHandle;
 import com.sesame.wu.model.task.antStall.AntStall;
@@ -407,7 +411,10 @@ public class AntSports extends ModelTask {
                 if (TaskStatus.WAIT_RECEIVE.name().equals(taskStatus)) {
                     String assetId = jo.getString("assetId");
                     int prizeAmount = jo.getInt("prizeAmount");
-                    if (receiveCoinAsset(assetId, prizeAmount, taskName)) {
+                    String taskId = jo.optString("taskId", "");
+                    // 领奖是否成功以任务列表「奖励是否已领到」为准：响应不可信（102 等也可能已发放）
+                    // 复核已在 receiveCoinAsset 内部（拉黑之前）完成，这里无需重复
+                    if (receiveCoinAsset(assetId, prizeAmount, taskName, taskId)) {
                         TimeUtil.sleep(1000);
                     }
                     continue;
@@ -430,7 +437,7 @@ public class AntSports extends ModelTask {
                     if (jo.optBoolean("needSignUp") && !signUpTask(taskId)) {
                         continue;
                     }
-                    if (completeTask(taskAction, taskId, taskName)) {
+                    if (completeTask(taskAction, taskId, taskName, jo.optString("sceneCode", ""))) {
                         TimeUtil.sleep(2000);
                     }
                     continue;
@@ -439,7 +446,7 @@ public class AntSports extends ModelTask {
                 //兜底操作
                 String taskAction = jo.getString("taskAction");
                 String taskId = jo.getString("taskId");
-                completeTask(taskAction, taskId, taskName);
+                completeTask(taskAction, taskId, taskName, jo.optString("sceneCode", ""));
             }
         } catch (Throwable t) {
             Log.i(TAG, "sportsTasks err:");
@@ -460,7 +467,17 @@ public class AntSports extends ModelTask {
         return false;
     }
 
-    private Boolean completeTask(String taskAction, String taskId, String taskName) {
+    private Boolean completeTask(String taskAction, String taskId, String taskName, String sceneCode) {
+        // 做不了的当天只试一次、临时故障留待下一轮（见 TaskAttemptPolicy）
+        Outcome outcome = TaskAttemptPolicy.handle("sports::" + taskId, taskName, null,
+                () -> attemptCompleteTask(taskAction, taskId, taskName, sceneCode), Log::other,
+                new TaskAttemptPolicy.Site("AntSportsTaskList", "运动任务", taskId, sceneCode,
+                        (k) -> probeSportsStatus(taskId)));
+        return outcome == Outcome.DONE || outcome == Outcome.TRIGGERED;
+    }
+
+    /** 运动任务完成上报：不写任务黑名单；运动历史上从未出现 400000040，TaskAlternative 属休眠兜底 */
+    private Outcome attemptCompleteTask(String taskAction, String taskId, String taskName, String sceneCode) {
         try {
             JSONObject jo = new JSONObject(AntSportsRpcCall.completeTask(taskAction, taskId));
             //检查并标记黑名单任务
@@ -468,13 +485,71 @@ public class AntSports extends ModelTask {
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.other("运动任务🧾完成[得运动币:" + taskName + "]");
                 TimeUtil.sleep(1000);
-                return true;
+                return Outcome.DONE;
             }
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            // 不支持rpc调用（400000040）→ 由 TaskAttemptPolicy 代为伪申报
+            if (TaskAlternative.hit(jo, sceneCode)) {
+                return Outcome.UNSUPPORTED;
+            }
+            return Outcome.UNABLE;
         } catch (Throwable t) {
             Log.i(TAG, "completeTask err:");
             Log.printStackTrace(TAG, t);
         }
-        return false;
+        return Outcome.RETRY;
+    }
+
+    /** 列表状态探针：重拉运动币任务面板，按 taskId 匹配该任务当前状态。 */
+    private static TaskAttemptPolicy.ProbeResult probeSportsStatus(String taskId) {
+        // 运动币的状态词组与通用映射不同，这里把映射显式写在探针里
+        return TaskAttemptPolicy.probeByNestedList(TAG, AntSportsRpcCall::queryCoinTaskPanel,
+                jo -> MessageUtil.checkSuccess(TAG, jo),
+                jo -> {
+                    JSONObject data = jo.optJSONObject("data");
+                    return data == null ? null : data.optJSONArray("taskList");
+                },
+                t -> {
+                    if (!taskId.equals(t.optString("taskId"))) {
+                        return null;
+                    }
+                    String status = t.optString("taskStatus");
+                    if ("WAIT_COMPLETE".equals(status) || "TODO".equals(status)) {
+                        return "TODO";
+                    }
+                    if ("WAIT_RECEIVE".equals(status)) {
+                        return "FINISHED";
+                    }
+                    if ("HAS_RECEIVED".equals(status) || "RECEIVED".equals(status)) {
+                        return "RECEIVED";
+                    }
+                    return "FINISHED";
+                });
+    }
+
+    /** 列表状态探针：重拉浏览任务列表，按标题匹配；完成后服务端移出，故仍在列表即视为未完成。 */
+    private static TaskAttemptPolicy.ProbeResult probeBrowseStatus(String taskName) {
+        try {
+            JSONObject jo = new JSONObject(AntSportsRpcCall.queryTaskInfo());
+            if (!MessageUtil.checkSuccess(TAG, jo) || !jo.has("data") || !jo.getJSONObject("data").has("taskInfos")) {
+                return TaskAttemptPolicy.ProbeResult.UNKNOWN;
+            }
+            JSONArray taskInfos = jo.getJSONObject("data").getJSONArray("taskInfos");
+            for (int i = 0; i < taskInfos.length(); i++) {
+                JSONObject t = taskInfos.getJSONObject(i);
+                if (taskName.equals(t.optString("title"))) {
+                    return TaskAttemptPolicy.ProbeResult.TODO;
+                }
+            }
+            // 任务已从列表消失：视为已完成且已领
+            return TaskAttemptPolicy.ProbeResult.GONE;
+        } catch (Throwable t) {
+            Log.error("probeBrowseStatus err:");
+            Log.printStackTrace(TAG, t);
+            return TaskAttemptPolicy.ProbeResult.UNKNOWN;
+        }
     }
 
     /** 运动「做任务得运动币:签到」当日完成标记（服务端回读 signed=true 才落） */
@@ -529,7 +604,7 @@ public class AntSports extends ModelTask {
                 String assetId = jo.getString("assetId");
                 int coinAmount = jo.getInt("coinAmount");
                 String simpleSourceName = jo.optString("simpleSourceName");
-                if (receiveCoinAsset(assetId, coinAmount, simpleSourceName)) {
+                if (receiveCoinAsset(assetId, coinAmount, simpleSourceName, jo.optString("taskId"))) {
                     TimeUtil.sleep(500);
                 }
             }
@@ -539,11 +614,19 @@ public class AntSports extends ModelTask {
         }
     }
 
-    private Boolean receiveCoinAsset(String assetId, int coinAmount, String title) {
+    private Boolean receiveCoinAsset(String assetId, int coinAmount, String title, String taskId) {
         try {
             JSONObject jo = new JSONObject(AntSportsRpcCall.receiveCoinAsset(assetId));
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.other("运动中心🧊领取[" + title + "]奖励[" + coinAmount + "运动能量]");
+                return true;
+            }
+            // 领奖收口：先按任务列表复核「已领到」，未确认才交自动拉黑（顺序由 TaskAward 固定）
+            TaskAttemptPolicy.StatusProbe probe = (taskId == null || taskId.isEmpty())
+                    ? null : k -> probeSportsStatus(taskId);
+            if (TaskAward.confirmReceivedOrBlackList("运动中心🧊领取", probe, taskId, title,
+                    () -> MessageUtil.checkResultCodeAndMarkTaskBlackList("AntSportsTaskList", title, jo),
+                    Log::other)) {
                 return true;
             }
         } catch (Throwable t) {
@@ -2339,8 +2422,18 @@ public class AntSports extends ModelTask {
 
             for (int i = 0; i < tasks.length(); i++) {
                 JSONObject task = tasks.getJSONObject(i);
-                TimeUtil.sleep(TimeUnit.SECONDS.toMillis(task.getInt("viewSec")));
-                if (receiveBrowseReward(task)) {
+                String taskName = task.optString("title", "浏览商品15s得健康能量");
+                long viewMillis = TimeUnit.SECONDS.toMillis(task.getInt("viewSec"));
+                // 行为伪造：真人要「看够 viewSec 秒」，这里按服务端给的时长等待后领奖（服务端只认客户端等待）。
+                // 交给 TaskAttemptPolicy 管：同一天同一任务只伪造一次，失败不再每轮白等 15 秒
+                Outcome outcome = TaskAttemptPolicy.handle("sports::browse::" + taskName, taskName, null,
+                        () -> {
+                            TimeUtil.sleep(viewMillis);
+                            return receiveBrowseReward(task) ? Outcome.DONE : Outcome.UNABLE;
+                        },
+                        Log::other, new TaskAttemptPolicy.Site("AntSportsTaskList", "运动任务", taskName, "",
+                                (k) -> probeBrowseStatus(taskName)));
+                if (outcome == Outcome.DONE) {
                     hasNewTask = true;
                 }
             }
