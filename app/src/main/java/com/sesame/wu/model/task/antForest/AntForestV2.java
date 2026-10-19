@@ -41,6 +41,9 @@ import com.sesame.wu.data.modelFieldExt.SelectModelField;
 import com.sesame.wu.data.modelFieldExt.StringModelField;
 import com.sesame.wu.data.modelFieldExt.TextModelField;
 import com.sesame.wu.data.task.ModelTask;
+import com.sesame.wu.data.task.TaskAttemptPolicy;
+import com.sesame.wu.data.task.TaskAttemptPolicy.Outcome;
+import com.sesame.wu.data.task.TaskAward;
 import com.sesame.wu.entity.AlipayAntForestHuntTaskList;
 import com.sesame.wu.entity.AlipayAntForestVitalityTaskList;
 import com.sesame.wu.entity.AlipayUser;
@@ -99,6 +102,14 @@ public class AntForestV2 extends ModelTask {
 
     /** 森林集市「线上逛街」能量单轮最多重试次数：只防服务端恒回可发却不产生能量时死循环。 */
     private static final int MAX_MARKET_ENERGY_ROUNDS = 3;
+
+    /**
+     * 行为类任务（浇水/能量雨）伪造后等列表确认的轮询间隔与轮数。
+     * <p>行为生效有延迟，不能无脑认定成功——行为已发但列表未确认时如实返回 false 留待下一轮，
+     * 否则会立刻落当日标记，把"还没被服务端确认"的任务锁死（见 {@link #probeVitalityDone}）。
+     */
+    private static final long VITALITY_PROBE_INTERVAL_MS = 3000L;
+    private static final int VITALITY_PROBE_ROUNDS = 3;
 
     private static final AverageMath offsetTimeMath = new AverageMath(5);
 
@@ -1948,27 +1959,77 @@ public class AntForestV2 extends ModelTask {
                 return;
             }
             String taskTemplateId = currentTask.getString("taskTemplateId");
-            jo = new JSONObject(GreenLifeRpcCall.finishCurrentTask(taskTemplateId));
-            if (!MessageUtil.checkSuccess(TAG, jo)) {
-                return;
-            }
-            jo = jo.getJSONObject("data");
-            JSONArray ja = jo.getJSONArray("prizes");
-            StringBuilder award = new StringBuilder();
-            for (int i = 0; i < ja.length(); i++) {
-                jo = ja.getJSONObject(i);
-                if (i > 0) {
-                    award.append(";");
-                }
-                award.append(jo.getString("name"));
-            }
-            if (award.length() > 0) {
-                award = new StringBuilder("#获得[" + award + "]");
-            }
-            Log.forest("森林集市🛍️打卡[坚持" + numberOfDaysCompleted + "天]" + award);
+            // 走统一策略：完成后按列表核对（checkInCompleted），响应不可信；
+            // 定位键用 taskTemplateId（同一活动内稳定且唯一），与 Site 的 bizKey 一致
+            TaskAttemptPolicy.handle("forest::greenlife::" + taskTemplateId, "森林集市打卡", null,
+                    () -> attemptGreenLifeCheckIn(taskTemplateId, numberOfDaysCompleted), Log::forest,
+                    new TaskAttemptPolicy.Site("AntForestVitalityTaskList", "森林集市打卡",
+                            taskTemplateId, null, (k) -> probeGreenLifeCheckIn(taskTemplateId))
+                            .withScene("ANTFOREST"));
         } catch (Throwable t) {
             Log.i(TAG, "retrieveCurrentActivity err:");
             Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /**
+     * 森林集市打卡上报：{@code finishCurrentTask}。
+     * <p>本模块的 RPC 不带任务场景码，而伪申报兜底（{@code TaskAlternative.hit}）要求场景码非空，
+     * 故这里没有 {@link Outcome#UNSUPPORTED} 分支——判据恒不成立，不做无意义的兜底。
+     */
+    private static Outcome attemptGreenLifeCheckIn(String taskTemplateId, int numberOfDaysCompleted) {
+        try {
+            JSONObject jo = new JSONObject(GreenLifeRpcCall.finishCurrentTask(taskTemplateId));
+            if (MessageUtil.checkSuccess(TAG, jo)) {
+                JSONObject data = jo.optJSONObject("data");
+                JSONArray ja = data == null ? null : data.optJSONArray("prizes");
+                StringBuilder award = new StringBuilder();
+                for (int i = 0; ja != null && i < ja.length(); i++) {
+                    JSONObject prize = ja.optJSONObject(i);
+                    if (prize == null) {
+                        continue;
+                    }
+                    if (award.length() > 0) {
+                        award.append(";");
+                    }
+                    award.append(prize.optString("name"));
+                }
+                Log.forest("森林集市🛍️打卡[坚持" + numberOfDaysCompleted + "天]"
+                        + (award.length() > 0 ? "#获得[" + award + "]" : ""));
+                return Outcome.DONE;
+            }
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            return Outcome.UNABLE;
+        } catch (Throwable t) {
+            Log.i(TAG, "attemptGreenLifeCheckIn err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return Outcome.RETRY;
+    }
+
+    /** 森林集市打卡探针：重拉活动信息，读 {@code currentTask.checkInCompleted}。 */
+    private static TaskAttemptPolicy.ProbeResult probeGreenLifeCheckIn(String taskTemplateId) {
+        try {
+            JSONObject jo = new JSONObject(GreenLifeRpcCall.retrieveCurrentActivity());
+            if (!MessageUtil.checkSuccess(TAG, jo)) {
+                return TaskAttemptPolicy.ProbeResult.UNKNOWN;
+            }
+            JSONObject data = jo.optJSONObject("data");
+            JSONObject currentTask = data == null ? null : data.optJSONObject("currentTask");
+            if (currentTask == null) {
+                return TaskAttemptPolicy.ProbeResult.GONE;
+            }
+            if (!taskTemplateId.equals(currentTask.optString("taskTemplateId"))) {
+                return TaskAttemptPolicy.ProbeResult.GONE;
+            }
+            return currentTask.optBoolean("checkInCompleted", false)
+                    ? TaskAttemptPolicy.ProbeResult.RECEIVED : TaskAttemptPolicy.ProbeResult.TODO;
+        } catch (Throwable t) {
+            Log.i(TAG, "probeGreenLifeCheckIn err:");
+            Log.printStackTrace(TAG, t);
+            return TaskAttemptPolicy.ProbeResult.UNKNOWN;
         }
     }
 
@@ -2381,7 +2442,10 @@ public class AntForestV2 extends ModelTask {
         queryVitalityYouthTaskList();
         try {
             boolean doubleCheck = true;
-            while (doubleCheck) {
+            // 复核最多 5 轮：上报/领奖后要重取列表（新判定完成的任务要能接着处理），
+            // 但服务端若对已处理任务仍回需要继续，这里就会无上限空转刷请求，故与下方循环同样设上限兜底。
+            int listPass = 0;
+            while (doubleCheck && listPass++ < 5) {
                 JSONObject jo = new JSONObject(AntForestRpcCall.queryTaskList());
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
                     doubleCheck = false;
@@ -2475,11 +2539,27 @@ public class AntForestV2 extends ModelTask {
                     }
                 } else if (TaskStatus.TODO.name().equals(taskStatus)) {
                     //黑名单任务跳过
-                    if (AntForestVitalityTaskList.getValue().contains(taskTitle)) {
+                    if (AntForestVitalityTaskList.getValue().contains(blackTaskKey(taskTitle))) {
                         continue;
                     }
-
-                    doubleCheck = finishTask(sceneCode, taskType, taskTitle);
+                    // 周期/持续型任务（如"连续 N 天…"）：由真实行为推进、周期内常驻列表且无 RPC 可完成，
+                    // 跳过——不尝试、也不拉黑（见 TaskAttemptPolicy.isCyclicTask）
+                    if (TaskAttemptPolicy.isCyclicTask(taskBaseInfo)) {
+                        continue;
+                    }
+                    // 站内行为类任务（浇水/能量雨）：完成条件是**服务端的行为计数**，
+                    // 只能真做那个行为；上报与伪申报都推不动它，会白试一次后按"兜底未生效"拉黑
+                    TaskAttemptPolicy.Forge forge = forestVitalityForge(sceneCode, taskType, taskTitle);
+                    // 做不了的当天只试一次、临时故障留待下一轮（见 TaskAttemptPolicy）
+                    Outcome outcome = TaskAttemptPolicy.handle("forest::" + sceneCode + "/" + taskType,
+                            taskTitle, null,
+                            () -> attemptFinishTask(sceneCode, taskType, taskTitle), Log::forest,
+                            new TaskAttemptPolicy.Site("AntForestVitalityTaskList", "森林任务",
+                                    taskType, sceneCode, TaskAlternative.DEFAULT_VERSION, forge,
+                                    (k) -> probeForestVitalityStatus(sceneCode, taskType))
+                                    // 本家值：任务场景 + ANTFOREST（用庄园的 ANTFARM/H5 会被判「场景不合法」）
+                                    .withScene(sceneCode).withSource("ANTFOREST"));
+                    doubleCheck = outcome == Outcome.DONE || outcome == Outcome.TRIGGERED;
                 }
             }
             //可能是触发限时挑战奖励的
@@ -2602,6 +2682,14 @@ public class AntForestV2 extends ModelTask {
                 }
                 return true;
             }
+            // 领奖收口：领奖响应不可信（102/限流可能已发放），先按任务列表复核"已领到"。
+            // 该调用点不拉黑（拉黑由完成上报路径按规则负责），故 blackList 传 null
+            TimeUtil.sleep(800);
+            if (TaskAward.confirmReceivedOrBlackList("森林任务🎖️领取",
+                    k -> probeForestVitalityStatus(sceneCode, taskType), taskTitle, taskTitle, null,
+                    msg -> Log.forest(msg))) {
+                return true;
+            }
         } catch (Throwable t) {
             Log.i(TAG, "receiveTaskAward err:");
             Log.printStackTrace(TAG, t);
@@ -2609,62 +2697,154 @@ public class AntForestV2 extends ModelTask {
         return false;
     }
 
-    private Boolean finishTask(String sceneCode, String taskType, String taskTitle) {
+    /**
+     * 森林任务完成上报：成败以任务列表为准（见 {@link TaskAttemptPolicy}），响应不可信；
+     * 400000040「不支持rpc调用」由策略代为伪申报（返回 {@link Outcome#UNSUPPORTED}），不在此处直接发请求。
+     */
+    private Outcome attemptFinishTask(String sceneCode, String taskType, String taskTitle) {
         try {
             JSONObject jo = new JSONObject(AntForestRpcCall.finishTask(sceneCode, taskType));
             TimeUtil.sleep(500);
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.forest("森林任务🧾️完成[" + taskTitle + "]");
-                return true;
+                return Outcome.DONE;
             }
-            // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）。
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            // 400000040「不支持rpc调用」不代表任务做不了：由 TaskAttemptPolicy 代为伪申报（doFarmTask）。
             // 原先裸调 finishTask 会把它直接吞成 false，导致兜底永不触发；此处也不应因此拉黑
             if (TaskAlternative.hit(jo, sceneCode)) {
-                // 本家场景码/来源：任务场景 + ANTFOREST（用庄园的 ANTFARM/H5 会被判「场景不合法」）
-                TaskAlternative.trigger(null, taskType, taskTitle, taskType, sceneCode,
-                        TaskAlternative.DEFAULT_VERSION, sceneCode, "ANTFOREST",
-                        "森林任务", msg -> Log.forest(msg));
-                return true;
+                return Outcome.UNSUPPORTED;
             }
             //检查并标记黑名单任务
-            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntForestVitalityTaskList", taskTitle, jo);
+            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntForestVitalityTaskList", blackTaskKey(taskTitle), jo);
             Log.record("完成任务[" + taskTitle + "]失败");
+            return Outcome.UNABLE;
         } catch (Throwable t) {
-            Log.i(TAG, "finishTask err:");
+            Log.i(TAG, "attemptFinishTask err:");
             Log.printStackTrace(TAG, t);
         }
-        return false;
+        return Outcome.RETRY;
     }
 
     /**
-     * 森林任务完成上报（<b>不写黑名单</b>）。
-     * <p>容器型父任务下的行为子任务（无纸化阅读、电子小票等）属真实低碳行为，需用户真实操作后
-     * 服务端才判定完成；失败只代表本次未完成，不代表永远做不了。若走 {@link #finishTask}
+     * 森林任务完成上报（<b>不写黑名单</b>）：容器型父任务下的行为子任务用。
+     * <p>这类子任务（无纸化阅读、电子小票等）属真实低碳行为，需用户真实操作后服务端才判定完成；
+     * 失败只代表本次未完成，不代表永远做不了。若走 {@link #attemptFinishTask}，
      * 会被 {@code checkResultCodeAndMarkTaskBlackList} 写进「活力值 | 黑名单列表」，
-     * 污染用户配置、并与同名顶层任务互相干扰。
+     * 污染用户配置、并与同名顶层任务互相干扰，故此处不做该记账。
      */
-    private Boolean finishTaskNoBlacklist(String sceneCode, String taskType, String taskTitle) {
+    private Outcome attemptFinishTaskNoBlacklist(String sceneCode, String taskType, String taskTitle) {
         try {
             JSONObject jo = new JSONObject(AntForestRpcCall.finishTask(sceneCode, taskType));
             TimeUtil.sleep(500);
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.forest("森林任务🧾️完成[" + taskTitle + "]");
-                return true;
+                return Outcome.DONE;
             }
-            // 400000040「不支持rpc调用」不代表任务做不了：转另一种实现方案（伪申报兜底）
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            // 400000040「不支持rpc调用」不代表任务做不了：由 TaskAttemptPolicy 代为伪申报
             if (TaskAlternative.hit(jo, sceneCode)) {
-                // 本家场景码/来源：任务场景 + ANTFOREST（用庄园的 ANTFARM/H5 会被判「场景不合法」）
-                TaskAlternative.trigger(null, taskType, taskTitle, taskType, sceneCode,
-                        TaskAlternative.DEFAULT_VERSION, sceneCode, "ANTFOREST",
-                        "森林任务", msg -> Log.forest(msg));
-                return true;
+                return Outcome.UNSUPPORTED;
             }
             Log.record("完成任务[" + taskTitle + "]失败");
+            return Outcome.UNABLE;
         } catch (Throwable t) {
-            Log.i(TAG, "finishTaskNoBlacklist err:");
+            Log.i(TAG, "attemptFinishTaskNoBlacklist err:");
             Log.printStackTrace(TAG, t);
         }
+        return Outcome.RETRY;
+    }
+
+    /**
+     * 森林活力值任务的「站内行为」分派：能对上模块已有行为的才返回 forge，其余返回 null。
+     * <p>这类任务（浇水/能量雨）的完成条件是**服务端的行为计数**，只能真做那个行为；
+     * 上报与伪申报都推不动它，会白试一次后按"兜底未生效"拉黑。
+     * <p>判据取任务类型/名称而非 {@code taskCategorization}：后者会把站内浇水这类行为也标成
+     * {@code Exchange}，按它判会把这些任务当成交易类放过（既不伪造、又很快被拉黑）。
+     * <p>真交易/履约类（缴费/出行/回收）由 {@code TaskAlternative.isTransactionTask} 在策略里先行拦下，
+     * 到不了这里，故此处只需认得出"能做的事"。
+     * <p><b>与 M 的差异</b>：M 还认「进页面看一眼」类（{@code EFFECTIVE_TASK} / {@code taskJumpUrl}，
+     * 行为接口为 {@code takeLookEnd}）；本项目的 {@code AntForestRpcCall} 没有该接口，故不伪造这一类，
+     * 交由策略的伪申报兜底处理（与接入前的行为一致）。
+     */
+    private TaskAttemptPolicy.Forge forestVitalityForge(String sceneCode, String taskType, String taskTitle) {
+        // 真需要浇水的才走浇水，且要有可浇的对象：配置为"不浇水"或没选好友时浇不动，
+        // 此时不伪造（否则等于谎报做过），留给下一轮
+        if (isWaterVitalityTask(taskType, taskTitle) && canWaterFriend()) {
+            return () -> {
+                waterFriendEnergy();
+                return probeVitalityDone(sceneCode, taskType);
+            };
+        }
+        if (isEnergyRainVitalityTask(taskType, taskTitle)) {
+            return () -> {
+                startEnergyRain();
+                return probeVitalityDone(sceneCode, taskType);
+            };
+        }
+        return null;
+    }
+
+    /** 是否浇得动水：动作非"不浇水"且选了好友 */
+    private boolean canWaterFriend() {
+        int type = waterFriendType.getValue();
+        if (type < 0 || type >= WaterFriendType.waterEnergy.length
+                || WaterFriendType.waterEnergy[type] == 0) {
+            return false;
+        }
+        Map<String, Integer> friendMap = waterFriendList.getValue();
+        return friendMap != null && !friendMap.isEmpty();
+    }
+
+    /** 浇水类：{@code ONE_CLICK_WATERING_V1}、{@code ZHRW_HUIYUANjiaoshui_202608} 等 */
+    private static boolean isWaterVitalityTask(String taskType, String taskTitle) {
+        String type = taskType == null ? "" : taskType.toLowerCase();
+        return type.contains("jiaoshui") || type.contains("watering")
+                || (taskTitle != null && (taskTitle.contains("浇水") || taskTitle.contains("一键浇水")));
+    }
+
+    /** 能量雨类 */
+    private static boolean isEnergyRainVitalityTask(String taskType, String taskTitle) {
+        String type = taskType == null ? "" : taskType.toLowerCase();
+        return type.contains("energyrain")
+                || (taskTitle != null && taskTitle.contains("能量雨"));
+    }
+
+    /**
+     * 行为发出后等列表确认：行为类任务的完成要以任务列表为准，行为生效有延迟。
+     * <p>不能无脑返回 true——那样会让策略立刻落当日标记，任务在**行为还没被服务端确认**时就被锁死，
+     * 下一轮还会撞上"兜底未生效"的判据被拉黑。
+     * <p>返回 false 只表示"本次没等到确认"，不代表行为没发出；日志据此如实措辞。
+     */
+    private boolean probeVitalityDone(String sceneCode, String taskType) {
+        for (int round = 0; round < VITALITY_PROBE_ROUNDS; round++) {
+            TimeUtil.sleep(VITALITY_PROBE_INTERVAL_MS);
+            if (TaskAttemptPolicy.isDone(probeForestVitalityStatus(sceneCode, taskType))) {
+                return true;
+            }
+        }
+        Log.forest("森林任务⏳[" + taskType + "]#行为已发但列表未确认，留待下一轮");
         return false;
+    }
+
+    /** 列表状态探针：重拉绿色行动任务列表，按 sceneCode+taskType 匹配该任务当前状态。 */
+    private TaskAttemptPolicy.ProbeResult probeForestVitalityStatus(String sceneCode, String taskType) {
+        // 状态在 taskBaseInfo 子对象内；statusOf 返回 null 表示该项不匹配
+        return TaskAttemptPolicy.probeByList(TAG, AntForestRpcCall::listTaskopengreen, "taskInfoList",
+                jo -> MessageUtil.checkResultCode(TAG, jo),
+                taskInfo -> {
+                    JSONObject taskBaseInfo = taskInfo.optJSONObject("taskBaseInfo");
+                    if (taskBaseInfo == null
+                            || !sceneCode.equals(taskBaseInfo.optString("sceneCode"))
+                            || !taskType.equals(taskBaseInfo.optString("taskType"))) {
+                        return null;
+                    }
+                    return taskBaseInfo.optString("taskStatus");
+                });
     }
 
     /**
@@ -2713,9 +2893,22 @@ public class AntForestV2 extends ModelTask {
                 String taskStatus = taskBaseInfo.getString("taskStatus");
                 if (TaskStatus.TODO.name().equals(taskStatus)) {
                     if (bizInfo.optBoolean("autoCompleteTask")) {
-                        // 容器子任务失败不写黑名单：见 finishTaskNoBlacklist 的说明
-                        finishTaskNoBlacklist(sceneCode, taskType, taskTitle);
-                        changed = true;
+                        // 走统一策略：400000040 时由 TaskAttemptPolicy 代为 doFarmTask 伪申报，
+                        // 裸调 finishTask 会把 UNSUPPORTED 吞成 false，兜底永不触发；同时按当日去重，
+                        // 避免每轮重拉都把同一批子任务重复申报一遍。
+                        // 容器子任务失败不写黑名单（见 attemptFinishTaskNoBlacklist 的说明）：
+                        // Site 的 listField 传 null 即"该调用点自行按规则记账"，策略只做伪申报兜底与当日去重
+                        Outcome outcome = TaskAttemptPolicy.handle(
+                                "forest::child::" + sceneCode + "/" + taskType, taskTitle, null,
+                                () -> attemptFinishTaskNoBlacklist(sceneCode, taskType, taskTitle), Log::forest,
+                                new TaskAttemptPolicy.Site(null, "森林任务", taskType, sceneCode,
+                                        (k) -> probeForestVitalityStatus(sceneCode, taskType))
+                                        .withScene("ANTFOREST"));
+                        // 只有真推进了才让上层再核一遍列表：被当日标记挡下（已试过）、临时故障与做不了
+                        // 都不该让外层重拉空转（与顶层任务分支一致）
+                        if (outcome == Outcome.DONE || outcome == Outcome.TRIGGERED) {
+                            changed = true;
+                        }
                     }
                 }
             }
@@ -2990,6 +3183,8 @@ public class AntForestV2 extends ModelTask {
             // 原实现硬编码 2 轮，导致 6 档的多阶段任务每次运行只能推进 2 档，
             // 必须反复重开 App 才能跑完（用户可见现象：每开一次只能领一两次奖）。
             int roundLimit = 0;
+            // 交易/履约类在本方法内的去重：这类任务常驻列表，多轮重拉会把同一批任务反复写盘并刷屏
+            Set<String> attempted = new LinkedHashSet<>();
             while (round++ < roundLimit || roundLimit == 0) {
                 // 单轮是否有新进展：无进展即跳出，防服务端恒回 TODO 时空转
                 boolean progressed = false;
@@ -3027,6 +3222,7 @@ public class AntForestV2 extends ModelTask {
                     String source = task.optString("source", "ch_appcenter__chsub_9patch");
                     String sceneCode = task.optString("sceneCode", "");
                     String taskType = task.optString("taskType", "");
+                    String groupId = task.optString("groupId", "");
                     // 记录任务状态
                     if (taskStatus.equals("FINISHED")) {
                         // 当日已领过的**同一阶段**不再重复请求：服务端对已领的档位会回
@@ -3057,17 +3253,57 @@ public class AntForestV2 extends ModelTask {
                     }
                     if (TaskStatus.TODO.name().equals(taskStatus) || rightsTimes < rightsTimesLimit) {
                         //黑名单任务跳过
-                        if (AntForestVitalityTaskList.getValue().contains(title)) {
+                        if (AntForestVitalityTaskList.getValue().contains(blackTaskKey(title))) {
                             continue;
                         }
-                        if (TaskStatus.FINISHED.name().equals(taskStatus)) {
-                            if (finishTask(sceneCode, taskType, title + "(" + (rightsTimes + 1) + "/" + rightsTimesLimit + ")")) {
-                                progressed = true;
+                        // 底线：交易/支付/充值类一律不申报、一次即永久拉黑，绝不伪造。
+                        // 必须同时查 groupId：充值类的 taskType 常无关键词，判据在 groupId（cz=充值）
+                        if (TaskAlternative.isTransactionTask(taskType)
+                                || TaskAlternative.isTransactionTask(groupId)
+                                || TaskAlternative.isTransactionTask(sceneCode)) {
+                            if (attempted.add(blackTaskKey(title))) {
+                                MessageUtil.MarkTaskBlackListPermanent("AntForestV2", "AntForestVitalityTaskList",
+                                        "森林乐园限定任务", blackTaskKey(title));
+                                Log.forest("森林乐园⏭️交易/履约类[" + title + "]#不申报，已永久拉黑");
                             }
-                        } else {
-                            if (finishTask(sceneCode, taskType, title)) {
-                                progressed = true;
-                            }
+                            continue;
+                        }
+                        // 开箱类任务（如"开10个乐园宝箱"）的完成条件是服务端累计开箱计数，由 doforestgame()
+                        // 统一开箱（本方法之前已跑、用尽当天额度）；这里若再开必然读到 0 箱子、每轮重拉都刷
+                        // "暂无可开宝箱"。未达满额时直接交给次日累计与上方 Finished 分支领奖即可。
+                        if (isUnwrapAction(bizInfo.optString("actionType", ""))) {
+                            continue;
+                        }
+                        // 标题带档位的（多阶段任务推进到下一档）与纯标题分开：定位键必须带档位，
+                        // 否则第一档打上的当日标记会把后续档位全挡下、任务停在第一档。
+                        // 单次任务保持原 key，语义不变。
+                        String label = TaskStatus.FINISHED.name().equals(taskStatus)
+                                ? title + "(" + (rightsTimes + 1) + "/" + rightsTimesLimit + ")" : title;
+                        String policyKey = "forest::optionalplay::" + sceneCode + "/" + taskType
+                                + (rightsTimesLimit > 1 ? "#" + rightsTimes : "");
+                        // 走统一策略：400000040 时由 TaskAttemptPolicy 代为 doFarmTask 伪申报；
+                        // 打满判据（rightsTimes 达上限）只打当日标记、不进黑名单（额度每日重置）
+                        TaskAttemptPolicy.Site playSite = new TaskAttemptPolicy.Site(
+                                "AntForestVitalityTaskList", "森林乐园限定任务",
+                                taskType, sceneCode, TaskAlternative.DEFAULT_VERSION, null,
+                                (k) -> probeOptionalPlayStatus(sceneCode, taskType),
+                                (k) -> probeOptionalPlayExhausted(sceneCode, taskType),
+                                false)
+                                .withScene("ANTFOREST");
+                        if (rightsTimesLimit > 1 && rightsTimes + 1 < rightsTimesLimit) {
+                            // 多档里程碑的中间档（这次做完还有余量）：列表要打满才变完成，
+                            // 列表复核会把它误判"未完成"，进而挡住后续档位（实测会卡在第一档），
+                            // 故中间档以响应为准；末档仍走列表复核
+                            playSite = playSite.withTrustResponse();
+                        }
+                        Outcome outcome = TaskAttemptPolicy.handle(
+                                policyKey, label, null,
+                                () -> attemptFinishTask(sceneCode, taskType, label), Log::forest,
+                                playSite);
+                        // 只有真正推进了才算"本轮有新动作"：被当日标记挡下（已试过）、临时故障（RETRY）
+                        // 与做不了（UNABLE）都不该让外层重拉列表空转（与庄园一致）
+                        if (outcome == Outcome.DONE || outcome == Outcome.TRIGGERED) {
+                            progressed = true;
                         }
                     }
                 }
@@ -3101,6 +3337,63 @@ public class AntForestV2 extends ModelTask {
             total += Math.max(limit, 1);
         }
         return Math.min(Math.max(total + 6, OPTIONAL_PLAY_ROUND_MIN), OPTIONAL_PLAY_ROUND_MAX);
+    }
+
+    /**
+     * 乐园限定任务状态探针：重拉 {@code queryOptionalPlay} 列表（**该任务的归属列表**），
+     * 按 sceneCode+taskType 匹配该任务当前状态。
+     * <p>不能借用活力值任务的探针（{@code listTaskopengreen}）——乐园任务不在那个列表里，
+     * 会恒匹配不到而被当成 {@code GONE}（已消失=已完成），把"做不了"误判成"已完成"。
+     */
+    private static TaskAttemptPolicy.ProbeResult probeOptionalPlayStatus(String sceneCode, String taskType) {
+        // 任务数组嵌在 taskTriggerPlayInfo 内层
+        return TaskAttemptPolicy.probeByNestedList(TAG, AntForestRpcCall::queryOptionalPlay,
+                jo -> MessageUtil.checkSuccess(TAG, jo),
+                jo -> {
+                    JSONObject playInfo = jo.optJSONObject("taskTriggerPlayInfo");
+                    return playInfo == null ? null : playInfo.optJSONArray("taskList");
+                },
+                task -> taskType.equals(task.optString("taskType")) && sceneCode.equals(task.optString("sceneCode"))
+                        ? task.optString("taskStatus") : null);
+    }
+
+    /** 打满判据：重拉乐园限定任务列表，读该任务的已做次数是否达上限（达上限只打当日标记、不进黑名单）。 */
+    private static boolean probeOptionalPlayExhausted(String sceneCode, String taskType) {
+        try {
+            JSONObject jo = new JSONObject(AntForestRpcCall.queryOptionalPlay());
+            if (!MessageUtil.checkSuccess(TAG, jo) || !jo.has("taskTriggerPlayInfo")) {
+                return false;
+            }
+            JSONObject playInfo = jo.optJSONObject("taskTriggerPlayInfo");
+            JSONArray taskList = playInfo == null ? null : playInfo.optJSONArray("taskList");
+            for (int i = 0; taskList != null && i < taskList.length(); i++) {
+                JSONObject task = taskList.optJSONObject(i);
+                if (task == null || !taskType.equals(task.optString("taskType"))
+                        || !sceneCode.equals(task.optString("sceneCode"))) {
+                    continue;
+                }
+                int limit = task.optInt("rightsTimesLimit", 0);
+                return limit > 0 && task.optInt("rightsTimes", 0) >= limit;
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "probeOptionalPlayExhausted err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return false;
+    }
+
+    /** 开箱类动作（累计开箱 N 个）：完成条件在服务端的开箱计数上，只能真开箱，申报无效 */
+    private static boolean isUnwrapAction(String actionType) {
+        return "ACC_UNWRAP".equals(actionType) || "UNWRAP".equals(actionType);
+    }
+
+    /**
+     * 黑名单键：剥掉标题末尾的 "(n/N)" 次数后缀。
+     * <p>多阶段任务在上报时标题会被拼上 "(2/10)"，而运行时的黑名单检查用的是纯标题；
+     * 不处理会导致写进黑名单的键永远匹配不上、拉黑失效。
+     */
+    private static String blackTaskKey(String taskTitle) {
+        return taskTitle == null ? null : taskTitle.replaceAll("\\(\\d+/\\d+\\)$", "");
     }
 
     private void continuousUseCardOptions() {
