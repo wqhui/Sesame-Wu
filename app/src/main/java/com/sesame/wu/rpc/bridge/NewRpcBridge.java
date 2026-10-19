@@ -1,5 +1,7 @@
 package com.sesame.wu.rpc.bridge;
 
+import org.json.JSONObject;
+
 import com.sesame.wu.util.XHelpers;
 import com.sesame.wu.entity.RpcEntity;
 import com.sesame.wu.hook.ApplicationHook;
@@ -160,7 +162,8 @@ public class NewRpcBridge implements RpcBridge {
                     try {
                         // 风控硬阻塞（1009 / 访问受限）：全局停机，不拉黑任务
                         // ——被拦后官方连只读查询也不放行，拉黑单个任务没有意义且会变成永久跳过
-                        if (TaskBlacklist.isHardBlocked(rpcEntity.getResponseObject())) {
+                        Object respObj = rpcEntity.getResponseObject();
+                        if (respObj instanceof JSONObject && TaskBlacklist.isHardBlocked((JSONObject) respObj)) {
                             if (!ApplicationHook.isOffline()) {
                                 ApplicationHook.setOffline(true);
                                 NotificationUtil.updateStatusText("命中风控，已暂停");
@@ -282,7 +285,8 @@ public class NewRpcBridge implements RpcBridge {
                     try {
                         // 风控硬阻塞（1009 / 访问受限）：全局停机，不拉黑任务
                         // ——被拦后官方连只读查询也不放行，拉黑单个任务没有意义且会变成永久跳过
-                        if (TaskBlacklist.isHardBlocked(rpcEntity.getResponseObject())) {
+                        Object respObj = rpcEntity.getResponseObject();
+                        if (respObj instanceof JSONObject && TaskBlacklist.isHardBlocked((JSONObject) respObj)) {
                             if (!ApplicationHook.isOffline()) {
                                 ApplicationHook.setOffline(true);
                                 NotificationUtil.updateStatusText("命中风控，已暂停");

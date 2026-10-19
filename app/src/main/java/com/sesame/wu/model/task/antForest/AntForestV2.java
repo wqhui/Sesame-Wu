@@ -1526,9 +1526,6 @@ public class AntForestV2 extends ModelTask {
      * 必须等子任务跑完再查，否则查到的仍是未累积的旧值。
      */
     private void collectRobExpandEnergy() {
-        if (!collectRobExpandEnergyEnable.getValue()) {
-            return;
-        }
         try {
             JSONObject joHomePage = new JSONObject(AntForestRpcCall.queryHomePage());
             if (MessageUtil.checkResultCode(TAG, joHomePage)) {
