@@ -90,7 +90,12 @@ public class AntForestV2 extends ModelTask {
     private static final String TAG = AntForestV2.class.getSimpleName();
 
     /** 森林乐园限定任务单轮最多重拉次数：只防服务端恒回 TODO 时死循环。 */
-    private static final int MAX_OPTIONAL_PLAY_ROUNDS = 2;
+    /**
+     * 乐园限定任务的轮次上限下限/上限：按任务实际阶段数算定，见 {@link #optionalPlayRoundLimit}。
+     * <p>下限 12 是给足阶段数，上限 60 是防任务列表异常时长时间空转。
+     */
+    private static final int OPTIONAL_PLAY_ROUND_MIN = 12;
+    private static final int OPTIONAL_PLAY_ROUND_MAX = 60;
 
     /** 森林集市「线上逛街」能量单轮最多重试次数：只防服务端恒回可发却不产生能量时死循环。 */
     private static final int MAX_MARKET_ENERGY_ROUNDS = 3;
@@ -2984,7 +2989,11 @@ public class AntForestV2 extends ModelTask {
     private void queryOptionalPlay() {
         try {
             int round = 0;
-            while (round++ < MAX_OPTIONAL_PLAY_ROUNDS) {
+            // 首轮按实际任务阶段数算定上限（见 optionalPlayRoundLimit），之后不再变。
+            // 原实现硬编码 2 轮，导致 6 档的多阶段任务每次运行只能推进 2 档，
+            // 必须反复重开 App 才能跑完（用户可见现象：每开一次只能领一两次奖）。
+            int roundLimit = 0;
+            while (round++ < roundLimit || roundLimit == 0) {
                 // 单轮是否有新进展：无进展即跳出，防服务端恒回 TODO 时空转
                 boolean progressed = false;
                 JSONObject jo = new JSONObject(AntForestRpcCall.queryOptionalPlay());
@@ -2999,6 +3008,14 @@ public class AntForestV2 extends ModelTask {
                     return;
                 }
                 JSONArray taskList = taskTriggerPlayInfo.getJSONArray("taskList");
+                // 账号当前没有乐园限定任务，直接收工
+                if (taskList.length() == 0) {
+                    Log.forest("森林乐园🎈当前无限定任务");
+                    return;
+                }
+                if (roundLimit == 0) {
+                    roundLimit = optionalPlayRoundLimit(taskList);
+                }
                 for (int j = 0; j < taskList.length(); j++) {
                     JSONObject task = taskList.getJSONObject(j);
                     String taskStatus = task.getString("taskStatus");
@@ -3015,10 +3032,17 @@ public class AntForestV2 extends ModelTask {
                     String taskType = task.optString("taskType", "");
                     // 记录任务状态
                     if (taskStatus.equals("FINISHED")) {
-                        if (awardCountForReceive > 0) {
+                        // 当日已领过的**同一阶段**不再重复请求：服务端对已领的档位会回
+                        // 「400000030 任务已完结」，重复领既刷屏又让能量统计虚高。
+                        // key 必须带 rightsTimes——不带的话第一档打上的标记会把后面几档全挡死，
+                        // 多阶段任务就停在第一档了。
+                        String awardKey = "forest::optionalplay::award::" + sceneCode + "/" + taskType
+                                + (rightsTimesLimit > 1 ? "#" + rightsTimes : "");
+                        if (awardCountForReceive > 0 && !Status.hasFlagToday(awardKey)) {
                             // 领取奖励
                             JSONObject joReceived = new JSONObject(AntForestRpcCall.receiveTaskAwardopengreen(source, sceneCode, taskType));
                             if (MessageUtil.checkSuccess(TAG, joReceived)) {
+                                Status.flagToday(awardKey);
                                 int incAwardCount = joReceived.optInt("incAwardCount");
                                 JSONObject taskConfigResultVO = joReceived.optJSONObject("taskConfigResultVO");
                                 if (taskConfigResultVO != null) {
@@ -3058,6 +3082,28 @@ public class AntForestV2 extends ModelTask {
             Log.i(TAG, "queryOptionalPlay err:");
             Log.printStackTrace(TAG, th);
         }
+    }
+
+    /**
+     * 乐园限定任务的轮次上限：把所有任务的阶段数累加，再多给 6 轮余量。
+     *
+     * <p>为什么必须按实际阶段数算：多阶段任务（如「玩一玩我的花园世界」6 档）每轮只推进一档，
+     * 上限写死会导致跑不完，用户必须反复重开 App 才能一档一档领完。
+     *
+     * <p>下限 {@value #OPTIONAL_PLAY_ROUND_MIN} 给足阶段数，上限 {@value #OPTIONAL_PLAY_ROUND_MAX}
+     * 防任务列表异常时长时间空转。
+     */
+    private int optionalPlayRoundLimit(JSONArray taskList) {
+        int total = 0;
+        for (int i = 0; i < taskList.length(); i++) {
+            JSONObject task = taskList.optJSONObject(i);
+            if (task == null) {
+                continue;
+            }
+            int limit = task.optInt("rightsTimesLimit", 1);
+            total += Math.max(limit, 1);
+        }
+        return Math.min(Math.max(total + 6, OPTIONAL_PLAY_ROUND_MIN), OPTIONAL_PLAY_ROUND_MAX);
     }
 
     private void continuousUseCardOptions() {
