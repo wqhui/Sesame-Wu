@@ -1286,28 +1286,63 @@ public class AntOrchard extends ModelTask {
             String result = AntOrchardRpcCall.yebPlantSceneRevenuePage();
             JSONObject jo = new JSONObject(result);
             if (!MessageUtil.checkResultCode(TAG, jo)) {
+                // 服务端常回 error 3000「系统出错，正在排查」⇒ 详情列表拿不到。
+                // 但调用点的判据 yebSceneActivityInfo.revenueNotReceived=true 本身就是「有未领收益」的证据，
+                // 故不再直接放弃，改为直接触发摇钱树（没收益时服务端会拒绝，不会误领）。
+                Log.record("摇钱树收益详情未获取，改走直接触发：" + brief(result));
+                triggerYebMoneyTreeOnce();
                 return;
             }
 
-            JSONArray revenueList = jo.getJSONArray("yebRevenueDetailList");
+            JSONArray revenueList = jo.optJSONArray("yebRevenueDetailList");
+            if (revenueList == null) {
+                Log.record("摇钱树收益详情结构异常：" + brief(result));
+                triggerYebMoneyTreeOnce();
+                return;
+            }
             for (int i = 0; i < revenueList.length(); i++) {
                 JSONObject revenue = revenueList.getJSONObject(i);
-                if ("I".equals(revenue.getString("orderStatus"))) {
-                    String triggerResult = AntOrchardRpcCall.triggerYebMoneyTree();
-                    JSONObject triggerJo = new JSONObject(triggerResult);
-                    if (MessageUtil.checkResultCode(TAG, triggerJo)) {
-                        JSONObject awardInfo = triggerJo.getJSONObject("result").optJSONObject("awardInfo");
-                        if (awardInfo != null) {
-                            String amount = awardInfo.getString("totalAmount");
-                            Log.farm("芭芭农场🌳领取奖励[摇钱树]#获得[" + amount + "元余额宝收益]");
-                        }
-                    }
+                if ("I".equals(revenue.optString("orderStatus"))) {
+                    triggerYebMoneyTreeOnce();
                 }
             }
         } catch (Throwable t) {
             Log.i(TAG, "queryYebRevenueDetail err:");
             Log.printStackTrace(TAG, t);
         }
+    }
+
+    /**
+     * 触发摇钱树领奖：无论成败都留痕（原实现失败时静默，导致「到底是没收益还是接口不通」无法判断）。
+     */
+    private void triggerYebMoneyTreeOnce() {
+        try {
+            String triggerResult = AntOrchardRpcCall.triggerYebMoneyTree();
+            JSONObject triggerJo = new JSONObject(triggerResult);
+            // 该接口响应内容在 result 对象里（外层无 resultCode/success），checkResultCode 会误判失败，
+            // 故优先看 result 是否存在；无 result 时才退回通用判定
+            JSONObject result = triggerJo.optJSONObject("result");
+            boolean ok = result != null || MessageUtil.checkResultCode(TAG, triggerJo);
+            if (!ok) {
+                Log.record("摇钱树触发未成功：" + brief(triggerResult));
+                return;
+            }
+            // 只记「已受理」：金额是触发响应当次返回的值，不作为「已到账收益」上报
+            JSONObject awardInfo = result != null ? result.optJSONObject("awardInfo") : null;
+            String amount = awardInfo != null ? awardInfo.optString("totalAmount", "") : "";
+            Log.farm("芭芭农场🌳领取奖励[摇钱树]" + (amount.isEmpty() ? "" : "#" + amount + "元余额宝收益"));
+        } catch (Throwable t) {
+            Log.i(TAG, "triggerYebMoneyTree err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /** 截断长响应，避免服务端错误页把日志刷屏。 */
+    private static String brief(String s) {
+        if (s == null) {
+            return "";
+        }
+        return s.length() > 200 ? s.substring(0, 200) : s;
     }
 
     /**
