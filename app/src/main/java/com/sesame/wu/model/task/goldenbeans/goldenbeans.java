@@ -33,6 +33,7 @@ public class goldenbeans extends ModelTask {
     private BooleanModelField goldenBeansMain;
     private BooleanModelField goldenBeansAutoTask;
     private BooleanModelField goldenBeansSign;
+    private BooleanModelField goldenBeansFortuneDraw;
     private BooleanModelField goldenBeansGameDraw;
     private BooleanModelField goldenBeansAutoMine;
     private BooleanModelField goldenBeansCollectReward;
@@ -57,9 +58,10 @@ public class goldenbeans extends ModelTask {
     @Override
     public ModelFields getFields() {
         ModelFields modelFields = new ModelFields();
-        modelFields.addField(goldenBeansMain = new BooleanModelField("goldenBeansVisitGarden", "签到、任务、矿工与乐园奖励", false));
+        modelFields.addField(goldenBeansMain = new BooleanModelField("goldenBeansVisitGarden", "签到、求签、任务、矿工与乐园奖励", false));
         modelFields.addField(goldenBeansAutoTask = new BooleanModelField("goldenBeansAutoTask", "自动完成任务与领奖", false));
         modelFields.addField(goldenBeansSign = new BooleanModelField("goldenBeansSign", "自动签到", false));
+        modelFields.addField(goldenBeansFortuneDraw = new BooleanModelField("goldenBeansFortuneDraw", "自动求签", false));
         modelFields.addField(goldenBeansGameDraw = new BooleanModelField("goldenBeansGameDraw", "金豆乐园奖励(抽奖/游戏)", false));
         modelFields.addField(goldenBeansAutoMine = new BooleanModelField("goldenBeansAutoMine", "自动挖矿", false));
         modelFields.addField(goldenBeansCollectReward = new BooleanModelField("goldenBeansCollectReward", "领奖后数据同步", false));
@@ -88,6 +90,7 @@ public class goldenbeans extends ModelTask {
             int interval = Math.max(executeInterval.getValue() != null ? executeInterval.getValue() : 500, 500);
 
             boolean signEnabled = GoldenBeansSupport.enabled(goldenBeansSign);
+            boolean fortuneEnabled = GoldenBeansSupport.enabled(goldenBeansFortuneDraw);
             boolean popupEnabled = GoldenBeansSupport.enabled(goldenBeansMain);
             boolean taskEnabled = GoldenBeansSupport.enabled(goldenBeansAutoTask);
             boolean gameEnabled = GoldenBeansSupport.enabled(goldenBeansGameDraw);
@@ -96,7 +99,7 @@ public class goldenbeans extends ModelTask {
             boolean manureEnabled = GoldenBeansSupport.enabled(goldenBeansAutoManureExchange);
             boolean sesameEnabled = GoldenBeansSupport.enabled(goldenBeansAutoSesameExchange);
 
-            if (!signEnabled && !popupEnabled && !taskEnabled && !gameEnabled
+            if (!signEnabled && !fortuneEnabled && !popupEnabled && !taskEnabled && !gameEnabled
                     && !mineEnabled && !resyncEnabled && !manureEnabled && !sesameEnabled) {
                 Log.record("金豆夺宝功能未开启#本轮跳过");
                 return;
@@ -111,11 +114,12 @@ public class goldenbeans extends ModelTask {
                 Status.flagToday(FLAG_BLACKLIST_INIT);
             }
 
-            // 两个入口分别执行：主页查询 → 签到 → 营销弹窗 → 任务列表
+            // 两个入口分别执行：主页查询 → 求签 → 签到 → 营销弹窗 → 任务列表
             boolean taskResolved = true;
-            if (signEnabled || popupEnabled || taskEnabled) {
+            if (signEnabled || fortuneEnabled || popupEnabled || taskEnabled) {
                 for (GoldenBeansEntry entry : GoldenBeansEntry.ALL) {
-                    if (!tasks.processEntry(entry, interval, signEnabled, popupEnabled, taskEnabled)) {
+                    if (!tasks.processEntry(entry, interval, signEnabled, fortuneEnabled,
+                            popupEnabled, taskEnabled)) {
                         taskResolved = false;
                     }
                 }

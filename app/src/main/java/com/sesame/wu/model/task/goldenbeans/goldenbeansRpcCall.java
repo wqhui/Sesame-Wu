@@ -53,6 +53,8 @@ public class goldenbeansRpcCall {
     public static final String TASK_TYPE_GAME_CENTER = "JINDOULEYUAN_TRIGGER";
     /** 换豆任务类型 */
     public static final String TASK_TYPE_EXCHANGE = "MANURE_EXCHANGE";
+    /** 每日求签任务标识 */
+    public static final String FORTUNE_DRAW_TASK_ID = "FORTUNE_DRAW";
     /** 直接触发类动作 */
     public static final String ACTION_TYPE_TRIGGER = "TRIGGER";
     /** 乐园触发类动作 */
@@ -128,6 +130,26 @@ public class goldenbeansRpcCall {
         params.put("source", source);
         params.put("version", VERSION);
         return request("com.alipay.goldenbean.sign", params);
+    }
+
+    /** 每日求签（默认农场入口） */
+    public static String fortuneDraw() throws Exception {
+        return fortuneDrawOf(FARM_BIZ_TYPE, FARM_SOURCE);
+    }
+
+    /**
+     * 每日求签（指定入口）。
+     * <p>
+     * 求签只在农场（MASTER）入口提供，芝麻炼金入口没有该玩法；
+     * 请求体固定带 taskId=FORTUNE_DRAW，不需要 signKey 之类的服务端参数。
+     */
+    public static String fortuneDrawOf(String bizType, String source) throws Exception {
+        JSONObject params = new JSONObject();
+        params.put("bizType", bizType);
+        params.put("source", source);
+        params.put("taskId", FORTUNE_DRAW_TASK_ID);
+        params.put("version", VERSION);
+        return request("com.alipay.goldenbean.fortuneDraw", params);
     }
 
     /** 触发任务动作（默认农场入口） */

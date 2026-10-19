@@ -41,6 +41,9 @@ public final class GoldenBeansTasks {
     /** 任务状态：待完成 */
     private static final String STATUS_TODO = "TODO";
 
+    /** 金豆求签当日完成标记：求签只在农场（MASTER）入口提供，全模块共用一个标记 */
+    private static final String FLAG_FORTUNE_DRAWN = "goldenBeans::fortune::drawn";
+
     private final SelectModelField blacklist;
     private final boolean autoBlacklist;
 
@@ -72,7 +75,8 @@ public final class GoldenBeansTasks {
      * @return 该入口的任务列表是否已无待推进项
      */
     public boolean processEntry(GoldenBeansEntry entry, int interval,
-                                boolean signEnabled, boolean popupEnabled, boolean taskEnabled) {
+                                boolean signEnabled, boolean fortuneEnabled,
+                                boolean popupEnabled, boolean taskEnabled) {
         try {
             JSONObject indexJo = GoldenBeansSupport.parse(
                     goldenbeansRpcCall.homeOf(entry.bizType, entry.source));
@@ -80,6 +84,15 @@ public final class GoldenBeansTasks {
                 Log.goldenBeans("金豆[" + entry.alias + "]主页⚠️查询失败["
                         + GoldenBeansSupport.describe(indexJo) + "]");
                 return false;
+            }
+
+            // 求签只在农场（MASTER）入口提供，且必须排在签到前：
+            // 签到后的同步响应里没有 fortuneDrawInfo，只能以主页响应为准
+            if (fortuneEnabled && entry == GoldenBeansEntry.FARM) {
+                JSONObject fortuneSync = doFortuneDraw(indexJo, entry, interval);
+                if (fortuneSync != null) {
+                    indexJo = fortuneSync;
+                }
             }
 
             if (signEnabled) {
@@ -175,6 +188,77 @@ public final class GoldenBeansTasks {
             Log.goldenBeans("金豆[" + entry.alias + "]签到📅今日已签到");
         } catch (Throwable th) {
             Log.i(GoldenBeansSupport.TAG, "doSign err:");
+            Log.printStackTrace(GoldenBeansSupport.TAG, th);
+        }
+        return null;
+    }
+
+    /**
+     * 每日求签：主页 {@code fortuneDrawInfo.todayDrawn} 为 false 时提交一次。
+     * <p>
+     * 提交响应必须同时带上 {@code beanDelta} 与 {@code fortuneType} 才算服务端真的签出结果；
+     * 缺任一项时重拉主页，以 {@code fortuneDrawInfo.todayDrawn} 作为最终判据
+     * （与签到一样，只信服务端回读）。确认成功后落当日标记，后续运行不再查询与提交。
+     *
+     * @return 重拉后的主页响应，供后续签到、弹窗与任务使用；无需重拉或重拉失败时返回 null
+     */
+    private JSONObject doFortuneDraw(JSONObject indexJo, GoldenBeansEntry entry, int interval) {
+        if (Status.hasFlagToday(FLAG_FORTUNE_DRAWN)) {
+            return null;
+        }
+        try {
+            JSONObject fortuneInfo = indexJo.optJSONObject("fortuneDrawInfo");
+            if (fortuneInfo == null) {
+                return null;
+            }
+            if (fortuneInfo.optBoolean("todayDrawn", false)) {
+                // 主页已标记今日求签：落当日标记，后续运行不再查询/提交
+                Status.flagToday(FLAG_FORTUNE_DRAWN);
+                Log.goldenBeans("金豆[" + entry.alias + "]求签🔮今日已求签");
+                return null;
+            }
+
+            JSONObject fortuneResponse = GoldenBeansSupport.parse(
+                    goldenbeansRpcCall.fortuneDrawOf(entry.bizType, entry.source));
+            boolean succeeded = GoldenBeansSupport.ok(fortuneResponse);
+            Integer beanDelta = null;
+            JSONObject fortuneType = null;
+            if (fortuneResponse != null) {
+                if (fortuneResponse.has("beanDelta")) {
+                    beanDelta = fortuneResponse.optInt("beanDelta", 0);
+                }
+                fortuneType = fortuneResponse.optJSONObject("fortuneType");
+            }
+            boolean confirmed = succeeded && beanDelta != null && fortuneType != null;
+
+            JSONObject refreshedIndex = null;
+            if (!confirmed) {
+                // 响应不可信：重拉主页，以服务端的 todayDrawn 再核一次
+                sleepWithJitter(interval);
+                refreshedIndex = GoldenBeansSupport.parse(
+                        goldenbeansRpcCall.homeOf(entry.bizType, entry.source));
+                JSONObject refreshedInfo = refreshedIndex == null
+                        ? null : refreshedIndex.optJSONObject("fortuneDrawInfo");
+                confirmed = GoldenBeansSupport.ok(refreshedIndex)
+                        && refreshedInfo != null
+                        && refreshedInfo.optBoolean("todayDrawn", false);
+            }
+            if (!confirmed) {
+                Log.goldenBeans("金豆[" + entry.alias + "]求签⚠️未确认完成["
+                        + GoldenBeansSupport.describe(fortuneResponse) + "]");
+                return refreshedIndex;
+            }
+
+            Status.flagToday(FLAG_FORTUNE_DRAWN);
+            if (beanDelta != null && fortuneType != null) {
+                Log.goldenBeans("金豆[" + entry.alias + "]求签🔮["
+                        + fortuneType.optString("typeName", "") + "]#获得[" + beanDelta + "豆]");
+            } else {
+                Log.goldenBeans("金豆[" + entry.alias + "]求签🔮服务端已确认今日求签完成");
+            }
+            return refreshedIndex;
+        } catch (Throwable th) {
+            Log.i(GoldenBeansSupport.TAG, "doFortuneDraw err:");
             Log.printStackTrace(GoldenBeansSupport.TAG, th);
         }
         return null;
