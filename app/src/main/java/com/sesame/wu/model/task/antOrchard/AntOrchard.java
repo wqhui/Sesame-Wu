@@ -9,8 +9,12 @@ import com.sesame.wu.entity.AlipayUser;
 import com.sesame.wu.data.ModelFields;
 import com.sesame.wu.data.ModelGroup;
 import com.sesame.wu.data.task.ModelTask;
+import com.sesame.wu.data.task.TaskAttemptPolicy;
+import com.sesame.wu.data.task.TaskAttemptPolicy.Outcome;
+import com.sesame.wu.data.task.TaskAward;
 import com.sesame.wu.hook.ApplicationHook;
 import com.sesame.wu.hook.Toast;
+import com.sesame.wu.model.base.TaskAlternative;
 import com.sesame.wu.model.base.TaskCommon;
 import com.sesame.wu.data.modelFieldExt.BooleanModelField;
 import com.sesame.wu.data.modelFieldExt.ChoiceModelField;
@@ -894,6 +898,16 @@ public class AntOrchard extends ModelTask {
                 }
 
                 if (TaskStatus.TODO.name().equals(taskStatus)) {
+                    // 底线：交易/支付类一律不申报、一次即**永久**拉黑（绝不伪造）。
+                    // taskId 与 groupId 都查：服务端两处键名不统一，实测"充值"类任务正是靠 groupId 识别的。
+                    // 注：TaskAttemptPolicy 内部还会按 bizKey（taskId）再拦一次，这里补上 groupId 这个漏网口子。
+                    if (TaskAlternative.isTransactionTask(jo.optString("taskId"))
+                            || TaskAlternative.isTransactionTask(groupId)) {
+                        MessageUtil.MarkTaskBlackListPermanent("AntOrchard", "AntOrchardTaskList",
+                                "农场肥料任务", title);
+                        Log.farm("肥料任务⏭️交易/履约类[" + title + "]#不申报，已永久拉黑");
+                        continue;
+                    }
                     if (!finishOrchardTask(jo)) {
                         continue;
                     }
@@ -909,7 +923,10 @@ public class AntOrchard extends ModelTask {
     }
 
     /**
-     * 完成农场任务
+     * 完成农场肥料任务。
+     * <p>完成与否**以任务列表为准**（响应不可信），走统一策略 {@link TaskAttemptPolicy}：
+     * 400000040「不支持rpc调用」时由策略代为伪申报（本家场景 {@code ORCHARD} / 来源 {@code ANTFARM_ORCHARD}），
+     * 做不了的当日只试一次、临时故障留待下一轮。
      */
     private boolean finishOrchardTask(JSONObject task) {
         try {
@@ -937,6 +954,8 @@ public class AntOrchard extends ModelTask {
                         try {
                             rightsTimesLimit = Integer.parseInt(limitStr);
                         } catch (Exception ignored) {
+                            // 坏值等于没给：这条任务按单档跑，留痕
+                            Log.i(TAG, "rightsTimesLimit 非法，按单档处理: " + limitStr);
                         }
                     }
                 }
@@ -947,15 +966,16 @@ public class AntOrchard extends ModelTask {
                 }
 
                 for (int cnt = 0; cnt < timesToDo; cnt++) {
-                    // 注意：这里taskId作为taskType参数传递，因为你的RPC方法要求taskType
-                    String result = AntOrchardRpcCall.finishTask(sceneCode, taskId);
-                    JSONObject finishResponse = new JSONObject(result);
-                    //检查并标记黑名单任务
-                    MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOrchardTaskList", title, finishResponse);
-                    if (MessageUtil.checkResultCode(TAG, finishResponse)) {
-                        Log.farm("肥料任务🧾完成[" + title + "]第" + (rightsTimes + cnt + 1) + "次");
-                    } else {
-                        Log.record("失败：芭芭农场广告任务📺[" + title + "] " + finishResponse.optString("desc"));
+                    // 定位键必须带档位：多次任务每推进一档都是新的尝试，不带档位会让第一档落下的
+                    // 当日标记把后续档位全挡下、任务永远停在第一档
+                    Outcome outcome = TaskAttemptPolicy.handle(
+                            "orchard::fertilizer::" + taskId + "#" + (rightsTimes + cnt),
+                            title, null,
+                            () -> attemptFinishOrchardTask(sceneCode, title, taskId), Log::farm,
+                            orchardFertilizerSite(taskId, sceneCode, cnt < timesToDo - 1));
+                    // 做不了就收手，不再空转剩余次数
+                    if (outcome == Outcome.UNABLE || outcome == Outcome.TRIED_TODAY
+                            || outcome == Outcome.SKIPPED) {
                         break;
                     }
                     TimeUtil.sleep(500);
@@ -963,33 +983,73 @@ public class AntOrchard extends ModelTask {
                 return true;
             }
 
-            // 处理触发型任务
-            if ("TRIGGER".equals(actionType) || "ADD_HOME".equals(actionType) || "PUSH_SUBSCRIBE".equals(actionType)) {
-                // 注意：这里taskId作为taskType参数传递
-                String result = AntOrchardRpcCall.finishTask(sceneCode, taskId);
-                JSONObject finishResponse = new JSONObject(result);
-                //检查并标记黑名单任务
-                MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOrchardTaskList", title, finishResponse);
-                if (MessageUtil.checkResultCode(TAG, finishResponse)) {
-                    Log.farm("肥料任务🧾完成[" + title + "]");
-                }
-                return true;
-            }
-
-            //配合黑名单的兜底操作
-            String result = AntOrchardRpcCall.finishTask(sceneCode, taskId);
-            JSONObject finishResponse = new JSONObject(result);
-            //检查并标记黑名单任务
-            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOrchardTaskList", title, finishResponse);
-            if (MessageUtil.checkResultCode(TAG, finishResponse)) {
-                Log.farm("肥料任务🧾完成[" + title + "]");
-            }
+            // 触发型任务（TRIGGER / ADD_HOME / PUSH_SUBSCRIBE）与其余兜底类型（SYSTEM_SWITCH / 外跳淘宝等）：
+            // 响应成功 ≠ 服务端已推进，统一交策略按任务列表核对
+            TaskAttemptPolicy.handle("orchard::fertilizer::" + taskId, title, null,
+                    () -> attemptFinishOrchardTask(sceneCode, title, taskId), Log::farm,
+                    orchardFertilizerSite(taskId, sceneCode, false));
             return true;
         } catch (Throwable t) {
             Log.i(TAG, "finishOrchardTask err:");
             Log.printStackTrace(TAG, t);
             return false;
         }
+    }
+
+    /**
+     * 农场肥料任务的调用点信息：黑名单列表 {@code AntOrchardTaskList}；
+     * 伪申报用本家场景 {@code ORCHARD} + 来源 {@code ANTFARM_ORCHARD}
+     * （取自 {@code com.alipay.antiep.finishTask} 请求里的 sceneCode/source）。
+     *
+     * @param middleTier 多档任务的中间档（这次做完还有余量）：列表要打满才变完成，
+     *                   列表复核会把它误判"未完成"、进而挡住后续档位，故这一档跳过复核、以响应为准
+     */
+    private static TaskAttemptPolicy.Site orchardFertilizerSite(String taskId, String sceneCode, boolean middleTier) {
+        TaskAttemptPolicy.Site site = new TaskAttemptPolicy.Site("AntOrchardTaskList", "农场肥料任务",
+                taskId, sceneCode, (k) -> probeOrchardTaskStatus(taskId))
+                // 本家值：ORCHARD + ANTFARM_ORCHARD
+                .withScene("ORCHARD").withSource("ANTFARM_ORCHARD");
+        return middleTier ? site.withTrustResponse() : site;
+    }
+
+    /**
+     * 肥料任务完成上报：响应不可信，成败由 {@link TaskAttemptPolicy} 按任务列表核对；
+     * 「不支持rpc调用」（400000040）交回策略代为伪申报。
+     */
+    private static Outcome attemptFinishOrchardTask(String sceneCode, String title, String taskId) {
+        try {
+            // 注意：这里 taskId 作为 taskType 参数传递（该 RPC 的参数名就叫 taskType）
+            JSONObject jo = new JSONObject(AntOrchardRpcCall.finishTask(sceneCode, taskId));
+            // 响应触发的拉黑先入缓冲：列表确认完成则丢弃（见 TaskAttemptPolicy）
+            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOrchardTaskList", title, jo);
+            if (MessageUtil.checkSuccess(TAG, jo)) {
+                Log.farm("肥料任务🧾完成[" + title + "]");
+                return Outcome.DONE;
+            }
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            // 400000040 不支持rpc调用 → 交回统一策略代为伪申报
+            if (TaskAlternative.hit(jo, sceneCode)) {
+                return Outcome.UNSUPPORTED;
+            }
+            return Outcome.UNABLE;
+        } catch (Throwable t) {
+            Log.error("attemptFinishOrchardTask err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return Outcome.RETRY;
+    }
+
+    /** 肥料任务列表探针：重拉 {@code orchardListTask}，按 taskId 找该任务当前状态。 */
+    private static TaskAttemptPolicy.ProbeResult probeOrchardTaskStatus(String taskId) {
+        // taskId 为空时定位不了（会把同样没有 taskId 的任务串成一条），按"拉取失败"处理：不做任何判定
+        if (taskId == null || taskId.isEmpty()) {
+            return TaskAttemptPolicy.ProbeResult.UNKNOWN;
+        }
+        return TaskAttemptPolicy.probeByList(TAG, AntOrchardRpcCall::orchardListTask, "taskList",
+                jo -> MessageUtil.checkResultCode(TAG, jo),
+                task -> taskId.equals(task.optString("taskId")) ? task.optString("taskStatus") : null);
     }
 
     /**
@@ -1020,12 +1080,15 @@ public class AntOrchard extends ModelTask {
 
                     String triggerResponse = AntOrchardRpcCall.triggerTbTask(taskId, taskPlantType);
                     JSONObject triggerJo = new JSONObject(triggerResponse);
-                    //检查并标记黑名单任务
-                    MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOrchardTaskList", title, triggerJo);
                     if (MessageUtil.checkResultCode(TAG, triggerJo)) {
                         Log.farm("肥料领取🎖️任务[" + title + "]奖励#获得[" + awardCount + "g]");
                     } else {
-                        //Log.record("领取奖励失败: " + triggerJo.toString());
+                        // 领奖收口：领奖响应不可信（102 / 限流可能已发放），先按任务列表复核"已领到"，
+                        // 未确认才交自动拉黑（顺序由 TaskAward 固定，调用点写不反）
+                        TaskAward.confirmReceivedOrBlackList("肥料领取🎖️",
+                                k -> probeOrchardTaskStatus(taskId), taskId, title,
+                                () -> MessageUtil.checkResultCodeAndMarkTaskBlackList("AntOrchardTaskList", title, triggerJo),
+                                msg -> Log.farm(msg));
                     }
                 }
             } else {
