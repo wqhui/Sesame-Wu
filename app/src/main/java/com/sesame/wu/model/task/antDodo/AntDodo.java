@@ -10,10 +10,14 @@ import com.sesame.wu.data.modelFieldExt.BooleanModelField;
 import com.sesame.wu.data.modelFieldExt.ChoiceModelField;
 import com.sesame.wu.data.modelFieldExt.SelectModelField;
 import com.sesame.wu.data.task.ModelTask;
+import com.sesame.wu.data.task.TaskAttemptPolicy;
+import com.sesame.wu.data.task.TaskAttemptPolicy.Outcome;
+import com.sesame.wu.data.task.TaskAward;
 import com.sesame.wu.entity.AlipayAntDodoTaskList;
 import com.sesame.wu.entity.AlipayAntDodoTaskList;
 import com.sesame.wu.entity.AlipayUser;
 import com.sesame.wu.entity.CustomOption;
+import com.sesame.wu.model.base.TaskAlternative;
 import com.sesame.wu.model.base.TaskCommon;
 import com.sesame.wu.model.task.antFarm.AntFarm.TaskStatus;
 import com.sesame.wu.model.task.antForest.AntForestV2;
@@ -319,6 +323,11 @@ public class AntDodo extends ModelTask {
                         continue;
                     }
                     if (TaskStatus.TODO.name().equals(taskStatus)) {
+                        // 周期/持续型任务：由真实行为推进、常驻列表且无 RPC 可完成，跳过（不尝试、不拉黑）
+                        // 常驻列表、每轮结果相同；静默跳过
+                        if (TaskAttemptPolicy.isCyclicTask(taskBaseInfo)) {
+                            continue;
+                        }
                         if (finishTask(sceneCode, taskType, taskTitle)) {
                             receiveTaskAward(sceneCode, taskType, taskTitle);
                         }
@@ -332,34 +341,89 @@ public class AntDodo extends ModelTask {
     }
 
     private Boolean finishTask(String sceneCode, String taskType, String taskTitle) {
+        //黑名单任务跳过
+        if (AntDodoTaskList.getValue().contains(taskTitle)) {
+            return false;
+        }
+        // 做不了的当天只试一次、临时故障留待下一轮（见 TaskAttemptPolicy）
+        Outcome outcome = TaskAttemptPolicy.handle("dodo::" + sceneCode + "/" + taskType, taskTitle, null,
+                () -> attemptFinishTask(sceneCode, taskType, taskTitle), Log::forest,
+                new TaskAttemptPolicy.Site("AntDodoTaskList", "神奇物种", taskType, sceneCode,
+                        (k) -> probeDodoStatus(sceneCode, taskType))
+                        // 本家值：任务场景 + af-biodiversity
+                        .withScene(sceneCode).withSource("af-biodiversity"));
+        return outcome == Outcome.DONE || outcome == Outcome.TRIGGERED;
+    }
+
+    /** 完成上报：做不了只记一行、不拉黑；物种暂无游戏类任务，TaskAlternative 属同型兜底 */
+    private Outcome attemptFinishTask(String sceneCode, String taskType, String taskTitle) {
         try {
-            //黑名单任务跳过
-            if (AntDodoTaskList.getValue().contains(taskTitle)) {
-                return false;
-            }
             JSONObject jo = new JSONObject(AntDodoRpcCall.finishTask(sceneCode, taskType));
             //检查并标记黑名单任务
             MessageUtil.checkResultCodeAndMarkTaskBlackList("AntDodoTaskList", taskTitle, jo);
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.forest("神奇物种🦕完成[" + taskTitle + "]");
-                return true;
+                return Outcome.DONE;
             }
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            // 不支持rpc调用（400000040）→ 由 TaskAttemptPolicy 代为伪申报
+            if (TaskAlternative.hit(jo, sceneCode)) {
+                return Outcome.UNSUPPORTED;
+            }
+            return Outcome.UNABLE;
         } catch (Throwable t) {
-            Log.i(TAG, "finishTask err:");
+            Log.error("finishTask err:");
             Log.printStackTrace(TAG, t);
         }
-        return false;
+        return Outcome.RETRY;
+    }
+
+    /** 列表状态探针：重拉神奇物种任务列表，按 sceneCode+taskType 匹配该任务当前状态。 */
+    private TaskAttemptPolicy.ProbeResult probeDodoStatus(String sceneCode, String taskType) {
+        // 结构为 data.taskGroupInfoList[].taskInfoList[].taskBaseInfo：
+        // 用分组数组作为"列表"，statusOf 里再向下找匹配的 taskBaseInfo
+        return TaskAttemptPolicy.probeByNestedList(TAG, AntDodoRpcCall::taskList,
+                jo -> MessageUtil.checkResultCode(TAG, jo),
+                jo -> {
+                    JSONObject data = jo.optJSONObject("data");
+                    return data == null ? null : data.optJSONArray("taskGroupInfoList");
+                },
+                group -> {
+                    JSONArray taskInfoList = group.optJSONArray("taskInfoList");
+                    if (taskInfoList == null) {
+                        return null;
+                    }
+                    for (int j = 0; j < taskInfoList.length(); j++) {
+                        JSONObject taskInfo = taskInfoList.optJSONObject(j);
+                        JSONObject taskBaseInfo = taskInfo == null ? null : taskInfo.optJSONObject("taskBaseInfo");
+                        if (taskBaseInfo == null
+                                || !sceneCode.equals(taskBaseInfo.optString("sceneCode"))
+                                || !taskType.equals(taskBaseInfo.optString("taskType"))) {
+                            continue;
+                        }
+                        return taskBaseInfo.optString("taskStatus");
+                    }
+                    return null;
+                });
     }
 
     private void receiveTaskAward(String sceneCode, String taskType, String taskTitle) {
         try {
             JSONObject jo = new JSONObject(AntDodoRpcCall.receiveTaskAward(sceneCode, taskType));
-            MessageUtil.checkResultCodeAndMarkTaskBlackList("AntDodoTaskList", taskTitle, jo);
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.forest("神奇物种🦕领取[" + taskTitle + "]奖励");
+                return;
             }
+            // 领奖收口：先按任务列表复核"已领到"，未确认才交自动拉黑（顺序由 TaskAward 固定）
+            TimeUtil.sleep(800);
+            TaskAward.confirmReceivedOrBlackList("神奇物种🦕领取",
+                    k -> probeDodoStatus(sceneCode, taskType), taskTitle, taskTitle,
+                    () -> MessageUtil.checkResultCodeAndMarkTaskBlackList("AntDodoTaskList", taskTitle, jo),
+                    msg -> Log.forest(msg));
         } catch (Throwable t) {
-            Log.i(TAG, "receiveTaskAward err:");
+            Log.error("receiveTaskAward err:");
             Log.printStackTrace(TAG, t);
         }
     }
