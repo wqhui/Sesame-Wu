@@ -430,19 +430,23 @@ public class AntMemberRpcCall {
     }
 
     /**
-     * 查询会员积分兑换福利列表方法2
+     * 查询会员积分兑换福利列表方法2（权益导航分类，分页）
      *
-     * @param userId   userId
+     * <p>对齐 Sesame-AG 49dd3818：分页靠 {@code pageNum} 递进，{@code uniqueId} 首屏由调用方拼、
+     * 之后用服务端上一页回传的值；{@code sourcePassMap} 固定带 {@code dhNewItem=true}。
+     *
      * @param naviCode 导航分类码
-     *                 特色："14"、出行："1"、美食："11"、日用："12"、上新：""
+     *                 上新：""、特色："14"、出行："1"、美食："11"、日用："12"
+     * @param pageNum  页码，从 1 开始
+     * @param pageSize 每页条数
+     * @param uniqueId 分页唯一标识
      * @return 分类下商品列表
      */
-    public static String queryIndexNaviBenefitFlowV2(String userId, String naviCode) {
+    public static String queryIndexNaviBenefitFlowV2(String naviCode, int pageNum, int pageSize, String uniqueId) {
         String sortStrategy = "INTELLIGENT_SORT";
         String upperPoint = "99999999";
-        String uniqueId = System.currentTimeMillis() + naviCode + "0and" + upperPoint + sortStrategy + userId;
         String args =
-                "[\n" + "        {\n" + "            \"adCopyId\": \"\",\n" + "            \"benefitFlowSource\": \"REC\",\n" + "            \"cityCode\": \"\",\n" + "            \"excludeIds\": \"\",\n" + "            \"exposeChannel\": \"antmember\",\n" + "            \"fastTag\": \"\"," + "\n" + "            \"lowerPoint\": 0,\n" + "            \"naviCode\": \"" + naviCode + "\",\n" + "            \"pageNum\": 1,\n" + "            \"pageSize\": 50,\n" + "            \"requestSourceInfo\": \"-|feeds\",\n" + "            \"sortStrategy\": \"" + sortStrategy + "\",\n" + "            \"sourcePassMap\": {\n" + "                \"innerSource\": \"\",\n" + "                \"source\": \"myTab\",\n" + "                \"unid\": \"\"\n" + "            },\n" + "            \"stickyIdList\": [],\n" + "            \"tagCodeIdx\": -1,\n" + "            \"uniqueId\": \"" + uniqueId + "\",\n" + "            \"upperPoint\": " + upperPoint + ",\n" + "            \"withPointRange\": false\n" + "        }\n" + "    ]";
+                "[\n" + "        {\n" + "            \"adCopyId\": \"\",\n" + "            \"benefitFlowSource\": \"REC\",\n" + "            \"cityCode\": \"\",\n" + "            \"excludeIds\": \"\",\n" + "            \"exposeChannel\": \"antmember\",\n" + "            \"fastTag\": \"\"," + "\n" + "            \"lowerPoint\": 0,\n" + "            \"lowerPrice\": 0,\n" + "            \"naviCode\": \"" + naviCode + "\",\n" + "            \"pageNum\": " + pageNum + ",\n" + "            \"pageSize\": " + pageSize + ",\n" + "            \"requestSourceInfo\": \"-|feeds\",\n" + "            \"sortStrategy\": \"" + sortStrategy + "\",\n" + "            \"sourcePassMap\": {\n" + "                \"dhNewItem\": \"true\",\n" + "                \"innerSource\": \"\",\n" + "                \"source\": \"mytab\",\n" + "                \"unid\": \"\"\n" + "            },\n" + "            \"stickyIdList\": [],\n" + "            \"tagCodeIdx\": -1,\n" + "            \"uniqueId\": \"" + uniqueId + "\",\n" + "            \"upperPoint\": " + upperPoint + ",\n" + "            \"upperPrice\": 9999999,\n" + "            \"withPointRange\": false,\n" + "            \"withPriceRange\": false\n" + "        }\n" + "    ]";
         return ApplicationHook.requestString("com.alipay.alipaymember.biz.rpc.config.h5.queryIndexNaviBenefitFlowV2", args);
     }
 

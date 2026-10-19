@@ -63,6 +63,19 @@ public class AntMember extends ModelTask {
 
     /** 会员签到页任务最多翻多少页：只防服务端 pageNo 不生效时死循环。 */
     private static final int MAX_SIGN_PAGE = 8;
+
+    /**
+     * 会员权益导航分类码，取值与顺序对齐 Sesame-AG 49dd3818 的
+     * {@code listOf("", "14", "1", "11", "12")}：上新 / 特色 / 出行 / 美食 / 日用。
+     * <p>原先只查公益道具一个 deliveryId，权益目录里几乎选不到东西，故按分类补齐。
+     */
+    private static final String[] MEMBER_BENEFIT_NAVI_CODES = {"", "14", "1", "11", "12"};
+
+    /** 权益导航每页条数：对齐 Sesame-AG 49dd3818 的 pageSize。 */
+    private static final int MEMBER_BENEFIT_NAVI_PAGE_SIZE = 18;
+
+    /** 单个权益导航分类最多翻多少页：只防服务端 nextPageNum 不前进时死循环。 */
+    private static final int MAX_MEMBER_BENEFIT_NAVI_PAGE = 10;
     
     @Override
     public String getName() {
@@ -1563,6 +1576,7 @@ public class AntMember extends ModelTask {
     private void memberPointExchangeBenefit() {
         try {
             String userId = UserIdMap.getCurrentUid();
+            // 公益道具专区：保留原有入口
             JSONObject jo = new JSONObject(AntMemberRpcCall.queryDeliveryZoneDetail(userId, "94000SR2024011106752003"));
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return;
@@ -1571,31 +1585,102 @@ public class AntMember extends ModelTask {
                 Log.record("会员积分[未实名账号无可兑换权益]");
                 return;
             }
-            JSONArray entityInfoList = jo.getJSONArray("entityInfoList");
-            for (int i = 0; i < entityInfoList.length(); i++) {
-                JSONObject entityInfo = entityInfoList.getJSONObject(i);
-                JSONObject benefitInfo = entityInfo.getJSONObject("benefitInfo");
-                JSONObject pricePresentation = benefitInfo.getJSONObject("pricePresentation");
-                if (!"POINT_PAY".equals(pricePresentation.optString("strategyType"))) {
-                    continue;
-                }
-                String name = benefitInfo.getString("name");
-                String benefitId = benefitInfo.getString("benefitId");
-                MemberBenefitIdMap.add(benefitId, name);
-                if (!Status.canMemberPointExchangeBenefitToday(benefitId) || !memberPointExchangeBenefitList.getValue().contains(benefitId)) {
-                    continue;
-                }
-                String itemId = benefitInfo.getString("itemId");
-                if (exchangeBenefit(benefitId, itemId)) {
-                    String point = pricePresentation.getString("point");
-                    Log.member("会员积分🎐兑换[" + name + "]#花费[" + point + "积分]");
-                }
+            collectMemberPointExchangeBenefit(jo.getJSONArray("entityInfoList"));
+            // 权益导航分类：对齐 Sesame-AG 49dd3818，按分类码分页补齐完整目录。
+            // 原先只登记公益道具一个 deliveryId 的权益，导致「权益列表」几乎选不到东西。
+            for (String naviCode : MEMBER_BENEFIT_NAVI_CODES) {
+                queryMemberPointExchangeBenefitByNavi(userId, naviCode);
             }
             MemberBenefitIdMap.save(userId);
         }
         catch (Throwable t) {
-            Log.i(TAG, "memberPointExchangeBenefit err:");
+            Log.error("memberPointExchangeBenefit err:");
             Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /**
+     * 拉取一个权益导航分类下的全部页，并登记/兑换其中的权益。
+     *
+     * <p>分页规则对齐 Sesame-AG 49dd3818：首屏自己拼 {@code uniqueId}，
+     * 之后每页都用服务端回传的 {@code uniqueId}，并以 {@code nextPageNum} 是否前进判断是否到底。
+     *
+     * @param userId   userId
+     * @param naviCode 导航分类码，见 {@link #MEMBER_BENEFIT_NAVI_CODES}
+     */
+    private void queryMemberPointExchangeBenefitByNavi(String userId, String naviCode) {
+        try {
+            // 首屏 uniqueId 的拼法对齐 Sesame-AG：时间戳 + 分类码 + 积分区间 + 排序策略 + userId
+            String uniqueId = System.currentTimeMillis() + naviCode + "0and99999999INTELLIGENT_SORT" + userId;
+            int pageNum = 1;
+            while (pageNum > 0 && pageNum <= MAX_MEMBER_BENEFIT_NAVI_PAGE) {
+                JSONObject jo = new JSONObject(AntMemberRpcCall.queryIndexNaviBenefitFlowV2(naviCode, pageNum, MEMBER_BENEFIT_NAVI_PAGE_SIZE, uniqueId));
+                randomSleep(800, 1800);
+                if (!MessageUtil.checkResultCode(TAG + " queryIndexNaviBenefitFlowV2", jo)) {
+                    return;
+                }
+                JSONArray entityInfoList = jo.optJSONArray("entityInfoList");
+                if (entityInfoList == null || entityInfoList.length() == 0) {
+                    return;
+                }
+                collectMemberPointExchangeBenefit(entityInfoList);
+                // 下一页要用服务端回传的 uniqueId；服务端没回传就沿用本次的
+                String nextUniqueId = jo.optString("uniqueId", "");
+                if (!nextUniqueId.isEmpty()) {
+                    uniqueId = nextUniqueId;
+                }
+                int nextPageNum = jo.optInt("nextPageNum", 0);
+                if (nextPageNum <= pageNum) {
+                    // 没有下一页（或页码不前进）即认为该分类到底
+                    return;
+                }
+                pageNum = nextPageNum;
+            }
+        }
+        catch (Throwable t) {
+            Log.error("queryMemberPointExchangeBenefitByNavi[" + naviCode + "] err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /**
+     * 把一页权益登记进权益目录，并兑换其中已勾选、今日未处理过的项。
+     *
+     * <p>公益道具专区与权益导航分类的 {@code entityInfoList} 结构一致，故共用同一段处理逻辑。
+     * 只登记 {@code strategyType=POINT_PAY} 的权益：非积分支付项本流程无法兑换。
+     *
+     * @param entityInfoList 权益列表
+     */
+    private void collectMemberPointExchangeBenefit(JSONArray entityInfoList) {
+        if (entityInfoList == null) {
+            return;
+        }
+        for (int i = 0; i < entityInfoList.length(); i++) {
+            JSONObject entityInfo = entityInfoList.optJSONObject(i);
+            JSONObject benefitInfo = entityInfo == null ? null : entityInfo.optJSONObject("benefitInfo");
+            if (benefitInfo == null) {
+                continue;
+            }
+            JSONObject pricePresentation = benefitInfo.optJSONObject("pricePresentation");
+            if (pricePresentation == null || !"POINT_PAY".equals(pricePresentation.optString("strategyType"))) {
+                continue;
+            }
+            String benefitId = benefitInfo.optString("benefitId", "");
+            if (benefitId.isEmpty()) {
+                continue;
+            }
+            String name = benefitInfo.optString("name", benefitId);
+            MemberBenefitIdMap.add(benefitId, name);
+            if (!Status.canMemberPointExchangeBenefitToday(benefitId) || !memberPointExchangeBenefitList.getValue().contains(benefitId)) {
+                continue;
+            }
+            String itemId = benefitInfo.optString("itemId", "");
+            if (itemId.isEmpty()) {
+                continue;
+            }
+            if (exchangeBenefit(benefitId, itemId)) {
+                Log.member("会员积分🎐兑换[" + name + "]#花费[" + pricePresentation.optString("point", "0") + "积分]");
+            }
         }
     }
     
