@@ -11,9 +11,13 @@ import com.sesame.wu.data.modelFieldExt.ChoiceModelField;
 import com.sesame.wu.data.modelFieldExt.IntegerModelField;
 import com.sesame.wu.data.modelFieldExt.SelectModelField;
 import com.sesame.wu.data.task.ModelTask;
+import com.sesame.wu.data.task.TaskAttemptPolicy;
+import com.sesame.wu.data.task.TaskAward;
+import com.sesame.wu.data.task.TaskAttemptPolicy.Outcome;
 import com.sesame.wu.entity.AlipayAntStallTaskList;
 import com.sesame.wu.entity.AlipayUser;
 import com.sesame.wu.model.base.TaskCommon;
+import com.sesame.wu.model.base.TaskAlternative;
 import com.sesame.wu.model.task.antFarm.AntFarm.TaskStatus;
 import com.sesame.wu.model.task.readingDada.ReadingDada;
 import com.sesame.wu.util.*;
@@ -710,6 +714,10 @@ public class AntStall extends ModelTask {
         try {
             String taskType = task.getString("taskType");
             JSONObject bizInfo = new JSONObject(task.getString("bizInfo"));
+            // 周期/持续型任务：跳过，不尝试也不拉黑（常驻列表、每轮结果相同；静默）
+            if (TaskAttemptPolicy.isCyclicTask(task)) {
+                return false;
+            }
             if (Objects.equals("VISIT_AUTO_FINISH", bizInfo.getString("actionType")) || taskTypeList.contains(taskType)) {
                 return finishTask(taskType, title);
             }
@@ -738,34 +746,15 @@ public class AntStall extends ModelTask {
                     return false;
                 }
                 case "ANTSTALL_XLIGHT_VARIABLE_AWARD": {
-                    //【木兰市集】逛精选好物
-                    JSONObject jo = new JSONObject(AntStallRpcCall.xlightPlugin());
-                    if (!jo.has("playingResult")) {
-                        Log.i(TAG, "taskList.xlightPlugin err:" + jo.optString("resultDesc"));
-                        return false;
-                    }
-                    jo = jo.getJSONObject("playingResult");
-                    String pid = jo.getString("playingBizId");
-                    JSONArray jsonArray = (JSONArray) JsonUtil.getValueByPathObject(jo, "eventRewardDetail.eventRewardInfoList");
-                    if (jsonArray == null || jsonArray.length() == 0) {
-                        return false;
-                    }
-                    TimeUtil.sleep(5000);
-                    for (int j = 0; j < jsonArray.length(); j++) {
-                        try {
-                            JSONObject jsonObject = jsonArray.getJSONObject(j);
-                            TimeUtil.sleep(5000);
-                            jo = new JSONObject(AntStallRpcCall.finish(pid, jsonObject));
-                            if (!jo.optBoolean("success")) {
-                                Log.i(TAG, "taskList.finish err:" + jo.optString("resultDesc"));
-                            }
-                        }
-                        catch (Throwable t) {
-                            Log.i(TAG, "taskList for err:");
-                            Log.printStackTrace(TAG, t);
-                        }
-                    }
-                    return true;
+                    //【木兰市集】逛精选好物：xlightPlugin 调起"逛"的行为，再按 eventRewardInfoList 逐个 finish。
+                    // 交给 TaskAttemptPolicy 管节流与分类：同一天只试一次，失败不再每轮重复 5 秒等待
+                    Outcome outcome = TaskAttemptPolicy.handle("stall::xlight::" + title, title, null,
+                            () -> attemptXlightTask(title), Log::farm,
+                            new TaskAttemptPolicy.Site("AntStallTaskList", "新村任务", taskType, "ANTSTALL_TASK",
+                                    (k) -> probeStallStatus(taskType))
+                                    // 本家值：ANTSTALL_TASK + AST
+                                    .withScene("ANTSTALL_TASK").withSource("AST"));
+                    return outcome == Outcome.DONE || outcome == Outcome.TRIGGERED;
                 }
             }
         }
@@ -774,6 +763,44 @@ public class AntStall extends ModelTask {
             Log.printStackTrace(TAG, t);
         }
         return false;
+    }
+    
+    /** 【木兰市集】逛精选好物：先调起 xlight 插件（"逛"的行为），再按 eventRewardInfoList 逐个上报 finish */
+    private Outcome attemptXlightTask(String title) {
+        try {
+            JSONObject jo = new JSONObject(AntStallRpcCall.xlightPlugin());
+            if (!jo.has("playingResult")) {
+                Log.i(TAG, "taskList.xlightPlugin err:" + jo.optString("resultDesc"));
+                return Outcome.UNABLE;
+            }
+            jo = jo.getJSONObject("playingResult");
+            String pid = jo.getString("playingBizId");
+            JSONArray jsonArray = (JSONArray) JsonUtil.getValueByPathObject(jo, "eventRewardDetail.eventRewardInfoList");
+            if (jsonArray == null || jsonArray.length() == 0) {
+                return Outcome.UNABLE;
+            }
+            TimeUtil.sleep(5000);
+            for (int j = 0; j < jsonArray.length(); j++) {
+                try {
+                    JSONObject jsonObject = jsonArray.getJSONObject(j);
+                    TimeUtil.sleep(5000);
+                    JSONObject finishJo = new JSONObject(AntStallRpcCall.finish(pid, jsonObject));
+                    if (!finishJo.optBoolean("success")) {
+                        Log.i(TAG, "taskList.finish err:" + finishJo.optString("resultDesc"));
+                    }
+                }
+                catch (Throwable t) {
+                    Log.i(TAG, "taskList for err:");
+                    Log.printStackTrace(TAG, t);
+                }
+            }
+            return Outcome.DONE;
+        }
+        catch (Throwable t) {
+            Log.i(TAG, "attemptXlightTask err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return Outcome.RETRY;
     }
     
     private void signToday() {
@@ -813,7 +840,13 @@ public class AntStall extends ModelTask {
             JSONObject jo = new JSONObject(AntStallRpcCall.receiveTaskAward(taskType));
             if (MessageUtil.checkSuccess(TAG, jo)) {
                 Log.farm("新村任务🎖️领取[" + title + "]奖励#获得[产速增加" + jo.getInt("incAwardCount") + "/小时]");
+                return;
             }
+            // 领奖收口：领奖响应不可信（102/限流可能已发放），先按任务列表复核"已领到"（该调用点不拉黑）
+            TimeUtil.sleep(800);
+            TaskAward.confirmReceivedOrBlackList("新村任务🎖️领取",
+                    k -> probeStallStatus(taskType), taskType, title, null,
+                    msg -> Log.farm(msg));
         }
         catch (Throwable t) {
             Log.i(TAG, "receiveTaskAward err:");
@@ -822,18 +855,47 @@ public class AntStall extends ModelTask {
     }
     
     private static Boolean finishTask(String taskType, String title) {
-        // String s = AntStallRpcCall.finishTask(FriendIdMap.currentUid + "_" + taskType, taskType);
+        // 做不了的当天只试一次、临时故障留待下一轮（见 TaskAttemptPolicy）
+        Outcome outcome = TaskAttemptPolicy.handle("stall::" + taskType, title, null,
+                () -> attemptFinishTask(taskType, title), Log::farm,
+                new TaskAttemptPolicy.Site("AntStallTaskList", "新村任务", taskType, "ANTSTALL_TASK",
+                        (k) -> probeStallStatus(taskType))
+                        .withScene("ANTSTALL_TASK").withSource("AST"));
+        // 只有列表已确认完成（DONE）才算做成：TRIGGERED 只是伪申报已发出，
+        // 按它返回 true 会让调用点打「完成」——那是假完成
+        return outcome == Outcome.DONE;
+    }
+    
+    /** 新村任务完成上报：不写任务黑名单（失败只代表本次未完成）；taskSceneCode 固定 ANTSTALL_TASK */
+    private static Outcome attemptFinishTask(String taskType, String title) {
         try {
             JSONObject jo = new JSONObject(AntStallRpcCall.finishTask(taskType));
             //检查并标记黑名单任务
             MessageUtil.checkResultCodeAndMarkTaskBlackList("AntStallTaskList", title, jo);
-            return MessageUtil.checkSuccess(TAG, jo);
+            if (MessageUtil.checkSuccess(TAG, jo)) {
+                return Outcome.DONE;
+            }
+            if (MessageUtil.isRetryable(jo) || MessageUtil.isServerBusy(jo)) {
+                return Outcome.RETRY;
+            }
+            // 不支持rpc调用（400000040）→ 由 TaskAttemptPolicy 代为伪申报
+            if (TaskAlternative.hit(jo, "ANTSTALL_TASK")) {
+                return Outcome.UNSUPPORTED;
+            }
+            return Outcome.UNABLE;
         }
         catch (Throwable t) {
             Log.i(TAG, "finishTask err:");
             Log.printStackTrace(TAG, t);
         }
-        return false;
+        return Outcome.RETRY;
+    }
+    
+    /** 列表状态探针：重拉新村任务列表，按 taskType 匹配该任务当前状态。 */
+    private static TaskAttemptPolicy.ProbeResult probeStallStatus(String taskType) {
+        return TaskAttemptPolicy.probeByList(TAG, AntStallRpcCall::taskList, "taskModels",
+                jo -> MessageUtil.checkResultCode(TAG, jo),
+                t -> taskType.equals(t.optString("taskType")) ? t.optString("taskStatus") : null);
     }
     
     private void inviteRegister() {
