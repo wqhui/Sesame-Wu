@@ -52,7 +52,6 @@ public class AntSports extends ModelTask {
 
     private static final String TAG = AntSports.class.getSimpleName();
 
-    private int tmpStepCount = -1;
     private BooleanModelField walk;
     private ChoiceModelField PathThemeMapList;
     private BooleanModelField walkMinimumCompleteCount;
@@ -64,6 +63,9 @@ public class AntSports extends ModelTask {
     private IntegerModelField earliestSyncStepTime;
     private IntegerModelField latestExchangeTime;
     private IntegerModelField syncStepCount;
+    private IntegerModelField syncStepMax;
+    private IntegerModelField latestSyncStepTime;
+    private IntegerModelField syncStepBatches;
     private BooleanModelField tiyubiz;
     private BooleanModelField club;
     private ChoiceModelField clubTrainItemType;
@@ -133,8 +135,16 @@ public class AntSports extends ModelTask {
         modelFields.addField(clubTradeMemberType = new ChoiceModelField("clubTradeMemberType", "抢好友 | 抢购动作", TradeMemberType.NONE, TradeMemberType.nickNames));
         modelFields.addField(clubTradeMemberList = new SelectModelField("clubTradeMemberList", "抢好友 | 好友列表", new LinkedHashSet<>(), AlipayUser::getList));
         modelFields.addField(tiyubiz = new BooleanModelField("tiyubiz", "文体中心", false));
-        modelFields.addField(syncStepCount = new IntegerModelField("syncStepCount", "同步步数 | 自定义", 22000, 0, 100000));
+        // 配置值是「今日额外增加的步数」，不是要显示到的绝对值：真人自己走的步数会自然叠加。
+        // 默认值与旧版一致（22000），保证升级后「可开箱步数」不缩水——
+        // 走路功能按每天约 20 次开箱算，每次消耗 500~1100 步，需要 1 万~2.2 万步才够。
+        modelFields.addField(syncStepCount = new IntegerModelField("syncStepCount", "同步步数 | 额外增加步数", 22000, 0, 50000));
+        syncStepCount.setDescription("在真实步数基础上额外增加的步数；真实步数会自然叠加，例如设置 5000、当天实际走了 3000，最终显示约 8000");
+        modelFields.addField(syncStepMax = new IntegerModelField("syncStepMax", "同步步数 | 单日上限", 23000, 10000, 100000));
+        syncStepMax.setDescription("显示步数达到该值后不再增加；不会一次加到上限，而是按分批次数逐步推进");
         modelFields.addField(earliestSyncStepTime = new IntegerModelField("earliestSyncStepTime", "同步步数 | 最早同步时间(24小时制)", 0, 0, 23));
+        modelFields.addField(latestSyncStepTime = new IntegerModelField("latestSyncStepTime", "同步步数 | 最晚同步时间(24小时制)", 23, 0, 23));
+        modelFields.addField(syncStepBatches = new IntegerModelField("syncStepBatches", "同步步数 | 分批次数", 4, 1, 10));
         modelFields.addField(latestExchangeTime = new IntegerModelField("latestExchangeTime", "行走捐 | 最晚捐步时间(24小时制)", 22, 0, 23));
         modelFields.addField(minExchangeCount = new IntegerModelField("minExchangeCount", "行走捐 | 最小捐步步数", 10));
         modelFields.addField(neverLand = new BooleanModelField("neverLand", "健康岛 | 开启", false));
@@ -159,11 +169,12 @@ public class AntSports extends ModelTask {
             XHelpers.findAndHookMethod("com.alibaba.health.pedometer.core.datasource.PedometerAgent", classLoader, "readDailyStep", new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
-                    int hour = Integer.parseInt(Log.getFormatTime().split(":")[0]);
                     int originStep = (Integer) param.getResult();
-                    int step = tmpStepCount();
-                    if (!Status.hasFlagToday("sport::syncStep") && hour >= earliestSyncStepTime.getValue() && originStep < step) {
-                        param.setResult(step);
+                    int forged = Status.getIntFlagToday("sport::forgedStep");
+                    if (forged > 0) {
+                        // 叠加口径：显示 = 真实步数 + 今日已伪造累计。
+                        // 只加不覆盖，真人自己走的步数不会被抹掉，走了多少照样反映出来
+                        param.setResult(originStep + forged);
                     }
                 }
             });
@@ -186,35 +197,14 @@ public class AntSports extends ModelTask {
     @Override
     public void run() {
         try {
-            int hour = Integer.parseInt(Log.getFormatTime().split(":")[0]);
-            //if (!Status.hasFlagToday("sport::syncStep")) {
-            if (!Status.hasFlagToday("sport::syncStep") && hour >= earliestSyncStepTime.getValue()) {
-                JSONObject jo = new JSONObject(AntSportsRpcCall.queryWalkStep());
-                if (!MessageUtil.checkResultCode(TAG, jo)) {
-                    return;
-                }
-                int stepCount = jo.optInt("stepCount");
-                addChildTask(new ChildModelTask("syncStep", () -> {
-                    int step = tmpStepCount();
-                    if (stepCount < step) {
-                        try {
-                            ClassLoader classLoader = ApplicationHook.getClassLoader();
-                            if ((Boolean) XHelpers.callMethod(XHelpers.callStaticMethod(classLoader.loadClass("com.alibaba.health.pedometer.intergation.rpc.RpcManager"), "a"), "a", new Object[]{step, Boolean.FALSE, "system"})) {
-                                Toast.show("同步步数🏃🏻‍♂️[" + step + "步]");
-                                Log.other("同步步数🏃🏻‍♂️[" + step + "步]#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
-                                Status.flagToday("sport::syncStep");
-                            } else {
-                                Log.record("同步运动步数失败:" + step);
-                            }
-                        } catch (Throwable t) {
-                            Log.printStackTrace(TAG, t);
-                        }
-                    }
-                }));
-            }
+            syncStep();
 
             if (walk.getValue()) {
-                walk(syncStepCount.getValue());
+                // 走路预算用「真实步数 + 今日已增加」，不再借「额外增加步数」配置：
+                // 这个功能本来就是把步数花在线路图上，按实际步数判断「步数多就多花点」才是原意。
+                // 读不到真实步数时传 0，退化成 walkGo 里的默认开箱步数范围，不影响走路本身。
+                int realStep = queryRealStepCount();
+                walk(realStep < 0 ? 0 : realStep + Status.getIntFlagToday("sport::forgedStep"));
             }
 
             //初始任务列表
@@ -275,18 +265,101 @@ public class AntSports extends ModelTask {
         }
     }
 
-    public int tmpStepCount() {
-        if (tmpStepCount >= 0) {
-            return tmpStepCount;
+    /**
+     * 分批增加步数。
+     *
+     * <p>配置值是「今日要额外增加的步数」，不是要显示到的绝对值：真人自己走的步数会自然叠加，
+     * 所以显示值 = 真实步数 + 今日已增加累计。分批而不是一次到位，是为了避免
+     * 「真实 300 → 瞬间 23000」这种最明显的机器特征。
+     *
+     * <p>「单日上限」只作<b>还要不要增加</b>的门槛：到了就停，但绝不把本次增加量截断到上限——
+     * 一次性从 5000 跳到 23000 才是最容易露馅的形态。
+     */
+    private void syncStep() {
+        int total = syncStepCount.getValue();
+        if (total <= 0) {
+            return;
         }
-        tmpStepCount = syncStepCount.getValue();
-        if (tmpStepCount > 0) {
-            tmpStepCount = RandomUtil.nextInt(tmpStepCount, tmpStepCount + 2000);
-            if (tmpStepCount > 100000) {
-                tmpStepCount = 100000;
+        int startHour = earliestSyncStepTime.getValue();
+        int endHour = latestSyncStepTime.getValue();
+        int batches = Math.max(1, syncStepBatches.getValue());
+        int cap = syncStepMax.getValue();
+
+        // 时间窗口：只在 [最早, 最晚] 之间增加；最晚早于最早时按跨零点窗口处理
+        int windowLen = endHour >= startHour ? endHour - startHour : endHour + 24 - startHour;
+        if (windowLen <= 0) {
+            windowLen = 1;
+        }
+        String[] hms = Log.getFormatTime().split(":");
+        int nowMinutes = Integer.parseInt(hms[0]) * 60 + Integer.parseInt(hms[1]);
+        int startMinutes = startHour * 60;
+        int elapsed = nowMinutes - startMinutes;
+        if (elapsed < 0) {
+            elapsed += 24 * 60;
+            if (endHour >= startHour) {
+                return;                       // 不跨零点的窗口，还没到最早时间
             }
         }
-        return tmpStepCount;
+        if (elapsed > windowLen * 60) {
+            return;                           // 已过最晚时间
+        }
+
+        int forged = Status.getIntFlagToday("sport::forgedStep");
+        int remain = total - forged;
+        if (remain <= 0) {
+            return;                           // 今日该增加的量已发满
+        }
+
+        // 分批节奏：窗口按批次数均分，第 i 批落在 最早 + 窗口*i/N 之后；没到点就不动
+        int baseBatch = (total + batches - 1) / batches;
+        int doneBatches = forged / Math.max(1, baseBatch);
+        if (doneBatches >= batches) {
+            return;
+        }
+        int dueMinutes = startMinutes + (int) ((long) windowLen * 60 * (doneBatches + 1) / batches);
+        if (nowMinutes < dueMinutes) {
+            return;
+        }
+
+        int real = queryRealStepCount();
+        if (real < 0) {
+            return;                           // 真实步数读不到，这轮不冒险
+        }
+        int base = real + forged;
+        if (base >= cap) {
+            return;                           // 已到上限 → 停止增加（注意：不是截断到上限）
+        }
+
+        // 本批增加量 = 平均批次 + 0~100 随机，避免每批都是同一个数
+        int batch = Math.min(remain, baseBatch + RandomUtil.nextInt(0, 101));
+        int target = base + batch;
+        try {
+            ClassLoader classLoader = ApplicationHook.getClassLoader();
+            if ((Boolean) XHelpers.callMethod(XHelpers.callStaticMethod(classLoader.loadClass("com.alibaba.health.pedometer.intergation.rpc.RpcManager"), "a"), "a", new Object[]{target, Boolean.FALSE, "system"})) {
+                Status.setIntFlagToday("sport::forgedStep", forged + batch);
+                Toast.show("同步步数🏃🏻‍♂️[" + target + "步]");
+                Log.other("同步步数🏃🏻‍♂️[" + target + "步]#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
+            } else {
+                Log.record("同步运动步数失败:" + target);
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "syncStep err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /** 读服务端当前记录的真实步数；失败返回 -1。 */
+    private int queryRealStepCount() {
+        try {
+            JSONObject jo = new JSONObject(AntSportsRpcCall.queryWalkStep());
+            if (MessageUtil.checkResultCode(TAG, jo)) {
+                return jo.optInt("stepCount");
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "queryRealStepCount err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return -1;
     }
 
     public static void initAntSportsTaskListMap(boolean AutoAntSportsTaskList, boolean sportsTasks) {

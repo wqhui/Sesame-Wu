@@ -67,6 +67,10 @@ public class ModelField<T> implements Serializable {
         setObjectValue(value);
     }
 
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
     public void setObjectValue(Object objectValue) {
         if (objectValue == null) {
             reset();
