@@ -133,9 +133,9 @@ public class AntSports extends ModelTask {
         modelFields.addField(clubTradeMemberType = new ChoiceModelField("clubTradeMemberType", "抢好友 | 抢购动作", TradeMemberType.NONE, TradeMemberType.nickNames));
         modelFields.addField(clubTradeMemberList = new SelectModelField("clubTradeMemberList", "抢好友 | 好友列表", new LinkedHashSet<>(), AlipayUser::getList));
         modelFields.addField(tiyubiz = new BooleanModelField("tiyubiz", "文体中心", false));
-        modelFields.addField(syncStepCount = new IntegerModelField("syncStepCount", "同步步数 | 自定义", 22000));
+        modelFields.addField(syncStepCount = new IntegerModelField("syncStepCount", "同步步数 | 自定义", 22000, 0, 100000));
         modelFields.addField(earliestSyncStepTime = new IntegerModelField("earliestSyncStepTime", "同步步数 | 最早同步时间(24小时制)", 0, 0, 23));
-        modelFields.addField(latestExchangeTime = new IntegerModelField("latestExchangeTime", "行走捐 | 最晚捐步时间(24小时制)", 22));
+        modelFields.addField(latestExchangeTime = new IntegerModelField("latestExchangeTime", "行走捐 | 最晚捐步时间(24小时制)", 22, 0, 23));
         modelFields.addField(minExchangeCount = new IntegerModelField("minExchangeCount", "行走捐 | 最小捐步步数", 10));
         modelFields.addField(neverLand = new BooleanModelField("neverLand", "健康岛 | 开启", false));
         modelFields.addField(QUERY_SIGN = new BooleanModelField("QUERY_SIGN", "健康岛 | 每日签到", false));

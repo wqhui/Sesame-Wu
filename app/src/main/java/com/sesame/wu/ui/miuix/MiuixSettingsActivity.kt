@@ -464,8 +464,12 @@ fun FieldItem(field: ModelField<*>, onSave: () -> Unit) {
 
         "INTEGER", "MULTIPLY_INTEGER" -> {
             val imf = field as? IntegerModelField
+            // 未设上限时不能退回固定值：不少字段的默认值远大于 100（「同步步数 | 自定义」默认 22000、
+            // 「健康岛 | 停止能量泵阈值」默认 10000、「执行间隔」默认 800…），量程写死会让滑块
+            // 与默认值自相矛盾，用户连默认值都调不回去。按当前值给一倍余量。
+            val currentValue = field.value as? Int ?: 0
             val rawMin = (imf?.minLimit ?: 0).toFloat()
-            val rawMax = (imf?.maxLimit ?: 100).toFloat()
+            val rawMax = (imf?.maxLimit ?: maxOf(100, currentValue * 2)).toFloat()
             val min = minOf(rawMin, rawMax)
             val max = if (maxOf(rawMin, rawMax) <= min) min + 1f else maxOf(rawMin, rawMax)
             var value by remember { mutableFloatStateOf((field.value as? Int ?: 0).toFloat().coerceIn(min, max)) }
