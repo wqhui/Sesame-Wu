@@ -410,15 +410,22 @@ public class TaskAttemptPolicy {
      * @param log     日志出口：森林传 {@code Log::forest}，其余传 {@code Log::other}
      * @param site    调用点信息，null 表示该调用点自行伪申报与记账（如已带同轮核对的模块）
      */
+    /** 动作前抖动的下限与上限（毫秒）。 */
+    private static final int JITTER_MIN_MS = 230;
+    private static final int JITTER_MAX_MS = 360;
+
     /**
-     * 动作前的随机抖动（{@link RandomUtil#delay()}，100~300ms）。
+     * 动作前的随机抖动（{@value #JITTER_MIN_MS}~{@value #JITTER_MAX_MS}ms）。
      *
      * <p>固定节奏是明显的机器特征：同一批任务每次都以毫秒级一致的间隔发请求，
      * 容易被服务端识别为脚本行为（实测会累积到 1009 风控）。加抖动后请求间隔不再规整。
+     *
+     * <p>不直接用 {@link RandomUtil#delay()}（100~300ms）：那个工具被 RPC 桥接等 8 处共用，
+     * 改它会连带把重试路径的间隔也拉长；这里只调动作间的节奏。
      */
     private static void jitterSleep() {
         try {
-            TimeUtil.sleep(RandomUtil.delay());
+            TimeUtil.sleep(RandomUtil.nextInt(JITTER_MIN_MS, JITTER_MAX_MS + 1));
         } catch (Throwable ignored) {
             // 抖动只是锦上添花，失败不影响主流程
         }
