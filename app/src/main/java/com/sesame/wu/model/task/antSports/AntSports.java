@@ -65,7 +65,11 @@ public class AntSports extends ModelTask {
     private IntegerModelField syncStepCount;
     private IntegerModelField syncStepMax;
     private IntegerModelField latestSyncStepTime;
+    private IntegerModelField syncStepInterval;
     private IntegerModelField syncStepBatches;
+
+    /** 上次增加步数的时刻（当日分钟 + 1）；0 表示当天还没增加过。 */
+    private static final String FLAG_LAST_SYNC_MINUTE = "sport::lastSyncMinute";
     private BooleanModelField tiyubiz;
     private BooleanModelField club;
     private ChoiceModelField clubTrainItemType;
@@ -138,13 +142,16 @@ public class AntSports extends ModelTask {
         // 配置值是「今日额外增加的步数」，不是要显示到的绝对值：真人自己走的步数会自然叠加。
         // 默认值与旧版一致（22000），保证升级后「可开箱步数」不缩水——
         // 走路功能按每天约 20 次开箱算，每次消耗 500~1100 步，需要 1 万~2.2 万步才够。
-        modelFields.addField(syncStepCount = new IntegerModelField("syncStepCount", "同步步数 | 额外增加步数", 22000, 0, 50000));
-        syncStepCount.setDescription("在真实步数基础上额外增加的步数；真实步数会自然叠加，例如设置 5000、当天实际走了 3000，最终显示约 8000");
+        modelFields.addField(syncStepCount = new IntegerModelField("syncStepCount", "步数自动补偿", 22000, 0, 50000));
+        syncStepCount.setDescription("在真实步数上自动补足");
         modelFields.addField(syncStepMax = new IntegerModelField("syncStepMax", "同步步数 | 单日上限", 23000, 10000, 100000));
-        syncStepMax.setDescription("显示步数达到该值后不再增加；不会一次加到上限，而是按分批次数逐步推进");
+        syncStepMax.setDescription("达到后不再补偿");
         modelFields.addField(earliestSyncStepTime = new IntegerModelField("earliestSyncStepTime", "同步步数 | 最早同步时间(24小时制)", 0, 0, 23));
         modelFields.addField(latestSyncStepTime = new IntegerModelField("latestSyncStepTime", "同步步数 | 最晚同步时间(24小时制)", 23, 0, 23));
-        modelFields.addField(syncStepBatches = new IntegerModelField("syncStepBatches", "同步步数 | 分批次数", 4, 1, 10));
+        modelFields.addField(syncStepInterval = new IntegerModelField("syncStepInterval", "同步步数 | 累加间隔(分钟)", 60, 10, 180));
+        syncStepInterval.setDescription("两次补偿的最小间隔");
+        modelFields.addField(syncStepBatches = new IntegerModelField("syncStepBatches", "同步步数 | 分批次数", 12, 1, 60));
+        syncStepBatches.setDescription("补偿量分几次补完");
         modelFields.addField(latestExchangeTime = new IntegerModelField("latestExchangeTime", "行走捐 | 最晚捐步时间(24小时制)", 22, 0, 23));
         modelFields.addField(minExchangeCount = new IntegerModelField("minExchangeCount", "行走捐 | 最小捐步步数", 10));
         modelFields.addField(neverLand = new BooleanModelField("neverLand", "健康岛 | 开启", false));
@@ -282,7 +289,7 @@ public class AntSports extends ModelTask {
         }
         int startHour = earliestSyncStepTime.getValue();
         int endHour = latestSyncStepTime.getValue();
-        int batches = Math.max(1, syncStepBatches.getValue());
+        int intervalMin = Math.max(1, syncStepInterval.getValue());
         int cap = syncStepMax.getValue();
 
         // 时间窗口：只在 [最早, 最晚] 之间增加；最晚早于最早时按跨零点窗口处理
@@ -310,33 +317,41 @@ public class AntSports extends ModelTask {
             return;                           // 今日该增加的量已发满
         }
 
-        // 分批节奏：窗口按批次数均分，第 i 批落在 最早 + 窗口*i/N 之后；没到点就不动
-        int baseBatch = (total + batches - 1) / batches;
-        int doneBatches = forged / Math.max(1, baseBatch);
-        if (doneBatches >= batches) {
-            return;
-        }
-        int dueMinutes = startMinutes + (int) ((long) windowLen * 60 * (doneBatches + 1) / batches);
-        if (nowMinutes < dueMinutes) {
-            return;
+        // 节奏：窗口内任意时刻，只要距上次增加超过「累加间隔」就再加一次；
+        // 当天还没增加过则立即增加（否则用户会觉得功能没生效）。
+        // 不按窗口均分到固定时刻——那样触发时间是可预测的，反而更像脚本。
+        int windowMin = windowLen * 60;
+        int batches = Math.max(1, syncStepBatches.getValue());
+        int perBatch = (total + batches - 1) / batches;          // 一份多大
+
+        int lastMinute = Status.getIntFlagToday(FLAG_LAST_SYNC_MINUTE);
+        if (lastMinute > 0 && nowMinutes - lastMinute < intervalMin) {
+            return;                           // 距上次不足间隔，等下一轮
         }
 
-        int real = queryRealStepCount();
-        if (real < 0) {
-            return;                           // 真实步数读不到，这轮不冒险
+        int base = queryRealStepCount();
+        if (base < 0) {
+            return;                           // 步数读不到，这轮不冒险
         }
-        int base = real + forged;
+        // 注意：服务端这个值【已经包含】之前累计增加的量，不能再加一次 forged，
+        // 否则等于双倍累加、base 会提前撞到上限，只跑一两批就停。
         if (base >= cap) {
             return;                           // 已到上限 → 停止增加（注意：不是截断到上限）
         }
 
-        // 本批增加量 = 平均批次 + 0~100 随机，避免每批都是同一个数
-        int batch = Math.min(remain, baseBatch + RandomUtil.nextInt(0, 101));
+        // 本批增加量：至少一份；若落后于「按时间进度应到的累计」就补齐欠账。
+        // 进度线是为了保证当天能补足设定值——打开次数不确定，只按一份一份加可能补不满。
+        // 正常情况下打开频率够，每次就是一份，不会一次窜到满。
+        int expected = (int) ((long) total * elapsed / windowMin);
+        int want = Math.max(perBatch, expected - forged);
+        int batch = Math.min(remain, want + RandomUtil.nextInt(0, 101));
         int target = base + batch;
         try {
             ClassLoader classLoader = ApplicationHook.getClassLoader();
             if ((Boolean) XHelpers.callMethod(XHelpers.callStaticMethod(classLoader.loadClass("com.alibaba.health.pedometer.intergation.rpc.RpcManager"), "a"), "a", new Object[]{target, Boolean.FALSE, "system"})) {
                 Status.setIntFlagToday("sport::forgedStep", forged + batch);
+                // +1 作哨兵：0 表示当天还没触发过，避免与「零点触发」混淆
+                Status.setIntFlagToday(FLAG_LAST_SYNC_MINUTE, nowMinutes + 1);
                 Toast.show("同步步数🏃🏻‍♂️[" + target + "步]");
                 Log.other("同步步数🏃🏻‍♂️[" + target + "步]#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
             } else {
