@@ -3209,16 +3209,24 @@ public class AntForestV2 extends ModelTask {
                     roundLimit = optionalPlayRoundLimit(taskList);
                 }
                 for (int j = 0; j < taskList.length(); j++) {
-                    JSONObject task = taskList.getJSONObject(j);
-                    String taskStatus = task.getString("taskStatus");
+                    // 用 opt* 取值：服务端列表随时增删字段，缺字段抛异常会被外层 catch 吞掉，
+                    // 导致整个 taskList（含其它所有乐园任务）本轮全部不处理。
+                    JSONObject task = taskList.optJSONObject(j);
+                    if (task == null) {
+                        continue;
+                    }
+                    String taskStatus = task.optString("taskStatus");
                     int alreadyReceiveAwardCount = task.optInt("alreadyReceiveAwardCount");
                     int awardCount = task.optInt("awardCount");
                     int awardCountForReceive = awardCount - alreadyReceiveAwardCount;
                     int rightsTimesLimit = task.optInt("rightsTimesLimit");
                     int rightsTimes = task.optInt("rightsTimes");
                     String awardType = task.optString("awardType", "能量");
-                    JSONObject bizInfo = task.getJSONObject("bizInfo");
-                    String title = bizInfo.getString("title");
+                    JSONObject bizInfo = task.optJSONObject("bizInfo");
+                    if (bizInfo == null) {
+                        continue;                       // 缺 bizInfo 只跳过这条，不拖垮整轮
+                    }
+                    String title = bizInfo.optString("title");
                     String source = task.optString("source", "ch_appcenter__chsub_9patch");
                     String sceneCode = task.optString("sceneCode", "");
                     String taskType = task.optString("taskType", "");
@@ -3232,6 +3240,10 @@ public class AntForestV2 extends ModelTask {
                         String awardKey = "forest::optionalplay::award::" + sceneCode + "/" + taskType
                                 + (rightsTimesLimit > 1 ? "#" + rightsTimes : "");
                         if (awardCountForReceive > 0 && !Status.hasFlagToday(awardKey)) {
+                            // 领奖也是本轮的进展：不置 true 的话，这一轮会被轮末的
+                            // 「!progressed 就 break」判成无进展直接跳出，连再拉一次列表的
+                            // 机会都没有——表现为「每开一次 App 只能推进一档」。
+                            progressed = true;
                             // 领取奖励
                             JSONObject joReceived = new JSONObject(AntForestRpcCall.receiveTaskAwardopengreen(source, sceneCode, taskType));
                             if (MessageUtil.checkSuccess(TAG, joReceived)) {
@@ -3250,6 +3262,10 @@ public class AntForestV2 extends ModelTask {
                                 }
                             }
                         }
+                        // 领奖后本轮不再碰这个任务：否则会立刻落到下面的 TODO 分支，
+                        // 用下一档的 label 提前发 finishTask——服务端此时还没切档，必然失败，
+                        // 还会把下一档要用的 attempt:: 当日标记打脏，整档当天被「今日已试」挡死。
+                        continue;
                     }
                     if (TaskStatus.TODO.name().equals(taskStatus) || rightsTimes < rightsTimesLimit) {
                         //黑名单任务跳过
@@ -3310,6 +3326,8 @@ public class AntForestV2 extends ModelTask {
                 if (!progressed) {
                     break;
                 }
+                // 服务端状态推进有延迟，留出落态时间再重拉，否则下一轮读到的还是旧状态
+                TimeUtil.sleep(1500);
             }
         } catch (Throwable th) {
             Log.i(TAG, "queryOptionalPlay err:");
