@@ -353,22 +353,35 @@ public class AntSports extends ModelTask {
         int want = Math.max(perBatch, expected - forged);
         int batch = Math.min(remain, want + RandomUtil.nextInt(0, 101));
         int target = base + batch;
+        // 主动推送（RpcManager.a）只是「顺便告诉服务端」；真正让步数显示出来的是
+        // readDailyStep hook 里的 originStep + forged 叠加。两者必须解耦：
+        // 新版支付宝已移除 RpcManager.a，若把记账写在推送成功分支里，异常一抛就永远不记账，
+        // forged 恒为 0，hook 也就什么都不加——表现为「步数补偿完全没效果」。
         try {
             ClassLoader classLoader = ApplicationHook.getClassLoader();
-            if ((Boolean) XHelpers.callMethod(XHelpers.callStaticMethod(classLoader.loadClass("com.alibaba.health.pedometer.intergation.rpc.RpcManager"), "a"), "a", new Object[]{target, Boolean.FALSE, "system"})) {
-                Status.setIntFlagToday("sport::forgedStep", forged + batch);
-                // +1 作哨兵：0 表示当天还没触发过，避免与「零点触发」混淆
-                Status.setIntFlagToday(FLAG_LAST_SYNC_MINUTE, nowMinutes + 1);
-                Toast.show("同步步数🏃🏻‍♂️[" + target + "步]");
-                Log.other("步数补偿🏃🏻‍♂️[+" + batch + "步 → 共" + target + "步]"
-                        + "[" + (forged + batch) + "/" + total + "]#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
+            Class<?> rpcManagerClass = classLoader.loadClass("com.alibaba.health.pedometer.intergation.rpc.RpcManager");
+            Object rpcManager = XHelpers.callStaticMethod(rpcManagerClass, "a");
+            if ((Boolean) XHelpers.callMethod(rpcManager, "a", target, Boolean.FALSE, "system")) {
+                Log.i(TAG, "步数补偿主动推送成功[" + target + "步]");
             } else {
-                Log.record("步数补偿⚠️同步失败[" + target + "步]");
+                Log.record("步数补偿⚠️主动推送被拒[" + target + "步]，改由读取拦截生效");
             }
         } catch (Throwable t) {
-            Log.i(TAG, "syncStep err:");
-            Log.printStackTrace(TAG, t);
+            // XHelpers 把 NoSuchMethodException 包进 RuntimeException，这里统一降级
+            if (t.getCause() instanceof NoSuchMethodException) {
+                Log.record("步数补偿⚠️主动推送接口已不可用（新版支付宝移除），改由读取拦截生效");
+            } else {
+                Log.record("步数补偿⚠️主动推送失败[" + target + "步]，改由读取拦截生效");
+                Log.printStackTrace(TAG, t);
+            }
         }
+        // 无论推送结果如何都记账：hook 才是让步数生效的路径
+        Status.setIntFlagToday("sport::forgedStep", forged + batch);
+        // +1 作哨兵：0 表示当天还没触发过，避免与「零点触发」混淆
+        Status.setIntFlagToday(FLAG_LAST_SYNC_MINUTE, nowMinutes + 1);
+        Toast.show("同步步数🏃🏻‍♂️[" + target + "步]");
+        Log.other("步数补偿🏃🏻‍♂️[+" + batch + "步 → 共" + target + "步]"
+                + "[" + (forged + batch) + "/" + total + "]#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
     }
 
     /** 读服务端当前记录的真实步数；失败返回 -1。 */
