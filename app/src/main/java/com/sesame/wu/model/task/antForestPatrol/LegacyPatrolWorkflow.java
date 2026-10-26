@@ -4,6 +4,7 @@ import com.sesame.wu.model.task.antForest.AntForestRpcCall;
 import com.sesame.wu.util.Log;
 import com.sesame.wu.util.MessageUtil;
 import com.sesame.wu.util.Status;
+import com.sesame.wu.util.StringUtil;
 import com.sesame.wu.util.TimeUtil;
 
 import org.json.JSONArray;
@@ -261,16 +262,33 @@ public class LegacyPatrolWorkflow {
     }
 
     private static PatrolTargetRecord selectPatrolInventoryTargetRecord(List<PatrolRecordInfo> records) {
-        JSONObject response;
+        // 分页取全背包动物：只看第一页会漏掉后面的伙伴，导致巡护目标选错
+        JSONArray animalProps = new JSONArray();
         try {
-            response = new JSONObject(AntForestRpcCall.queryAnimalPropList());
+            String nextCursor = null;
+            for (int page = 0; page < AntForestRpcCall.ANIMAL_PROP_MAX_PAGES; page++) {
+                JSONObject response = new JSONObject(AntForestRpcCall.queryAnimalPropList(nextCursor));
+                if (!MessageUtil.checkResultCode(TAG, response)) {
+                    if (page == 0) return null;
+                    break;
+                }
+                JSONArray pageProps = response.optJSONArray("animalProps");
+                if (pageProps != null) {
+                    for (int i = 0; i < pageProps.length(); i++) {
+                        JSONObject animalProp = pageProps.optJSONObject(i);
+                        if (animalProp != null) animalProps.put(animalProp);
+                    }
+                }
+                if (!response.optBoolean("hasMore")) break;
+                String cursor = response.optString("nextCursor");
+                if (StringUtil.isEmpty(cursor) || cursor.equals(nextCursor)) break;
+                nextCursor = cursor;
+            }
         } catch (Throwable t) {
             logEx("queryAnimalPropList for patrol target err", t);
             return null;
         }
-        if (!MessageUtil.checkResultCode(TAG, response)) return null;
-        JSONArray animalProps = response.optJSONArray("animalProps");
-        if (animalProps == null || animalProps.length() == 0) {
+        if (animalProps.length() == 0) {
             log("巡护背包动物为空，保留原地图排序");
             return null;
         }

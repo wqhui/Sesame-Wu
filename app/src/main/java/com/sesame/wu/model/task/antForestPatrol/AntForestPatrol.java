@@ -329,12 +329,30 @@ public class AntForestPatrol extends ModelTask {
     /** @return true=已派遣, false=无候选, null=查询失败 */
     private Boolean dispatchLegacyAnimal() {
         try {
-            JSONObject raw = new JSONObject(AntForestRpcCall.queryAnimalPropList());
-            if (!MessageUtil.checkResultCode(TAG, raw)) return null;
-            JSONArray animals = raw.optJSONArray("animalProps");
-            if (animals == null) {
-                Log.record(PREFIX + "旧版候选缺少 animalProps");
-                return null;
+            // 分页取全部旧版动物：只看第一页会漏掉后面的伙伴，导致派遣选择错误
+            JSONArray animals = new JSONArray();
+            String nextCursor = null;
+            for (int page = 0; page < AntForestRpcCall.ANIMAL_PROP_MAX_PAGES; page++) {
+                JSONObject raw = new JSONObject(AntForestRpcCall.queryAnimalPropList(nextCursor));
+                if (!MessageUtil.checkResultCode(TAG, raw)) {
+                    if (page == 0) return null;
+                    break;
+                }
+                JSONArray pageProps = raw.optJSONArray("animalProps");
+                if (pageProps == null && page == 0) {
+                    Log.record(PREFIX + "旧版候选缺少 animalProps");
+                    return null;
+                }
+                if (pageProps != null) {
+                    for (int i = 0; i < pageProps.length(); i++) {
+                        JSONObject animalProp = pageProps.optJSONObject(i);
+                        if (animalProp != null) animals.put(animalProp);
+                    }
+                }
+                if (!raw.optBoolean("hasMore")) break;
+                String cursor = raw.optString("nextCursor");
+                if (StringUtil.isEmpty(cursor) || cursor.equals(nextCursor)) break;
+                nextCursor = cursor;
             }
             LegacyPatrolWorkflow.AnimalPropSelection selected =
                     LegacyPatrolWorkflow.selectBestAnimalProp(animals);
