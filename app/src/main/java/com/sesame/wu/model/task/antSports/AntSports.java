@@ -368,15 +368,15 @@ public class AntSports extends ModelTask {
                 if ((Boolean) XHelpers.callMethod(rpcManager, "a", target, Boolean.FALSE, "system")) {
                     Log.i(TAG, "步数补偿主动推送成功[" + target + "步]");
                 } else {
-                    Log.record("步数补偿⚠️主动推送被拒[" + target + "步]，改由读取拦截生效");
+                    Log.record("步数补偿⚠️主动推送被拒[" + target + "步]");
                 }
             } catch (Throwable t) {
                 // XHelpers 把 NoSuchMethodException 包进 RuntimeException，这里统一降级
                 if (t.getCause() instanceof NoSuchMethodException) {
-                    Log.record("步数补偿⚠️主动推送接口已不可用（新版支付宝移除），已跳过；读取拦截不受影响");
+                    Log.record("步数补偿⚠️主动推送接口不可用，已跳过");
                     Status.flagToday(FLAG_PUSH_UNAVAILABLE);
                 } else {
-                    Log.record("步数补偿⚠️主动推送失败[" + target + "步]，改由读取拦截生效");
+                    Log.record("步数补偿⚠️主动推送失败[" + target + "步]");
                     Log.printStackTrace(TAG, t);
                 }
             }
@@ -386,8 +386,7 @@ public class AntSports extends ModelTask {
         // +1 作哨兵：0 表示当天还没触发过，避免与「零点触发」混淆
         Status.setIntFlagToday(FLAG_LAST_SYNC_MINUTE, nowMinutes + 1);
         Toast.show("同步步数🏃🏻‍♂️[" + target + "步]");
-        Log.other("步数补偿🏃🏻‍♂️[+" + batch + "步 → 共" + target + "步]"
-                + "[" + (forged + batch) + "/" + total + "]#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
+        Log.other("步数补偿🏃🏻‍♂️[+" + batch + "步 → 共" + target + "步][" + (forged + batch) + "/" + total + "]");
     }
 
     /** 读服务端当前记录的真实步数；失败返回 -1。 */
