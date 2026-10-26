@@ -324,29 +324,9 @@ public class AntMember extends ModelTask {
                     }
                 }
                 
-                // 游戏中心任务流里的任务也要进候选，否则用户看不到、也无法手动勾选
-                // （原读取的 v4.queryTaskList 实测恒返回空 data，连带这里一直拿不到任务）
-                for (int feedPage = 0; feedPage < 5; feedPage++) {
-                    jo = new JSONObject(AntMemberRpcCall.gameCenterGameFeeds(feedPage, 10));
-                    if (!MessageUtil.checkSuccess(TAG, jo)) {
-                        break;
-                    }
-                    JSONObject feedsData = jo.optJSONObject("data");
-                    JSONArray feedsList = feedsData == null ? null : feedsData.optJSONArray("feedsList");
-                    if (feedsList == null || feedsList.length() == 0) {
-                        break;
-                    }
-                    for (int i = 0; i < feedsList.length(); i++) {
-                        JSONObject feed = feedsList.optJSONObject(i);
-                        String title = feed == null ? "" : gameCenterTaskTitle(feed);
-                        if (!title.isEmpty()) {
-                            AntMemberTaskListMap.add(title, title);
-                        }
-                    }
-                    if (!feedsData.optBoolean("haveNextPage", false)) {
-                        break;
-                    }
-                }
+                // 这里原先遍历「游戏中心 feeds」登记黑名单候选，但 feeds 条目的标题并不是会员任务名：
+                // 既永远对不上任务、选不中，又把真正能做的会员任务挤出候选列表，还白打一轮 RPC。
+                // 会员任务名（含广告任务）改由 signPageTaskList 登记，见该方法内的 AntMemberTaskListMap.add。
 
                 //保存任务到配置文件
                 AntMemberTaskListMap.save();
@@ -643,7 +623,27 @@ public class AntMember extends ModelTask {
                         for (int k = 0; k < taskList.length(); k++) {
                             JSONObject task = taskList.optJSONObject(k);
                             JSONObject cfg = task == null ? null : task.optJSONObject("taskConfigInfo");
-                            if (cfg != null && cfg.has("id") && seenTaskIds.add(cfg.getLong("id"))) {
+                            if (cfg == null && task != null) {
+                                cfg = task.optJSONObject("simpleTaskConfig");
+                            }
+                            if (cfg == null) {
+                                continue;
+                            }
+                            // 登记任务名到黑名单候选项：signPageTaskList 的任务(含广告任务)不在其它列表里，否则设置页搜不到
+                            String taskName = cfg.optString("name", "");
+                            if (taskName.isEmpty()) {
+                                taskName = cfg.optString("title", "");
+                            }
+                            if (!taskName.isEmpty()) {
+                                AntMemberTaskListMap.add(taskName, taskName);
+                            }
+                            // 分页去重键：旧结构 id，新结构 configId
+                            if (cfg.has("id")) {
+                                if (seenTaskIds.add(cfg.getLong("id"))) {
+                                    anyNewTask = true;
+                                }
+                            }
+                            else if (cfg.has("configId") && seenTaskIds.add(cfg.optLong("configId"))) {
                                 anyNewTask = true;
                             }
                         }
@@ -657,6 +657,7 @@ public class AntMember extends ModelTask {
                             randomSleep(1500, 3000);
                         }
                     }
+                    AntMemberTaskListMap.save();
                     if (doubleCheck) {
                         // 本页仍有任务被推进：重查本页，直到没有新进展
                         continue;
@@ -943,6 +944,10 @@ public class AntMember extends ModelTask {
                 }
             }
             if (targetBusinessArr == null || targetBusinessArr.length() == 0) {
+                // 广告任务(adTask=true)没有 targetBusiness，走广告任务申请->等待->完成流程
+                if (task.optBoolean("adTask")) {
+                    return doAdTask(task, config, name, awardParamPoint);
+                }
                 Log.record("会员浏览任务[" + name + "]无 targetBusiness 配置，跳过");
                 return false;
             }
@@ -993,6 +998,53 @@ public class AntMember extends ModelTask {
             Log.printStackTrace(TAG, t);
         }
         return doubleCheck;
+    }
+
+    // 广告任务: 申请(applyAdTask) -> 等待浏览时长 -> 完成(taskFinish)
+    private Boolean doAdTask(JSONObject task, JSONObject config, String name, String awardParamPoint) {
+        try {
+            JSONObject extMap = task.optJSONObject("lightsAdExtMap");
+            if (extMap == null) {
+                Log.record("会员任务⏭️跳过[" + name + "]#广告任务缺少扩展参数");
+                return false;
+            }
+            String bizId = extMap.optString("bizId", "");
+            String adId = extMap.optString("adId", "");
+            if (bizId.isEmpty() || adId.isEmpty()) {
+                Log.record("会员任务⏭️跳过[" + name + "]#广告任务缺少bizId/adId");
+                return false;
+            }
+            int awardNum = 0;
+            try {
+                awardNum = Integer.parseInt(awardParamPoint);
+            }
+            catch (Throwable ignored) {
+            }
+            JSONObject applyJo = new JSONObject(AntMemberRpcCall.applyAdTask(bizId, adId, awardNum, extMap));
+            if (!isAdTaskOk(applyJo)) {
+                Log.record("会员任务⏭️跳过[" + name + "]#广告任务申请失败");
+                return false;
+            }
+            // 广告任务需浏览一段时间后才能完成，抓包约 15 秒
+            int browseSeconds = config.optInt("browseSeconds", 15);
+            TimeUtil.sleep(Math.max(browseSeconds, 15) * 1000L);
+            JSONObject finishJo = new JSONObject(AntMemberRpcCall.taskFinish(bizId));
+            if (!isAdTaskOk(finishJo)) {
+                Log.record("会员任务⏭️跳过[" + name + "]#广告任务完成失败");
+                return false;
+            }
+            Log.member("会员任务🎖️完成[" + name + "]#获得[" + awardNum + "积分]");
+            return true;
+        }
+        catch (Throwable t) {
+            Log.i(TAG, "doAdTask err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return false;
+    }
+
+    private boolean isAdTaskOk(JSONObject jo) {
+        return jo.optBoolean("success") || "SUCCESS".equals(jo.optString("resultCode"));
     }
 
     // 任务积分：旧结构 awardParam.awardParamPoint，新结构 stageVOList[0].awardParam.awardParamPoint
@@ -1655,36 +1707,6 @@ public class AntMember extends ModelTask {
         }
     }
 
-    /**
-     * 游戏中心任务流条目在「会员任务｜黑名单列表」里的标题（如「九梦仙域：玩游戏得1个宝箱」）。
-     * <p>字段实测：{@code mainTitle}=游戏名、{@code subTitle}=宣传语、
-     * {@code taskDesc}=「玩游戏得1个宝箱」、{@code taskTagText}=「玩游戏得」。
-     */
-    private static String gameCenterTaskTitle(JSONObject feed) {
-        String title = firstNonEmpty(feed, "mainTitle", "subTitle");
-        String taskDesc = firstNonEmpty(feed, "taskDesc", "taskTagText");
-        if (title.isEmpty()) {
-            title = taskDesc;
-        } else if (!taskDesc.isEmpty() && !title.contains(taskDesc)) {
-            title = title + "：" + taskDesc;
-        }
-        if (title.isEmpty()) {
-            title = firstNonEmpty(feed, "gameId", "cardId", "appId");
-        }
-        return title;
-    }
-
-    /** 按顺序取第一个非空字符串字段。 */
-    private static String firstNonEmpty(JSONObject jo, String... keys) {
-        for (String key : keys) {
-            String value = jo.optString(key, "").trim();
-            if (!value.isEmpty()) {
-                return value;
-            }
-        }
-        return "";
-    }
-    
     /**
      * 查询玩乐豆小球列表，有则领取
      */

@@ -64,6 +64,31 @@ public class AntMemberRpcCall {
     }
 
     /**
+     * 会员广告任务(adTask=true)申请。
+     *
+     * <p>{@code extMap} 取自任务自带的 {@code lightsAdExtMap}；{@code scene}/{@code sourcePassMap}/
+     * {@code spaceCode}/{@code subScene}/{@code userId} 按抓包确认必传，缺失会返回 PARAM_ILLEGAL。
+     * <p>完成走 {@link #taskFinish(String)}（同一个 adtask finish 接口）。
+     */
+    public static String applyAdTask(String adBizId, String adId, int awardNum, JSONObject extMap) {
+        JSONObject body = new JSONObject();
+        try {
+            body.put("adBizId", adBizId);
+            body.put("adId", adId);
+            body.put("awardNum", awardNum);
+            body.put("bizNo", adBizId);
+            body.put("extMap", extMap == null ? new JSONObject() : extMap);
+            body.put("scene", "TASK_WALL");
+            body.put("sourcePassMap", memberSourcePassMap());
+            body.put("spaceCode", "ant_member_xlight_task");
+            body.put("subScene", "");
+            body.put("userId", "");
+        } catch (Throwable ignored) {
+        }
+        return ApplicationHook.requestString("com.alipay.amic.memtask.h5.MemTaskAdFacade.applyAdTask", "[" + body + "]");
+    }
+
+    /**
      * 会员任务阶段奖励列表（relatedChannel=MEMBERPOINT）。
      * <p>响应里的 {@code availableTaskProcessList[].stageProcessList[]} 带
      * {@code stageStatus} 与 {@code awardRelatedOutBizNo}，后者是领奖所需的凭证。
