@@ -67,6 +67,9 @@ public class AntMember extends ModelTask {
     /** 会员签到页任务最多翻多少页：只防服务端 pageNo 不生效时死循环。 */
     private static final int MAX_SIGN_PAGE = 8;
 
+    /** 当日任务列表未取到(风控/1009)：置当日标记，后续轮次不再请求，避免反复触发加重风控。 */
+    private static final String FLAG_SIGN_PAGE_TASK_FAILED = "AntMember::signPageTaskListFailed";
+
     /**
      * 会员权益导航分类码，取值与顺序对齐 Sesame-AG 49dd3818 的
      * {@code listOf("", "14", "1", "11", "12")}：上新 / 特色 / 出行 / 美食 / 日用。
@@ -179,11 +182,16 @@ public class AntMember extends ModelTask {
             if (AntMemberTask.getValue()) {
                 queryPointCert(1, 8);
                 // 签到页任务（原先是注释状态，对齐 Sesame-M 重新启用）
+                // 先判断任务列表能否取到：风控(1009等)拿不到列表时，不再请求签到广告任务接口，避免加重风控。
+                // 子开关关闭时不做这个判断，保持原有行为。
+                boolean signPageTaskListOk = true;
                 if (memberSignPageTask.getValue()) {
-                    signPageTaskList();
+                    signPageTaskListOk = signPageTaskList();
                 }
-                // 签到广告任务（sourceBusiness=signInAd）
-                queryAllStatusTaskList();
+                if (signPageTaskListOk) {
+                    // 签到广告任务（sourceBusiness=signInAd）
+                    queryAllStatusTaskList();
+                }
                 // 会员任务阶段奖励：任务推进到阶段后单独可领，和上面的「领积分」是两条路
                 collectMemberTaskProcessAwards();
             }
@@ -574,9 +582,17 @@ public class AntMember extends ModelTask {
      * {@link ExtensionsHandle#handleAlphaRequest} 的 doMoreTask 分支；
      * 只要这一轮有推进就重新拉一次，直到没有可做的为止。
      * <p>RPC 之间用 {@link #randomSleep(int, int)} 拉开随机间隔，模拟人工节奏、降低风控。
+     *
+     * @return 是否成功取到任务列表；取不到（风控/1009/无列表）返回 false，调用方不应再发起其它任务 RPC
      */
-    private void signPageTaskList() {
+    private boolean signPageTaskList() {
+        boolean obtained = false;
         try {
+            // 当日已确认取不到列表(风控/1009)：本轮及后续轮次都不再请求，避免反复触发加重风控
+            if (Status.hasFlagToday(FLAG_SIGN_PAGE_TASK_FAILED)) {
+                Log.i(TAG, "今日任务列表获取失败(风控)，跳过");
+                return false;
+            }
             // 分页拉取签到页任务。原先无 pageNo，签到页任务多于 1 页时只会处理第一页。
             // 服务端若忽略 pageNo（恒返回第一页），下面的 id 去重会在第二页立刻结束，
             // 行为与原先「只查一次」完全一致，故本改动是安全的。
@@ -589,17 +605,41 @@ public class AntMember extends ModelTask {
                     randomSleep(1200, 2200);
                     boolean doubleCheck = false;
                     if (!MessageUtil.checkResultCode(TAG + " signPageTaskList", jo)) {
-                        return;
+                        if (!obtained) {
+                            Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+                        }
+                        return false;
                     }
                     if (!jo.has("categoryTaskList")) {
-                        return;
+                        Log.i(TAG, "signPageTaskList 无 categoryTaskList 字段，今日不再重试");
+                        if (!obtained) {
+                            Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+                        }
+                        return false;
                     }
                     JSONArray categoryTaskList = jo.getJSONArray("categoryTaskList");
+                    // 首页就没有任务列表：说明今日取不到任务(风控/1009 时也表现为空)，打当日标记后不再重试。
+                    // 后续页为空只是分页到底，不能据此拉黑整天（否则会连带跳过本日的其它任务接口）。
+                    if (categoryTaskList.length() == 0) {
+                        if (page == 1) {
+                            Log.i(TAG, "signPageTaskList 任务列表为空，今日不再重试");
+                            if (!obtained) {
+                                Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+                            }
+                            return false;
+                        }
+                        break;
+                    }
+                    obtained = true;
                     // 本页是否出现了没见过的任务 id：一个都没有说明分页到底了
                     boolean anyNewTask = false;
                     for (int i = 0; i < categoryTaskList.length(); i++) {
                         JSONObject category = categoryTaskList.getJSONObject(i);
-                        JSONArray taskList = category.getJSONArray("taskList");
+                        // 先判断该分类有没有任务列表：无列表说明没有可做的任务，不做 doMoreTask 上报
+                        JSONArray taskList = category.optJSONArray("taskList");
+                        if (taskList == null || taskList.length() == 0) {
+                            continue;
+                        }
                         for (int k = 0; k < taskList.length(); k++) {
                             JSONObject task = taskList.optJSONObject(k);
                             JSONObject cfg = task == null ? null : task.optJSONObject("taskConfigInfo");
@@ -607,7 +647,7 @@ public class AntMember extends ModelTask {
                                 anyNewTask = true;
                             }
                         }
-                        String type = category.getString("type");
+                        String type = category.optString("type");
                         if (Objects.equals("BROWSE", type)) {
                             // doBrowseTask 内部已按 applyTask / executeTask 逐步随机延迟
                             doubleCheck = doBrowseTask(taskList);
@@ -632,7 +672,11 @@ public class AntMember extends ModelTask {
         catch (Throwable t) {
             Log.i(TAG, "signPageTaskList err:");
             Log.printStackTrace(TAG, t);
+            if (!obtained) {
+                Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+            }
         }
+        return obtained;
     }
     
     /**
@@ -728,7 +772,12 @@ public class AntMember extends ModelTask {
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return;
             }
-            JSONArray availableTaskList = jo.getJSONArray("availableTaskList");
+            JSONArray availableTaskList = jo.optJSONArray("availableTaskList");
+            // 风控(如 1009)时列表可能缺失或为空，此时不做任何任务处理，避免加重风控
+            if (availableTaskList == null || availableTaskList.length() == 0) {
+                Log.i(TAG, "queryAllStatusTaskList 无可做任务列表");
+                return;
+            }
             if (doBrowseTask(availableTaskList)) {
                 queryAllStatusTaskList();
             }
