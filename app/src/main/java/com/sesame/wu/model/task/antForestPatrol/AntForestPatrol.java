@@ -161,10 +161,13 @@ public class AntForestPatrol extends ModelTask {
                 Log.record(PREFIX + "查询动物首页失败");
                 return null;
             }
-            if ("Team".equals(home.optString("nextAction"))) {
-                JSONObject teamResult = home.optJSONObject("teamHomeResult");
-                JSONObject mainMember = teamResult != null ? teamResult.optJSONObject("mainMember") : null;
-                return mainMember != null ? mainMember.optJSONArray("usingUserProps") : null;
+            // 组队判定不能看 nextAction 字面量：线上部分账号该字段缺失/取值不稳定，
+            // 漏判时会落到个人版字段 usingUserPropsNew，组队版的 usingUserProps 就取不到了。
+            // teamHomeResult.mainMember 只有组队主页才下发，比字面量可靠（与 AntForestV2.isTeam 一致）。
+            JSONObject teamResult = home.optJSONObject("teamHomeResult");
+            JSONObject mainMember = teamResult != null ? teamResult.optJSONObject("mainMember") : null;
+            if (mainMember != null) {
+                return mainMember.optJSONArray("usingUserProps");
             }
             return home.optJSONArray("usingUserPropsNew");
         } catch (Throwable t) {
