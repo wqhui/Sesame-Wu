@@ -70,6 +70,8 @@ public class AntSports extends ModelTask {
 
     /** 上次增加步数的时刻（当日分钟 + 1）；0 表示当天还没增加过。 */
     private static final String FLAG_LAST_SYNC_MINUTE = "sport::lastSyncMinute";
+    /** 当日主动推送已确认不可用（新版支付宝移除该接口）：不再重试，避免每次运行都刷日志。 */
+    private static final String FLAG_PUSH_UNAVAILABLE = "sport::syncStepPushUnavailable";
     private BooleanModelField tiyubiz;
     private BooleanModelField club;
     private ChoiceModelField clubTrainItemType;
@@ -357,22 +359,26 @@ public class AntSports extends ModelTask {
         // readDailyStep hook 里的 originStep + forged 叠加。两者必须解耦：
         // 新版支付宝已移除 RpcManager.a，若把记账写在推送成功分支里，异常一抛就永远不记账，
         // forged 恒为 0，hook 也就什么都不加——表现为「步数补偿完全没效果」。
-        try {
-            ClassLoader classLoader = ApplicationHook.getClassLoader();
-            Class<?> rpcManagerClass = classLoader.loadClass("com.alibaba.health.pedometer.intergation.rpc.RpcManager");
-            Object rpcManager = XHelpers.callStaticMethod(rpcManagerClass, "a");
-            if ((Boolean) XHelpers.callMethod(rpcManager, "a", target, Boolean.FALSE, "system")) {
-                Log.i(TAG, "步数补偿主动推送成功[" + target + "步]");
-            } else {
-                Log.record("步数补偿⚠️主动推送被拒[" + target + "步]，改由读取拦截生效");
-            }
-        } catch (Throwable t) {
-            // XHelpers 把 NoSuchMethodException 包进 RuntimeException，这里统一降级
-            if (t.getCause() instanceof NoSuchMethodException) {
-                Log.record("步数补偿⚠️主动推送接口已不可用（新版支付宝移除），改由读取拦截生效");
-            } else {
-                Log.record("步数补偿⚠️主动推送失败[" + target + "步]，改由读取拦截生效");
-                Log.printStackTrace(TAG, t);
+        // 当日已确认该接口不可用就不再试：避免每次运行都重试刷日志
+        if (!Status.hasFlagToday(FLAG_PUSH_UNAVAILABLE)) {
+            try {
+                ClassLoader classLoader = ApplicationHook.getClassLoader();
+                Class<?> rpcManagerClass = classLoader.loadClass("com.alibaba.health.pedometer.intergation.rpc.RpcManager");
+                Object rpcManager = XHelpers.callStaticMethod(rpcManagerClass, "a");
+                if ((Boolean) XHelpers.callMethod(rpcManager, "a", target, Boolean.FALSE, "system")) {
+                    Log.i(TAG, "步数补偿主动推送成功[" + target + "步]");
+                } else {
+                    Log.record("步数补偿⚠️主动推送被拒[" + target + "步]，改由读取拦截生效");
+                }
+            } catch (Throwable t) {
+                // XHelpers 把 NoSuchMethodException 包进 RuntimeException，这里统一降级
+                if (t.getCause() instanceof NoSuchMethodException) {
+                    Log.record("步数补偿⚠️主动推送接口已不可用（新版支付宝移除），已跳过；读取拦截不受影响");
+                    Status.flagToday(FLAG_PUSH_UNAVAILABLE);
+                } else {
+                    Log.record("步数补偿⚠️主动推送失败[" + target + "步]，改由读取拦截生效");
+                    Log.printStackTrace(TAG, t);
+                }
             }
         }
         // 无论推送结果如何都记账：hook 才是让步数生效的路径
