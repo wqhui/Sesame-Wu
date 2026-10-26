@@ -310,17 +310,41 @@ public class AntMember extends ModelTask {
                 if (MessageUtil.checkResultCode(TAG, jo)) {
                     JSONArray availableTaskList = jo.getJSONArray("availableTaskList");
                     for (int i = 0; i < availableTaskList.length(); i++) {
-                        JSONObject task = availableTaskList.getJSONObject(i);
-                        JSONObject taskConfigInfo = task.getJSONObject("taskConfigInfo");
-                        String name = taskConfigInfo.getString("name");
-                        AntMemberTaskListMap.add(name, name);
+                        JSONObject task = availableTaskList.optJSONObject(i);
+                        // 新结构改用 simpleTaskConfig(title)，旧结构是 taskConfigInfo(name)；
+                        // 用 getJSONObject/getString 取值时缺字段会抛异常，整个候选列表都建不出来
+                        JSONObject cfg = task == null ? null : task.optJSONObject("taskConfigInfo");
+                        if (cfg == null && task != null) {
+                            cfg = task.optJSONObject("simpleTaskConfig");
+                        }
+                        if (cfg == null) {
+                            continue;
+                        }
+                        String name = cfg.optString("name", "");
+                        if (name.isEmpty()) {
+                            name = cfg.optString("title", "");
+                        }
+                        if (!name.isEmpty()) {
+                            AntMemberTaskListMap.add(name, name);
+                        }
                     }
                     JSONArray taskHistoryList = jo.getJSONArray("taskHistoryList");
                     for (int i = 0; i < taskHistoryList.length(); i++) {
-                        JSONObject task = taskHistoryList.getJSONObject(i);
-                        JSONObject taskConfigInfo = task.getJSONObject("taskConfigInfo");
-                        String name = taskConfigInfo.getString("name");
-                        AntMemberTaskListMap.add(name, name);
+                        JSONObject task = taskHistoryList.optJSONObject(i);
+                        JSONObject cfg = task == null ? null : task.optJSONObject("taskConfigInfo");
+                        if (cfg == null && task != null) {
+                            cfg = task.optJSONObject("simpleTaskConfig");
+                        }
+                        if (cfg == null) {
+                            continue;
+                        }
+                        String name = cfg.optString("name", "");
+                        if (name.isEmpty()) {
+                            name = cfg.optString("title", "");
+                        }
+                        if (!name.isEmpty()) {
+                            AntMemberTaskListMap.add(name, name);
+                        }
                     }
                 }
                 
