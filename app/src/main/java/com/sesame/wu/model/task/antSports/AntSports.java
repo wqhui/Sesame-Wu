@@ -285,7 +285,7 @@ public class AntSports extends ModelTask {
     private void syncStep() {
         int total = syncStepCount.getValue();
         if (total <= 0) {
-            return;
+            return;                           // 未启用补偿，静默
         }
         int startHour = earliestSyncStepTime.getValue();
         int endHour = latestSyncStepTime.getValue();
@@ -304,16 +304,19 @@ public class AntSports extends ModelTask {
         if (elapsed < 0) {
             elapsed += 24 * 60;
             if (endHour >= startHour) {
+                Log.record("步数补偿⏭️未到最早同步时间[" + startHour + "点]");
                 return;                       // 不跨零点的窗口，还没到最早时间
             }
         }
         if (elapsed > windowLen * 60) {
+            Log.record("步数补偿⏭️已过最晚同步时间[" + endHour + "点]");
             return;                           // 已过最晚时间
         }
 
         int forged = Status.getIntFlagToday("sport::forgedStep");
         int remain = total - forged;
         if (remain <= 0) {
+            Log.record("步数补偿✅今日已补满[" + forged + "步]");
             return;                           // 今日该增加的量已发满
         }
 
@@ -326,16 +329,20 @@ public class AntSports extends ModelTask {
 
         int lastMinute = Status.getIntFlagToday(FLAG_LAST_SYNC_MINUTE);
         if (lastMinute > 0 && nowMinutes - lastMinute < intervalMin) {
+            // 这条最频繁，写运行日志即可，避免刷屏结果日志
+            Log.i(TAG, "步数补偿⏭️距上次仅" + (nowMinutes - lastMinute) + "分，未到间隔" + intervalMin + "分");
             return;                           // 距上次不足间隔，等下一轮
         }
 
         int base = queryRealStepCount();
         if (base < 0) {
+            Log.record("步数补偿⚠️读取当前步数失败，本轮跳过");
             return;                           // 步数读不到，这轮不冒险
         }
         // 注意：服务端这个值【已经包含】之前累计增加的量，不能再加一次 forged，
         // 否则等于双倍累加、base 会提前撞到上限，只跑一两批就停。
         if (base >= cap) {
+            Log.record("步数补偿⏭️已达单日上限[" + base + "/" + cap + "步]");
             return;                           // 已到上限 → 停止增加（注意：不是截断到上限）
         }
 
@@ -353,9 +360,10 @@ public class AntSports extends ModelTask {
                 // +1 作哨兵：0 表示当天还没触发过，避免与「零点触发」混淆
                 Status.setIntFlagToday(FLAG_LAST_SYNC_MINUTE, nowMinutes + 1);
                 Toast.show("同步步数🏃🏻‍♂️[" + target + "步]");
-                Log.other("同步步数🏃🏻‍♂️[" + target + "步]#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
+                Log.other("步数补偿🏃🏻‍♂️[+" + batch + "步 → 共" + target + "步]"
+                        + "[" + (forged + batch) + "/" + total + "]#[" + UserIdMap.getShowName(UserIdMap.getCurrentUid()) + "]");
             } else {
-                Log.record("同步运动步数失败:" + target);
+                Log.record("步数补偿⚠️同步失败[" + target + "步]");
             }
         } catch (Throwable t) {
             Log.i(TAG, "syncStep err:");
