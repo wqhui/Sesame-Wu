@@ -4322,6 +4322,8 @@ public class AntForestV2 extends ModelTask {
     }
 
     private void teamCooperateWater() {
+        // 本次是否由本方法切到组队模式，是则结束前必须切回个人模式
+        boolean switchedToTeam = false;
         try {
 
             int userDailyTarget = Math.min(Math.max(partnerteamWaterNum.getValue(), 10), 5000);
@@ -4341,24 +4343,43 @@ public class AntForestV2 extends ModelTask {
                 return;
             }
 
-            String teamId = homeJo.optJSONObject("teamHomeResult").optJSONObject("teamBaseInfo").optString("teamId", "");
+            // 以 teamHomeResult.mainMember 判定当前版本：只有组队主页才把个人数据嵌进合种树页面。
+            // teamHomeResult 本身个人版也有（小队挑战配置），teamBaseInfo 在个人版同样会出现
+            // （已退出/受邀队伍的残留，teamWater 会以 PARAM_ILLEGAL 拒绝），nextAction 也不可靠
+            // （线上部分账号缺失/取值异常），故都不能作为版本判据。
+            if (!isTeam(homeJo)) {
+                // 连主页基础字段都没有说明是异常响应，此时不要贸然修改账户设置
+                if (!homeJo.has("userBaseInfo") && !homeJo.has("nextAction") && !homeJo.has("now")) {
+                    Log.record("首页响应异常(无主页字段)，跳过组队合种浇水");
+                    return;
+                }
+                Log.record("当前为个人版，切换至组队版进行组队合种浇水");
+                if (!updateUserConfiginTeam(true)) {
+                    Log.record("切换到组队模式失败，跳过组队合种浇水");
+                    return;
+                }
+                switchedToTeam = true;
+                // 个人版主页既没有 mainMember 也取不到 teamId，必须切到组队版后重新查询
+                homeJo = new JSONObject(AntForestRpcCall.queryHomePage());
+                if (!isTeam(homeJo)) {
+                    Log.record("切换后仍未进入组队版(可能未加入队伍)，跳过组队合种浇水");
+                    return;
+                }
+            }
+
+            JSONObject teamHomeResult = homeJo.optJSONObject("teamHomeResult");
+            JSONObject teamBaseInfo = teamHomeResult == null ? null : teamHomeResult.optJSONObject("teamBaseInfo");
+            String teamId = teamBaseInfo == null ? "" : teamBaseInfo.optString("teamId", "");
             if (teamId.isEmpty()) {
                 Log.record("未获取到组队合种 TeamID");
                 return;
             }
 
-            int currentEnergy = homeJo.optJSONObject("userBaseInfo").optInt("currentEnergy", 0);
+            JSONObject userBaseInfo = homeJo.optJSONObject("userBaseInfo");
+            int currentEnergy = userBaseInfo == null ? 0 : userBaseInfo.optInt("currentEnergy", 0);
             if (currentEnergy < 10) {
                 Log.record("当前能量不足10g(" + currentEnergy + "g)，无法浇水");
                 return;
-            }
-
-            // 切换团队模式
-            boolean needReturn = false;
-            if (!isTeam(homeJo)) {
-                Log.record("不在队伍模式,已为您切换至组队浇水");
-                updateUserConfiginTeam(!needReturn);
-                needReturn = true;
             }
 
             // 获取服务端限制
@@ -4366,9 +4387,6 @@ public class AntForestV2 extends ModelTask {
             JSONObject miscJo = new JSONObject(miscStr);
             if (!MessageUtil.checkResultCode(TAG, miscJo)) {
                 Log.record("queryMiscInfo 查询失败");
-                if (needReturn) {
-                    updateUserConfiginTeam(!needReturn);
-                }
                 return;
             }
 
@@ -4377,9 +4395,6 @@ public class AntForestV2 extends ModelTask {
 
             if (serverRemaining < 10) {
                 Log.record("官方限制今日无可浇水额度，跳过");
-                if (needReturn) {
-                    updateUserConfiginTeam(!needReturn);
-                }
                 return;
             }
 
@@ -4387,9 +4402,6 @@ public class AntForestV2 extends ModelTask {
             int finalWaterAmount = Math.min(userRemainingQuota, Math.min(serverRemaining, currentEnergy));
             if (finalWaterAmount < 10) {
                 Log.record("计算后浇水量(" + finalWaterAmount + "g)低于最小限制10g，不执行");
-                if (needReturn) {
-                    updateUserConfiginTeam(!needReturn);
-                }
                 return;
             }
 
@@ -4425,14 +4437,17 @@ public class AntForestV2 extends ModelTask {
                 Status.forestHuntHelpToday("FLAG_TEAM_WATER_DAILY_COUNT", todayUsed + finalWaterAmount, UserIdMap.getCurrentUid());
                 Log.record("组队合种今日浇水累计: " + (todayUsed + finalWaterAmount) + "g / " + userDailyTarget + "g");
             }
-
-            // 切换回个人模式
-            if (needReturn) {
-                updateUserConfiginTeam(!needReturn);
-                Log.record("已返回个人模式");
-            }
         } catch (Throwable t) {
             Log.printStackTrace("teamCooperateWater 异常:", t);
+        } finally {
+            // 任何分支（含异常和提前 return）都要切回个人模式，否则账号会一直停在组队模式影响其它功能
+            if (switchedToTeam) {
+                if (updateUserConfiginTeam(false)) {
+                    Log.record("已返回个人模式");
+                } else {
+                    Log.record("组队合种浇水后切回个人模式失败，下次运行重试");
+                }
+            }
         }
     }
 
@@ -4455,8 +4470,17 @@ public class AntForestV2 extends ModelTask {
         return false;
     }
 
+    /**
+     * 是否处于组队版：只有组队主页的 teamHomeResult 下才带 mainMember（个人数据被嵌进合种树页面）。
+     * <p>teamHomeResult 本身个人版也有（小队挑战配置），nextAction 同样不可靠（线上部分账号缺失/
+     * 取值异常），故二者都不参与判定。
+     */
     private static boolean isTeam(JSONObject homeObj) {
-        return "Team".equals(homeObj.optString("nextAction", ""));
+        if (homeObj == null) {
+            return false;
+        }
+        JSONObject teamHomeResult = homeObj.optJSONObject("teamHomeResult");
+        return teamHomeResult != null && teamHomeResult.optJSONObject("mainMember") != null;
     }
 
     private static void loveteam(int loveteamWater) {
