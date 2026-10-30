@@ -53,6 +53,14 @@ import android.content.Intent;
 
 public class AntOrchard extends ModelTask {
     private static final String TAG = "AntOrchard";
+
+    /**
+     * 单轮内农场肥料任务最多推进的档位数。
+     *
+     * <p>正常多阶段任务只有个位数档位；上限存在的意义是防服务端把
+     * {@code rightsTimesLimit} 编码成肥料数额时，按差值循环把模块卡死。
+     */
+    private static final int MAX_FERTILIZER_TIMES_PER_RUN = 100;
     private static final String NAME = "农场";
     private static final ModelGroup GROUP = ModelGroup.ORCHARD;
     private String[] wuaList;
@@ -963,6 +971,13 @@ public class AntOrchard extends ModelTask {
                 int timesToDo = (rightsTimesLimit > 0) ? (rightsTimesLimit - rightsTimes) : 1;
                 if (timesToDo <= 0) {
                     return true;
+                }
+                // 上限保护：服务端偶尔把 rightsTimesLimit 编码成肥料数额（如 3500），
+                // 直接按差值循环会连发上千次请求、每次都 sleep，等于把模块卡死半天。
+                if (timesToDo > MAX_FERTILIZER_TIMES_PER_RUN) {
+                    Log.i(TAG, "rightsTimesLimit - rightsTimes = " + timesToDo
+                            + " 超出单轮上限，按 " + MAX_FERTILIZER_TIMES_PER_RUN + " 次执行");
+                    timesToDo = MAX_FERTILIZER_TIMES_PER_RUN;
                 }
 
                 for (int cnt = 0; cnt < timesToDo; cnt++) {
