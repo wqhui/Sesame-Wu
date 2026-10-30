@@ -22,6 +22,7 @@ import com.sesame.wu.data.modelFieldExt.IntegerModelField;
 import com.sesame.wu.data.modelFieldExt.SelectAndCountModelField;
 import com.sesame.wu.data.modelFieldExt.SelectModelField;
 import com.sesame.wu.model.task.antFarm.AntFarmRpcCall;
+import com.sesame.wu.model.task.antGame.GameCenterPlayRpcCall;
 import com.sesame.wu.model.task.antGame.GameTask;
 import com.sesame.wu.model.task.antMember.AntMemberRpcCall;
 import com.sesame.wu.util.Log;
@@ -32,6 +33,7 @@ import com.sesame.wu.util.TimeUtil;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -61,6 +63,20 @@ public class AntOrchard extends ModelTask {
      * {@code rightsTimesLimit} 编码成肥料数额时，按差值循环把模块卡死。
      */
     private static final int MAX_FERTILIZER_TIMES_PER_RUN = 100;
+
+    /** 农场首页入口来源：浮球任务的权益查询与完成请求都用它（与下发来源一致）。 */
+    private static final String HOME_GAME_ENTRY_SOURCE = "ch_appcenter__chsub_9patch";
+
+    /** 浮球游戏时长上报的来源标识（游戏中心 P2E 统计口径）。 */
+    private static final String HOME_GAME_PLAY_SOURCE = "lianyun_nc_sydb";
+
+    /**
+     * 单个浮球任务允许等待的游玩时长上限（秒）。
+     *
+     * <p>正常浮球任务只有几十秒；上限存在的意义是防服务端把 floatBallDuration 下发成
+     * 超大值（如 3600）时，把整个农场模块卡在等待里。
+     */
+    private static final int MAX_HOME_GAME_DURATION_SECONDS = 180;
     private static final String NAME = "农场";
     private static final ModelGroup GROUP = ModelGroup.ORCHARD;
     private String[] wuaList;
@@ -98,6 +114,7 @@ public class AntOrchard extends ModelTask {
 
     private BooleanModelField orchardPlantNew;
     private BooleanModelField drawGameCenterAward;
+    private BooleanModelField orchardHomeGame;
     private BooleanModelField orchardChouChouLe;
     private BooleanModelField AutoOrchardChouChouLeTaskList;
     private SelectModelField OrchardChouChouLeTaskList;
@@ -132,6 +149,11 @@ public class AntOrchard extends ModelTask {
         modelFields.addField(useBatchSpread = new BooleanModelField("useBatchSpread", "一键施肥5次", false));
         modelFields.addField(orchardSpreadManureSceneList = new SelectAndCountModelField("orchardSpreadManureSceneList", "农场施肥 | 场景列表", new LinkedHashMap<>(), AlipayPlantScene::getList, "请填写每日施肥次数"));
         modelFields.addField(drawGameCenterAward = new BooleanModelField("drawGameCenterAward", "农场乐园 | 游戏宝箱", true));
+        // AG 的浮球游戏随「领取农场任务奖励」一起执行、没有单独开关，这里沿用默认开启；
+        // 与「农场任务」开关解耦：浮球任务来自首页 feeds/投放位，不在 orchardListTask 的 taskList 里
+        // 默认关闭：每次 run 会多 2 个查询 + 可能 30~60 秒的时长上报等待，
+        // 与本项目其它新功能开关（森林集市/绿植浏览/森林寻宝）保持一致，由用户按需开启。
+        modelFields.addField(orchardHomeGame = new BooleanModelField("orchardHomeGame", "农场任务 | 首页浮球游戏", false));
         modelFields.addField(orchardChouChouLe = new BooleanModelField("orchardChouChouLe", "抽抽乐 | 自动完成与抽奖", false));
         // 注：Sesame-Wu 的 ModelField 没有 M 的 setDependsOn（条件显示）机制，
         // 故这两个字段不挂依赖、始终显示；勾选与否由各自开关自行判断
@@ -178,6 +200,11 @@ public class AntOrchard extends ModelTask {
             // 执行农场任务
             if (orchardListTask.getValue()) {
                 orchardListTask();
+            }
+
+            // 执行首页浮球游戏任务（feeds/投放位里的 FLOAT_BALL_TASK，完成发肥料）
+            if (Boolean.TRUE.equals(orchardHomeGame.getValue())) {
+                orchardHomeGameTasks();
             }
 
 
@@ -1113,6 +1140,368 @@ public class AntOrchard extends ModelTask {
             Log.i(TAG, "triggerTbTask err:");
             Log.printStackTrace(TAG, t);
         }
+    }
+
+    /* ==================== 农场首页浮球游戏（FLOAT_BALL_TASK） ==================== */
+
+    /**
+     * 农场首页浮球任务（{@code FLOAT_BALL_TASK}）的单任务契约。
+     *
+     * <p>字段含义：{@code appId} 是游戏小程序标识（进入/事件上报用）；{@code taskId} 是权益任务
+     * {@code iepTaskId}（finishTask 的 taskType）；{@code sceneCode} 是权益场景 {@code iepSceneCode}；
+     * {@code duration} 是服务端要求游玩并上报的秒数。
+     */
+    private static class HomeGameTask {
+        final String key;
+        final String appId;
+        final String taskId;
+        final String sceneCode;
+        final String title;
+        final int duration;
+
+        HomeGameTask(String key, String appId, String taskId, String sceneCode, String title, int duration) {
+            this.key = key;
+            this.appId = appId;
+            this.taskId = taskId;
+            this.sceneCode = sceneCode;
+            this.title = title;
+            this.duration = duration;
+        }
+    }
+
+    /** 浮球任务单步请求的延迟执行接口（避免依赖 java.util.function 的 API 级别）。 */
+    private interface HomeGameRequest {
+        String request();
+    }
+
+    /**
+     * 农场首页浮球游戏任务（{@code FLOAT_BALL_TASK}）。
+     *
+     * <p><b>这个功能是干嘛的</b>：芭芭农场首页的「信息流（feeds）」和「投放位（indexDelivery）」里
+     * 会挂一类小游戏任务，权益类型为 {@code benefitType=FLOAT_BALL_TASK}。服务端在权益里下发
+     * 游戏 appId、任务 taskId、场景 sceneCode，以及需要停留的秒数 {@code bizInfo.floatBallDuration}。
+     * 本方法把可做的任务捞出来，按「通知游戏 → 进入游戏 → 首帧 → 加载完成 → 上报游玩时长 →
+     * 上报 game_play → finishTask」推进；任何一步失败就停下，留待下一轮重试（已完成的步骤有当日标记）。
+     *
+     * <p><b>产什么收益</b>：每完成一个浮球任务发一次肥料
+     * （{@code finishAwardResultVO.deltaAwardCount}，单位 g）。这是肥料来源，
+     * 与摇钱树（余额宝收益）和会员金豆是三条互不相干的链路。
+     *
+     * <p><b>防重复</b>：每一步都记当日标记（{@link Status#flagToday(String, String)}，跨天自动清空）；
+     * finishTask 的 outBizNo 按「当天 + 任务」固定，进程中断后重跑也由服务端按幂等号去重，不会重复领奖。
+     */
+    private void orchardHomeGameTasks() {
+        if (userId == null || userId.isEmpty()) {
+            return;
+        }
+        try {
+            JSONObject feeds = queryHomeGameSource("feeds");
+            JSONObject delivery = queryHomeGameSource("delivery");
+            if (feeds == null && delivery == null) {
+                // 两个来源都查不到：queryHomeGameSource 里已经留过痕，这里不重复刷日志
+                return;
+            }
+            Map<String, HomeGameTask> tasks = new LinkedHashMap<>();
+            collectHomeGameTasks(feeds, "feeds", tasks);
+            collectHomeGameTasks(delivery, "delivery", tasks);
+            if (tasks.isEmpty()) {
+                Log.record("农场首页浮球🎮今日暂无可做任务");
+                return;
+            }
+            for (HomeGameTask task : tasks.values()) {
+                runHomeGameTask(task);
+            }
+        } catch (Throwable t) {
+            Log.error("农场首页浮球🎮任务处理异常");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /**
+     * 查询浮球任务的来源页：feeds（首页信息流）或 delivery（首页投放位）。
+     *
+     * @return 查询成功的响应；失败或无返回时为 {@code null}
+     */
+    private JSONObject queryHomeGameSource(String source) {
+        String raw;
+        try {
+            raw = "feeds".equals(source)
+                    ? AntOrchardRpcCall.orchardIndexFeeds()
+                    : AntOrchardRpcCall.orchardIndexDelivery();
+        } catch (Throwable t) {
+            Log.error("农场首页浮球🎮[" + source + "]查询异常");
+            Log.printStackTrace(TAG, t);
+            return null;
+        }
+        if (raw == null || raw.isEmpty()) {
+            Log.error("农场首页浮球🎮[" + source + "]查询无返回");
+            return null;
+        }
+        try {
+            JSONObject jo = new JSONObject(raw);
+            if (!isOrchardRpcSuccessResponse(jo)) {
+                Log.error("农场首页浮球🎮[" + source + "]查询失败#" + brief(raw));
+                return null;
+            }
+            return jo;
+        } catch (Throwable t) {
+            Log.error("农场首页浮球🎮[" + source + "]响应解析失败#" + brief(raw));
+            Log.printStackTrace(TAG, t);
+            return null;
+        }
+    }
+
+    /**
+     * 从 feeds / delivery 响应里抽取 {@code FLOAT_BALL_TASK} 任务，按 {@code sceneCode:taskId:appId} 去重。
+     *
+     * <p>两个来源的报文结构不同：feeds 的权益在 {@code feedsInfoList[].itemOutExtMap.orchardBenefitInfo}
+     * （可能是对象，也可能是 JSON 字符串），appId 在 {@code gameItem.gameItemId}；
+     * delivery 的权益在 {@code indexDeliveryList[].deliveryBenefitInfo}，appId 在 {@code contentId}。
+     */
+    private void collectHomeGameTasks(JSONObject page, String source, Map<String, HomeGameTask> tasks) {
+        if (page == null) {
+            return;
+        }
+        JSONArray entries = page.optJSONArray("feeds".equals(source) ? "feedsInfoList" : "indexDeliveryList");
+        if (entries == null) {
+            Log.record("农场首页浮球🎮[" + source + "]列表为空，跳过");
+            return;
+        }
+        for (int i = 0; i < entries.length(); i++) {
+            JSONObject entry = entries.optJSONObject(i);
+            if (entry == null) {
+                continue;
+            }
+            JSONObject benefit;
+            if ("feeds".equals(source)) {
+                benefit = null;
+                JSONObject ext = entry.optJSONObject("itemOutExtMap");
+                Object raw = ext == null ? null : ext.opt("orchardBenefitInfo");
+                if (raw instanceof JSONObject) {
+                    benefit = (JSONObject) raw;
+                } else if (raw instanceof String) {
+                    // 服务端有时把这段权益当字符串下发；解析不了就按"没有权益"处理
+                    try {
+                        benefit = new JSONObject((String) raw);
+                    } catch (Throwable ignored) {
+                        benefit = null;
+                    }
+                }
+            } else {
+                benefit = entry.optJSONObject("deliveryBenefitInfo");
+            }
+            if (benefit == null || !"FLOAT_BALL_TASK".equals(benefit.optString("benefitType"))) {
+                continue;
+            }
+
+            JSONObject game = entry.optJSONObject("gameItem");
+            String appId = ("feeds".equals(source)
+                    ? (game == null ? "" : game.optString("gameItemId"))
+                    : entry.optString("contentId")).trim();
+            String taskId = benefit.optString("iepTaskId").trim();
+            String sceneCode = benefit.optString("iepSceneCode").trim();
+            JSONObject bizInfo = benefit.optJSONObject("bizInfo");
+            int duration = bizInfo == null ? 0 : bizInfo.optInt("floatBallDuration", 0);
+
+            // 契约不完整时不做：缺 appId/taskId/sceneCode 或时长非正，后续任何一步都会被服务端拒绝
+            if (appId.isEmpty() || taskId.isEmpty() || sceneCode.isEmpty() || duration <= 0) {
+                Log.record("农场首页浮球🎮[" + source + "]任务契约不完整，跳过#" + brief(entry.toString()));
+                continue;
+            }
+            // 时长上限保护：避免异常契约把整个农场模块卡在超长等待里
+            if (duration > MAX_HOME_GAME_DURATION_SECONDS) {
+                Log.record("农场首页浮球🎮[" + taskId + "]游玩时长 " + duration + "s 超过单轮上限 "
+                        + MAX_HOME_GAME_DURATION_SECONDS + "s，跳过");
+                continue;
+            }
+
+            String title = game == null ? "" : game.optString("gameName");
+            if (title.isEmpty()) {
+                title = taskId;
+            }
+            String key = sceneCode + ":" + taskId + ":" + appId;
+            if (tasks.containsKey(key)) {
+                // 同一任务可能同时出现在信息流和投放位，按键去重，避免重复游玩/重复领奖
+                continue;
+            }
+            tasks.put(key, new HomeGameTask(key, appId, taskId, sceneCode, title, duration));
+        }
+    }
+
+    /**
+     * 推进单个浮球任务：通知 → 进入 → 首帧 → 加载完成 → 游玩时长 → game_play → 完成领奖。
+     */
+    private void runHomeGameTask(HomeGameTask task) {
+        if (Status.hasFlagToday(homeGameFlag(task.key, "done"))) {
+            return;
+        }
+        // outBizNo 当天固定：中断重跑时服务端按幂等号去重，不会重复发奖
+        // （前缀刻意短，避免 taskId+appId 较长时超过 outBizNo 长度上限）
+        String outBizNo = "home_" + task.taskId + "_" + task.appId + "_" + homeGameDayKey();
+        if (!Status.hasFlagToday(homeGameFlag(task.key, "notice"))) {
+            Log.record("农场首页浮球🎮开始任务[" + task.title + "]#需游玩" + task.duration + "s");
+        }
+
+        // 1) 通知农场侧准备进入该游戏（浮球任务的业务前置，少了它后续事件不计数）
+        if (!runHomeGameStep(task, "notice", () -> AntOrchardRpcCall.noticeGame(task.appId))) {
+            return;
+        }
+        // 2) 进入游戏
+        if (!runHomeGameStep(task, "enter", () -> AntOrchardRpcCall.enterHomeGame(task.appId))) {
+            return;
+        }
+        // 3) 首帧、4) 加载完成：游戏侧用这两个事件作为"确实打开过游戏"的证据
+        if (!runHomeGameStep(task, "frame", () -> AntOrchardRpcCall.reportHomeGameEvent(
+                task.appId, "GAME_FIRST_FRAME", outBizNo + "_frame"))) {
+            return;
+        }
+        if (!runHomeGameStep(task, "loaded", () -> AntOrchardRpcCall.reportHomeGameEvent(
+                task.appId, "loading_completed", outBizNo + "_loaded"))) {
+            return;
+        }
+        // 5) 按服务端要求的时长真实等待后分段上报（首段 31s，其后每段 30s）
+        if (!Status.hasFlagToday(homeGameFlag(task.key, "duration"))) {
+            try {
+                if (!GameCenterPlayRpcCall.reportPlayDurationInChunks(
+                        task.appId, task.duration, HOME_GAME_PLAY_SOURCE)) {
+                    Log.error("农场首页浮球🎮[" + task.title + "]游玩时长上报失败，留待下一轮");
+                    return;
+                }
+                Status.flagToday(homeGameFlag(task.key, "duration"), userId);
+            } catch (Throwable t) {
+                Log.error("农场首页浮球🎮[" + task.title + "]游玩时长上报异常，留待下一轮");
+                Log.printStackTrace(TAG, t);
+                return;
+            }
+        }
+        // 6) 游玩事件（带毫秒时长），服务端据此判定任务达成，之后才有资格 finishTask
+        if (!runHomeGameStep(task, "play", () -> AntOrchardRpcCall.reportHomeGameEvent(
+                task.appId, "game_play", outBizNo + "_played", task.duration * 1000L))) {
+            return;
+        }
+        // 7) 完成任务并确认发奖
+        finishHomeGameTask(task, outBizNo);
+    }
+
+    /**
+     * 执行浮球任务的一步请求，成功后写入当日标记（失败不写，下一轮从该步重试）。
+     */
+    private boolean runHomeGameStep(HomeGameTask task, String step, HomeGameRequest request) {
+        String flag = homeGameFlag(task.key, step);
+        if (Status.hasFlagToday(flag)) {
+            return true;
+        }
+        String raw;
+        try {
+            raw = request.request();
+        } catch (Throwable t) {
+            Log.error("农场首页浮球🎮[" + task.title + "]步骤[" + step + "]请求异常");
+            Log.printStackTrace(TAG, t);
+            return false;
+        }
+        JSONObject jo;
+        try {
+            jo = raw == null ? null : new JSONObject(raw);
+        } catch (Throwable t) {
+            Log.error("农场首页浮球🎮[" + task.title + "]步骤[" + step + "]响应解析失败#" + brief(raw));
+            return false;
+        }
+        if (!isOrchardRpcSuccessResponse(jo)) {
+            Log.error("农场首页浮球🎮[" + task.title + "]步骤[" + step + "]失败#" + brief(raw));
+            return false;
+        }
+        Status.flagToday(flag, userId);
+        return true;
+    }
+
+    /**
+     * 提交浮球任务完成并核对发奖。
+     *
+     * <p>与 AG 一致：请求前先写「已提交」当日标记，进程被杀也不会把未知发奖结果当成"还能再领一次"；
+     * 只有拿到明确的 {@code finishAwardResultVO.deltaAwardCount > 0} 才记「已完成」。
+     * 明确失败（服务端返回业务错误）会撤回「已提交」标记，下一轮可重试（outBizNo 不变，仍受幂等保护）。
+     */
+    private void finishHomeGameTask(HomeGameTask task, String outBizNo) {
+        String submittedFlag = homeGameFlag(task.key, "submitted");
+        String doneFlag = homeGameFlag(task.key, "done");
+        if (Status.hasFlagToday(submittedFlag) && !Status.hasFlagToday(doneFlag)) {
+            // 上次已提交但没拿到明确发奖：当天不再重复提交，避免把未知结果当成可重领
+            Log.record("农场首页浮球🎮[" + task.title + "]完成请求已提交但发奖未确认，今日不再重复提交");
+            return;
+        }
+        // 先记账再请求
+        Status.flagToday(submittedFlag, userId);
+        String raw;
+        try {
+            raw = AntOrchardRpcCall.finishTask(task.sceneCode, task.taskId, outBizNo, HOME_GAME_ENTRY_SOURCE);
+        } catch (Throwable t) {
+            Log.error("农场首页浮球🎮[" + task.title + "]完成请求异常，保留待确认状态");
+            Log.printStackTrace(TAG, t);
+            return;
+        }
+        JSONObject jo;
+        try {
+            jo = raw == null ? null : new JSONObject(raw);
+        } catch (Throwable t) {
+            Log.error("农场首页浮球🎮[" + task.title + "]完成响应解析失败#" + brief(raw));
+            Log.printStackTrace(TAG, t);
+            return;
+        }
+        if (!isOrchardRpcSuccessResponse(jo)) {
+            // 明确失败：撤回待确认标记，下一轮可重试
+            Status.clearFlag(submittedFlag);
+            Log.error("农场首页浮球🎮[" + task.title + "]完成失败#" + brief(raw));
+            return;
+        }
+        JSONObject awardInfo = jo.optJSONObject("finishAwardResultVO");
+        int award = awardInfo == null ? 0 : awardInfo.optInt("deltaAwardCount", 0);
+        if (award <= 0) {
+            // 请求已受理但没有业务发奖：保留待确认标记，避免重复领取
+            Log.record("农场首页浮球🎮[" + task.title + "]完成已受理但未取得发奖确认#" + brief(raw));
+            return;
+        }
+        Status.flagToday(doneFlag, userId);
+        Log.farm("农场首页浮球🎮[" + task.title + "]#获得[" + award + "g肥料]");
+    }
+
+    /** 浮球任务当日步骤标记：Status 跨天自动清空，标记里带 uid，避免多账号互相挡。 */
+    private String homeGameFlag(String key, String step) {
+        return "orchardHomeGame::" + userId + "::" + key + "::" + step;
+    }
+
+    /** 当天日期键（yyyyMMdd），用于构造当天的固定幂等号。 */
+    private static String homeGameDayKey() {
+        return new SimpleDateFormat("yyyyMMdd", Locale.US).format(new Date());
+    }
+
+    /**
+     * 浮球链路各接口的成功判定。
+     *
+     * <p>这几个接口的成功标识不统一：可能给 {@code success/isSuccess}，也可能只给
+     * {@code resultCode=100/200/SUCCESS}（甚至 {@code memo=SUCCESS}），故按并集判。
+     * 这里不复用 {@code MessageUtil.checkResultCode}：它要求 success 时 desc 必须为"处理成功"，
+     * 对这些接口会误判失败。
+     */
+    private static boolean isOrchardRpcSuccessResponse(JSONObject jo) {
+        if (jo == null) {
+            return false;
+        }
+        if (jo.optBoolean("success") || jo.optBoolean("isSuccess")) {
+            return true;
+        }
+        Object resultCode = jo.opt("resultCode");
+        if (resultCode instanceof Number) {
+            int code = ((Number) resultCode).intValue();
+            if (code == 100 || code == 200) {
+                return true;
+            }
+        } else if (resultCode instanceof String) {
+            String code = (String) resultCode;
+            if ("SUCCESS".equalsIgnoreCase(code) || "100".equals(code) || "200".equals(code)) {
+                return true;
+            }
+        }
+        return "SUCCESS".equalsIgnoreCase(jo.optString("memo"));
     }
 
     /**
