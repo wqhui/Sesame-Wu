@@ -7,6 +7,19 @@ on:
         description: '版本号（默认取当前 tag 去 v 或 1.3.0）'
         required: false
         default: '1.3.0'
+      flavors:
+        description: '要构建的版本（normal=现代模块 / compatible=兼容 / legacy=传统）'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - normal
+          - compatible
+          - legacy
+          - normal,compatible
+          - normal,legacy
+          - compatible,legacy
 
 jobs:
   build:
@@ -28,8 +41,28 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build all flavors (release)
-        run: ./gradlew assembleRelease -P "version=${{ inputs.version }}"
+      # 只构建选中的 flavor：all 走 assembleRelease，其余逐个拼 assemble<Flavor>Release
+      - name: Build selected flavors (release)
+        env:
+          FLAVORS: ${{ inputs.flavors }}
+        run: |
+          set -euo pipefail
+          if [ "$FLAVORS" = "all" ]; then
+            TASKS="assembleRelease"
+          else
+            TASKS=""
+            IFS=',' read -ra LIST <<< "$FLAVORS"
+            for f in "${LIST[@]}"; do
+              case "$f" in
+                normal)     TASKS="$TASKS assembleNormalRelease" ;;
+                compatible) TASKS="$TASKS assembleCompatibleRelease" ;;
+                legacy)     TASKS="$TASKS assembleLegacyRelease" ;;
+                *) echo "::error::未知的 flavor: $f"; exit 1 ;;
+              esac
+            done
+          fi
+          echo "构建任务：$TASKS"
+          ./gradlew $TASKS -P "version=${{ inputs.version }}"
 
       # 配置了签名 secret 时自动签名；未配置则保留未签名产物（仅供编译验证，无法安装）
       - name: Sign release APKs (if signing secrets configured)
@@ -48,6 +81,7 @@ jobs:
           BT_DIR=$(ls -d "$SDK_ROOT"/build-tools/* | sort -V | tail -n 1)
           echo "Using build-tools: $BT_DIR"
           echo "${ANDROID_SIGNING_KEY}" | base64 -d > "$RUNNER_TEMP/wqhui-sign.jks"
+          # 只签本次实际构建出来的 flavor（目录不存在即跳过）
           for flavor in normal compatible legacy; do
             APK_DIR="app/build/outputs/apk/$flavor/release"
             APK_FILE=$(find "$APK_DIR" -name "*.apk" | head -n 1)
@@ -71,9 +105,6 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: sesame-wu-apks
-          path: |
-            app/build/outputs/apk/normal/release/*.apk
-            app/build/outputs/apk/compatible/release/*.apk
-            app/build/outputs/apk/legacy/release/*.apk
+          name: sesame-wu-apks-${{ inputs.flavors }}
+          path: app/build/outputs/apk/**/release/*.apk
           if-no-files-found: error
