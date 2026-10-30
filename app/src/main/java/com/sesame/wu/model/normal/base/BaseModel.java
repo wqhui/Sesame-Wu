@@ -91,6 +91,7 @@ public class BaseModel extends Model {
     /** 全局请求间隔上限（毫秒）：每次实际间隔在 [最小, 最大] 内随机。 */
     private static final IntegerModelField globalRpcIntervalMax = new IntegerModelField("globalRpcIntervalMax", "全局请求间隔 | 最大(毫秒)", 300, 0, 2000);
 
+    @Getter
     private static final IntegerModelField toastOffsetY = new IntegerModelField("toastOffsetY", "气泡纵向偏移", 0);
     @Getter
     private static final BooleanModelField enableOnGoing = new BooleanModelField("enableOnGoing", "开启状态栏禁删", false);
