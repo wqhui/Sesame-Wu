@@ -7,19 +7,18 @@ on:
         description: '版本号（默认取当前 tag 去 v 或 1.3.0）'
         required: false
         default: '1.3.0'
-      flavors:
-        description: '要构建的版本（normal=现代模块 / compatible=兼容 / legacy=传统）'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - all
-          - normal
-          - compatible
-          - legacy
-          - normal,compatible
-          - normal,legacy
-          - compatible,legacy
+      build_normal:
+        description: '构建 normal（现代模块 / libxposed API 102）'
+        type: boolean
+        default: true
+      build_compatible:
+        description: '构建 compatible（兼容 / libxposed 旧 API）'
+        type: boolean
+        default: true
+      build_legacy:
+        description: '构建 legacy（传统 / Xposed API ≤93）'
+        type: boolean
+        default: true
 
 jobs:
   build:
@@ -44,22 +43,25 @@ jobs:
       # 只构建选中的 flavor：all 走 assembleRelease，其余逐个拼 assemble<Flavor>Release
       - name: Build selected flavors (release)
         env:
-          FLAVORS: ${{ inputs.flavors }}
+          BUILD_NORMAL: ${{ inputs.build_normal }}
+          BUILD_COMPATIBLE: ${{ inputs.build_compatible }}
+          BUILD_LEGACY: ${{ inputs.build_legacy }}
         run: |
           set -euo pipefail
-          if [ "$FLAVORS" = "all" ]; then
-            TASKS="assembleRelease"
-          else
-            TASKS=""
-            IFS=',' read -ra LIST <<< "$FLAVORS"
-            for f in "${LIST[@]}"; do
-              case "$f" in
-                normal)     TASKS="$TASKS assembleNormalRelease" ;;
-                compatible) TASKS="$TASKS assembleCompatibleRelease" ;;
-                legacy)     TASKS="$TASKS assembleLegacyRelease" ;;
-                *) echo "::error::未知的 flavor: $f"; exit 1 ;;
-              esac
-            done
+          TASKS=""
+          # 用 if 而不是 [ ] && ：set -e 下 && 左侧为假会让整个脚本退出
+          if [ "$BUILD_NORMAL" = "true" ]; then
+            TASKS="$TASKS assembleNormalRelease"
+          fi
+          if [ "$BUILD_COMPATIBLE" = "true" ]; then
+            TASKS="$TASKS assembleCompatibleRelease"
+          fi
+          if [ "$BUILD_LEGACY" = "true" ]; then
+            TASKS="$TASKS assembleLegacyRelease"
+          fi
+          if [ -z "$TASKS" ]; then
+            echo "::error::至少要勾选一个 flavor"
+            exit 1
           fi
           echo "构建任务：$TASKS"
           ./gradlew $TASKS -P "version=${{ inputs.version }}"
@@ -105,6 +107,6 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: sesame-wu-apks-${{ inputs.flavors }}
+          name: sesame-wu-apks-${{ github.run_number }}
           path: app/build/outputs/apk/**/release/*.apk
           if-no-files-found: error
