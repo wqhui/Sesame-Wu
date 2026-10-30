@@ -65,6 +65,20 @@ public class BaseModel extends Model {
     private static final BooleanModelField recordLog = new BooleanModelField("recordLog", "记录日志", true);
 
     // getRecordLog() 手写在下方，故本字段不加 @Getter（否则 Lombok 报同名方法已存在）
+    /**
+     * 全局请求间隔下限（毫秒）。配置改了立即生效：限流器每次取值都读这里。
+     */
+    public static Integer getGlobalRpcIntervalMin() {
+        return globalRpcIntervalMin.getValue();
+    }
+
+    /**
+     * 全局请求间隔上限（毫秒）。
+     */
+    public static Integer getGlobalRpcIntervalMax() {
+        return globalRpcIntervalMax.getValue();
+    }
+
     public static BooleanModelField getRecordLog() {
         return recordLog;
     }
@@ -73,6 +87,11 @@ public class BaseModel extends Model {
     private static final BooleanModelField showToast = new BooleanModelField("showToast", "气泡提示", true);
     //public static final BooleanModelField closeCaptchaDialogVPN = new BooleanModelField("closeCaptchaDialogVPN", "关闭请检查是否使用了代理软件或VPN", false);
     @Getter
+    /** 全局请求间隔下限（毫秒）：两个未单独注册限流的 RPC 之间至少隔这么久。 */
+    private static final IntegerModelField globalRpcIntervalMin = new IntegerModelField("globalRpcIntervalMin", "全局请求间隔 | 最小(毫秒)", 100, 0, 2000);
+    /** 全局请求间隔上限（毫秒）：每次实际间隔在 [最小, 最大] 内随机。 */
+    private static final IntegerModelField globalRpcIntervalMax = new IntegerModelField("globalRpcIntervalMax", "全局请求间隔 | 最大(毫秒)", 300, 0, 2000);
+
     private static final IntegerModelField toastOffsetY = new IntegerModelField("toastOffsetY", "气泡纵向偏移", 0);
     @Getter
     private static final BooleanModelField enableOnGoing = new BooleanModelField("enableOnGoing", "开启状态栏禁删", false);
@@ -125,6 +144,8 @@ public class BaseModel extends Model {
         //modelFields.addField(closeCaptchaDialogVPN);
         modelFields.addField(enableOnGoing);
         modelFields.addField(toastOffsetY);
+        modelFields.addField(globalRpcIntervalMin);
+        modelFields.addField(globalRpcIntervalMax);
         return modelFields;
     }
     
