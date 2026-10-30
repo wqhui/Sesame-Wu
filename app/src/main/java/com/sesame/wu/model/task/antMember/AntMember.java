@@ -96,6 +96,8 @@ public class AntMember extends ModelTask {
     private BooleanModelField AntMemberTask;
     private BooleanModelField AutoAntMemberTaskList;
     private SelectModelField AntMemberTaskList;
+    private BooleanModelField enableAdTask;
+    private SelectModelField AntMemberAdTaskList;
     private BooleanModelField memberSign;
     private BooleanModelField memberSignPageTask;              // 会员积分 | 签到页任务
     private BooleanModelField memberPointExchangeBenefit;
@@ -132,6 +134,10 @@ public class AntMember extends ModelTask {
         modelFields.addField(AntMemberTask = new BooleanModelField("AntMemberTask", "会员任务", false));
         modelFields.addField(AutoAntMemberTaskList = new BooleanModelField("AutoAntMemberTaskList", "会员任务 | 自动黑白名单", true));
         modelFields.addField(AntMemberTaskList = new SelectModelField("AntMemberTaskList", "会员任务 | 黑名单列表", new LinkedHashSet<>(), AlipayAntMemberTaskList::getList));
+        // 会员广告任务：独立开关 + 独立黑名单，与会员任务互不干扰（共用取数、各自过滤）。
+        // 广告任务每个至少浏览 15 秒、收益只是积分，M 那边也是默认关闭。
+        modelFields.addField(enableAdTask = new BooleanModelField("AntMemberAdTask", "会员广告任务", false));
+        modelFields.addField(AntMemberAdTaskList = new SelectModelField("AntMemberAdTaskList", "会员广告任务 | 黑名单列表", new LinkedHashSet<>(), AlipayAntMemberTaskList::getList));
         modelFields.addField(memberSign = new BooleanModelField("memberSign", "会员签到", false));
         // 签到页任务：默认开，对齐 Sesame-M 的既有行为（M 一直是启用状态）；
         // 独立成开关是为了万一它触发风控时能单独关掉，不影响「会员任务」的其它分支
@@ -970,6 +976,15 @@ public class AntMember extends ModelTask {
             if (targetBusinessArr == null || targetBusinessArr.length() == 0) {
                 // 广告任务(adTask=true)没有 targetBusiness，走广告任务申请->等待->完成流程
                 if (task.optBoolean("adTask")) {
+                    // 独立开关：默认关闭（每个广告至少 15 秒，收益只有积分）
+                    if (!enableAdTask.getValue()) {
+                        return false;
+                    }
+                    // 独立黑名单：做不了的广告任务可以在这里排除
+                    if (AntMemberAdTaskList.getValue().contains(name)) {
+                        Log.member("会员广告任务⏭️跳过[" + name + "]#在黑名单中");
+                        return false;
+                    }
                     return doAdTask(task, config, name, awardParamPoint);
                 }
                 Log.record("会员浏览任务[" + name + "]无 targetBusiness 配置，跳过");
