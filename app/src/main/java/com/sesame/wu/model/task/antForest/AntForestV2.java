@@ -2035,12 +2035,20 @@ public class AntForestV2 extends ModelTask {
 
     private static void sendEnergyByAction(String sourceType) {
         try {
+            // 线上逛街每天只能完成一次：当天已发出（或额度已用尽）后不再问询，
+            // 否则每轮 run 都会白打一次 consult + 最多 MAX_MARKET_ENERGY_ROUNDS 次 send。
+            String doneFlag = "forest::greenLifeSendEnergy::" + sourceType;
+            if (Status.hasFlagToday(doneFlag)) {
+                return;
+            }
             JSONObject jo = new JSONObject(GreenLifeRpcCall.consultForSendEnergyByAction(sourceType));
             if (!MessageUtil.checkSuccess(TAG, jo)) {
                 return;
             }
             JSONObject data = jo.getJSONObject("data");
             if (!data.optBoolean("canSendEnergy", false)) {
+                // 服务端说今天不能再发了（额度用尽）：打标记，当天不再问询
+                Status.flagToday(doneFlag);
                 return;
             }
             // 集市逛街能量：服务端一轮只发一份，需循环问到「拿到能量」或「额度已达上限」为止。
@@ -2059,6 +2067,7 @@ public class AntForestV2 extends ModelTask {
                     Toast.show("森林集市🛍️完成[线上逛街]#产生[" + receivedEnergyAmount + "g能量]");
                     totalCollected += receivedEnergyAmount;
                     Statistics.addData(Statistics.DataType.COLLECTED, receivedEnergyAmount);
+                    Status.flagToday(doneFlag);
                     return;
                 }
                 TimeUtil.sleep(1000);
