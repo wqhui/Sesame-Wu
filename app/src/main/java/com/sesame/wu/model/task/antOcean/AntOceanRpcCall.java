@@ -273,4 +273,34 @@ public class AntOceanRpcCall {
         return ApplicationHook.requestString("alipay.antaifish.h5.touchfish", 
             "[{\"source\":\"ANT_OCEAN\",\"uniqueId\":\"" + getAntfishUniqueId() + "\"}]");
     }
+
+    // ========== AI 翻牌（点赞）==========
+
+    /**
+     * AI翻牌 · 列表查询：取当前可翻（点赞）的鱼牌。
+     *
+     * <p>响应关键字段：{@code fishList[].appraiseVO.canAppraise}（为 true 才能翻）、
+     * {@code appraiseRewardRemainNum}（今日剩余翻牌奖励次数，≤0 表示奖励次数已用完）。
+     */
+    public static String queryNeedAppraiseFishList() {
+        return ApplicationHook.requestString("alipay.antaifish.h5.queryNeedAppraiseFishList",
+            "[{\"source\":\"ANT_OCEAN\",\"uniqueId\":\"" + getAntfishUniqueId() + "\"}]");
+    }
+
+    /**
+     * AI翻牌 · 翻牌（点赞）：对列表里的一张鱼牌提交 LIKE。
+     *
+     * <p>翻牌成功后响应里的 {@code appraiseRewardList[]} 中，
+     * {@code extInfo.rewardType == "energy"} 的 {@code popup.rightsNums} 就是本次获得的绿色能量克数。
+     *
+     * @param seasonId     赛季 ID（取列表项的 seasonId）
+     * @param imageId      鱼牌图片 ID（取列表项的 imageId）
+     * @param targetUserId 鱼牌所属用户 ID（取列表项的 userId）
+     */
+    public static String fishAppraise(String seasonId, String imageId, String targetUserId) {
+        return ApplicationHook.requestString("alipay.antaifish.h5.fishAppraise",
+            "[{\"appraiseType\":\"LIKE\",\"imageId\":\"" + imageId + "\",\"seasonId\":\"" + seasonId
+                + "\",\"targetUserId\":\"" + targetUserId + "\",\"source\":\"ANT_OCEAN\",\"uniqueId\":\""
+                + getAntfishUniqueId() + "\"}]");
+    }
 }

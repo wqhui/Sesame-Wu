@@ -1321,6 +1321,8 @@ public class AntOcean extends ModelTask {
             // 4. 执行摸鱼
             touchfish();
 
+            // 5. AI翻牌（点赞）领绿色能量：不消耗摸鱼次数，摸鱼跑完后单独跑一遍，直接产绿色能量
+            appraiseFish();
 
         } catch (Throwable t) {
             Log.i(TAG, "antfishRun err:");
@@ -1769,6 +1771,119 @@ public class AntOcean extends ModelTask {
             Log.i(TAG, "antfishDrawFish err:");
             Log.printStackTrace(TAG, t);
         }
+    }
+
+    /**
+     * 海洋摸鱼 · AI 翻牌（点赞）领绿色能量。
+     *
+     * <p><b>这个功能是干嘛的</b>：先「AI翻牌列表查询」拿到当前可翻的鱼牌，
+     * 再对每张 {@code appraiseVO.canAppraise == true} 的牌调一次「AI翻牌」（点赞）；
+     * 同一张牌按 赛季 + 图片 + 用户 去重，保证同一轮不会反复翻同一张牌。
+     *
+     * <p><b>产什么收益</b>：翻牌成功后服务端直接发放<b>绿色能量</b>
+     * （奖励列表里 {@code extInfo.rewardType == "energy"} 的 {@code popup.rightsNums} 之和）。
+     * 这份能量不落成能量球，因此不需要再回主页收球；这里累计后计入统计并按「收能量」记账。
+     *
+     * <p><b>循环出口</b>：剩余翻牌奖励次数 {@code appraiseRewardRemainNum} 用尽、
+     * 这次翻牌没拿到能量、列表里已经没有可翻的牌，或者离线 / 线程被中断。
+     */
+    private void appraiseFish() {
+        int earned = 0;
+        // 去重键：seasonId:imageId:userId —— 同一张牌本轮只翻一次
+        Set<String> attempted = new HashSet<>();
+        try {
+            while (!ApplicationHook.isOffline() && !Thread.currentThread().isInterrupted()) {
+                JSONObject jo = new JSONObject(AntOceanRpcCall.queryNeedAppraiseFishList());
+                if (!MessageUtil.checkResultCode(TAG, jo)) {
+                    Log.error("AI翻牌列表查询失败");
+                    return;
+                }
+                // 剩余翻牌奖励次数已用尽（字段缺失时按未知处理，不提前退出）
+                if (jo.has("appraiseRewardRemainNum") && jo.optInt("appraiseRewardRemainNum", 0) <= 0) {
+                    break;
+                }
+                JSONArray fishList = jo.optJSONArray("fishList");
+                if (fishList == null || fishList.length() == 0) {
+                    break;
+                }
+                boolean acted = false;
+                for (int i = 0; i < fishList.length(); i++) {
+                    JSONObject fish = fishList.optJSONObject(i);
+                    if (fish == null) {
+                        continue;
+                    }
+                    JSONObject appraiseVO = fish.optJSONObject("appraiseVO");
+                    if (appraiseVO == null || !appraiseVO.optBoolean("canAppraise", false)) {
+                        continue; // 这张牌不可翻
+                    }
+                    String seasonId = fish.optString("seasonId", "");
+                    String imageId = fish.optString("imageId", "");
+                    String targetUserId = fish.optString("userId", "");
+                    if (seasonId.isEmpty() || imageId.isEmpty() || targetUserId.isEmpty()) {
+                        continue; // 牌面缺少赛季 / 图片 / 用户标识，翻不了，跳过（避免发无效请求）
+                    }
+                    if (!attempted.add(seasonId + ":" + imageId + ":" + targetUserId)) {
+                        continue; // 本轮已经翻过这张牌
+                    }
+                    JSONObject result = new JSONObject(AntOceanRpcCall.fishAppraise(seasonId, imageId, targetUserId));
+                    if (!MessageUtil.checkResultCode(TAG, result)) {
+                        Log.error("AI翻牌失败");
+                        return;
+                    }
+                    int amount = sumAppraiseEnergy(result.optJSONArray("appraiseRewardList"));
+                    earned += amount;
+                    acted = true;
+                    // 翻牌没拿到能量（例如今天奖励已领完）或剩余奖励次数归零 → 本轮到此为止
+                    if (amount <= 0 || (result.has("appraiseRewardRemainNum")
+                            && result.optInt("appraiseRewardRemainNum", 0) <= 0)) {
+                        return;
+                    }
+                }
+                // 列表里一张可翻的牌都没有 → 退出，避免空转轮询
+                if (!acted) {
+                    break;
+                }
+            }
+        } catch (Throwable t) {
+            Log.error("appraiseFish err:");
+            Log.printStackTrace(TAG, t);
+        } finally {
+            // finally 保证中途 return 时也能把已获得的能量写日志、记账
+            if (earned > 0) {
+                Log.forest("海洋摸鱼🐟AI翻牌获得绿色能量" + earned + "g");
+                Statistics.addData(Statistics.DataType.COLLECTED, earned);
+                Statistics.save();
+            }
+        }
+    }
+
+    /**
+     * 汇总一次翻牌的绿色能量收益：只认 {@code extInfo.rewardType == "energy"} 的奖励，
+     * 取 {@code popup.rightsNums}（克数）累加；拼图 / 道具等其它奖励不计入能量。
+     *
+     * @param rewardList 翻牌响应里的 appraiseRewardList，可能为 null
+     * @return 本次翻牌获得的绿色能量克数，没有能量奖励时返回 0
+     */
+    private static int sumAppraiseEnergy(JSONArray rewardList) {
+        int amount = 0;
+        if (rewardList == null) {
+            return amount;
+        }
+        for (int i = 0; i < rewardList.length(); i++) {
+            JSONObject reward = rewardList.optJSONObject(i);
+            if (reward == null) {
+                continue;
+            }
+            JSONObject extInfo = reward.optJSONObject("extInfo");
+            if (extInfo == null || !"energy".equals(extInfo.optString("rewardType", ""))) {
+                continue;
+            }
+            JSONObject popup = extInfo.optJSONObject("popup");
+            if (popup != null) {
+                amount += popup.optInt("rightsNums", 0);
+            }
+        }
+        return amount;
     }
 
 }
