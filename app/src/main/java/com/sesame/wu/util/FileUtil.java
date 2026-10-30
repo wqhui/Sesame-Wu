@@ -930,6 +930,15 @@ public class FileUtil {
         return result.toString();
     }
     
+    /**
+     * 原子写文件：先写 {@code <目标>.tmp}，写成功后再 rename 到目标。
+     *
+     * <p>为什么需要：直接覆盖写入时，如果进程在写到一半被系统杀掉（切号重启、崩溃），
+     * 目标文件会留下半截 JSON，status.json / config_v2.json 这类数据下次直接解析失败。
+     * rename 在同一个文件系统内是原子操作，读者要么看到旧文件、要么看到完整的新文件。
+     *
+     * <p>失败路径会把临时文件删掉，避免残留。
+     */
     public static boolean write2File(String s, File f) {
         if (f.exists()) {
             if (!f.canWrite()) {
@@ -944,8 +953,46 @@ public class FileUtil {
         else {
             f.getParentFile().mkdirs();
         }
+        // 临时文件必须和目标文件同目录，rename 才不会跨分区
+        File tmp = new File(f.getAbsolutePath() + ".tmp");
+        try {
+            if (tmp.exists() && !tmp.delete()) {
+                Log.debug("write2File 清理残留临时文件失败: " + tmp.getAbsolutePath());
+            }
+            // 显式 UTF-8：FileWriter 用平台默认编码，与读取侧不一致时中文键会解析失败
+            OutputStreamWriter fw = new OutputStreamWriter(new FileOutputStream(tmp), StandardCharsets.UTF_8);
+            try {
+                fw.write(s);
+                fw.flush();
+            }
+            finally {
+                fw.close();
+            }
+            if (tmp.renameTo(f)) {
+                return true;
+            }
+            // rename 失败（目标被占用、跨分区等）：退回直接写目标，
+            // 保证原子化改造不会让原本能写成功的场景反而失败
+            Log.debug("write2File rename failed, fallback direct write: " + f.getAbsolutePath());
+            tmp.delete();
+            return write2FileDirect(s, f);
+        }
+        catch (Throwable t) {
+            Log.printStackTrace(TAG, t);
+            // 失败路径必须删掉临时文件，否则会在配置目录里堆垃圾文件
+            tmp.delete();
+            return false;
+        }
+    }
+
+    /**
+     * 直接写目标文件（{@link #write2File(String, File)} 在 rename 失败时的兜底实现）。
+     *
+     * <p>保留历史上的「close 失败后重建文件再写一次」逻辑：部分机型上
+     * 关闭文件句柄时会偶发失败，重建一次即可恢复，不重建的话调用方会误以为保存失败。
+     */
+    private static boolean write2FileDirect(String s, File f) {
         boolean success = false;
-        // 显式 UTF-8：FileWriter 用平台默认编码，与读取侧不一致时中文键会解析失败
         OutputStreamWriter fw = null;
         try {
             fw = new OutputStreamWriter(new FileOutputStream(f), StandardCharsets.UTF_8);

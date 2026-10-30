@@ -81,6 +81,11 @@ public class OldRpcBridge implements RpcBridge {
         if (ApplicationHook.isOffline()) {
             return null;
         }
+        // 账号会话已切换：拦截在途任务的请求，避免打到新账号
+        if (!AccountSession.isCurrentThreadAllowed()) {
+            Log.i(TAG, "账号会话已切换，拦截在途任务的请求");
+            return null;
+        }
         int id = rpcEntity.hashCode();
         String method = rpcEntity.getRequestMethod();
         String args = rpcEntity.getRequestData();

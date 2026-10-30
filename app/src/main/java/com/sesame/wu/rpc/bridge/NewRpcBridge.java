@@ -2,6 +2,7 @@ package com.sesame.wu.rpc.bridge;
 
 import org.json.JSONObject;
 
+import com.sesame.wu.util.AccountSession;
 import com.sesame.wu.util.XHelpers;
 import com.sesame.wu.entity.RpcEntity;
 import com.sesame.wu.hook.ApplicationHook;
@@ -120,6 +121,11 @@ public class NewRpcBridge implements RpcBridge {
         if (ApplicationHook.isOffline()) {
             return null;
         }
+        // 账号会话已切换：拦截在途任务的请求，避免打到新账号
+        if (!AccountSession.isCurrentThreadAllowed()) {
+            Log.i(TAG, "账号会话已切换，拦截在途任务的请求");
+            return null;
+        }
         int id = rpcEntity.hashCode();
         String method = rpcEntity.getRequestMethod();
         String data = rpcEntity.getRequestData();
@@ -227,6 +233,11 @@ public class NewRpcBridge implements RpcBridge {
 
     public RpcEntity newAsyncRequest(RpcEntity rpcEntity, int tryCount, int retryInterval) {
         if (ApplicationHook.isOffline()) {
+            return null;
+        }
+        // 账号会话已切换：拦截在途任务的请求，避免打到新账号
+        if (!AccountSession.isCurrentThreadAllowed()) {
+            Log.i(TAG, "账号会话已切换，拦截在途任务的请求");
             return null;
         }
         int id = rpcEntity.hashCode();

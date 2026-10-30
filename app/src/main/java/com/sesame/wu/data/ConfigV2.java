@@ -134,6 +134,12 @@ public class ConfigV2 {
     }
 
     public static Boolean save(String userId, Boolean force) {
+        // 账号已切换：这次写入属于旧账号的任务，丢弃，避免串号。
+        // userId 为 null（默认配置）时 isUidCurrent 放行，不受账号切换影响。
+        if (!AccountSession.isUidCurrent(userId)) {
+            Log.i(TAG, "账号已切换，放弃写入");
+            return false;
+        }
         if (!force) {
             if (!isModify(userId)) {
                 return true;

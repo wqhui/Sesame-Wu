@@ -6,6 +6,7 @@ import lombok.Getter;
 
 import com.sesame.wu.entity.UserEntity;
 import com.sesame.wu.hook.ApplicationHook;
+import com.sesame.wu.util.AccountSession;
 import com.sesame.wu.util.FileUtil;
 import com.sesame.wu.util.JsonUtil;
 import com.sesame.wu.util.Log;
@@ -89,12 +90,33 @@ public class UserIdMap {
         });
     }
     
+    /**
+     * 设置当前账号，并同步推进账号会话（sessionEpoch）。
+     *
+     * <p>这是整个「账号会话隔离」的唯一入口：切号时先 {@link AccountSession#beginSwitch()}
+     * 让在途任务手里的快照全部失效，再更新 uid，最后 {@link AccountSession#apply} 应用新会话。
+     * 顺序不能反——先改 uid 的话，中间会有一小段「旧任务仍被判为有效但 uid 已变」的窗口。
+     *
+     * <p>本方法由 UI 线程 / 初始化流程调用，所以这里只做内存操作，
+     * 绝不 sleep、不等待、不 interrupt 任务线程（会 ANR）。
+     */
     public synchronized static void setCurrentUserId(String userId) {
         if (userId == null || userId.isEmpty()) {
+            // 登出：会话直接作废。activeUid 置 null 后，所有旧任务的写入和请求都会被拦下，
+            // 避免它们落到「下一个登录的账号」上。
+            long e = AccountSession.beginSwitch();
             currentUid = null;
+            AccountSession.apply(null, e);
             return;
         }
-        currentUid = userId;
+        if (userId.equals(currentUid) && !AccountSession.isSwitching()) {
+            // 同账号且不在切换中：不做无谓的 epoch 递增。
+            // 否则每次 Activity onResume 都会把在途任务的快照打废，任务被大面积跳过。
+            return;
+        }
+        long epoch = AccountSession.beginSwitch();   // ① 在途任务快照立刻失效
+        currentUid = userId;                          // ② 立即切换（不阻塞！）
+        AccountSession.apply(userId, epoch);          // ③ 应用新会话
     }
     
     public static String getCurrentMaskName() {

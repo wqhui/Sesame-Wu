@@ -4,6 +4,7 @@ import static com.sesame.wu.model.normal.base.BaseModel.taskRpcRequest;
 
 import android.os.Build;
 
+import com.sesame.wu.util.AccountSession;
 import com.sesame.wu.util.FileUtil;
 import com.sesame.wu.util.Status;
 import com.sesame.wu.util.idMap.UserIdMap;
@@ -29,6 +30,8 @@ import java.util.concurrent.TimeUnit;
 
 public abstract class ModelTask extends Model {
 
+    private static final String TAG = ModelTask.class.getSimpleName();
+
     private static final Map<ModelTask, Thread> MAIN_TASK_MAP = new ConcurrentHashMap<>();
 
     private static final Object TASK_PAUSE_LOCK = new Object();
@@ -53,13 +56,25 @@ public abstract class ModelTask extends Model {
                 return;
             }
             MAIN_TASK_MAP.put(task, Thread.currentThread());
+            // 执行前拍下会话快照并绑定到本线程：
+            // 之后本线程内的每一次 RPC 都会校验它，一旦账号切换就拦下请求
+            AccountSession.Snapshot snapshot = AccountSession.snapshot();
+            AccountSession.bindCurrentThread(snapshot);
             try {
+                // 排队期间账号可能已经切走，此时这轮任务属于旧账号，必须整轮跳过，
+                // 否则结果会写到新账号上
+                if (!AccountSession.isValid(snapshot)) {
+                    Log.i(TAG, "账号会话已切换，跳过本次执行");
+                    return;
+                }
                 task.run();
                 consecutiveFailures = 0;
             } catch (Exception e) {
                 Log.printStackTrace(e);
                 onTaskRunFailure();
             } finally {
+                // 线程池会复用线程，不清理会让下一个复用该线程的逻辑被误判为旧任务
+                AccountSession.unbindCurrentThread();
                 MAIN_TASK_MAP.remove(task);
             }
         }
@@ -356,6 +371,9 @@ public abstract class ModelTask extends Model {
         @Getter
         private Boolean isCancel = false;
 
+        /** 父任务执行时绑定的会话快照；子任务执行时用它判断账号是否已经切走。 */
+        private final AccountSession.Snapshot ownerSnapshot = AccountSession.currentBoundSnapshot();
+
         public ChildModelTask() {
             this(null, null, () -> {
             }, 0L);
@@ -408,7 +426,19 @@ public abstract class ModelTask extends Model {
         }
 
         public final void run() {
-            runnable.run();
+            // 子任务跑在 executor 的线程池里，不是父任务线程，所以要把父任务的会话快照带过来，
+            // 否则子任务发起的 RPC 不会被切号拦截（父任务线程的 ThreadLocal 已经失效了）。
+            AccountSession.Snapshot snap = ownerSnapshot;
+            AccountSession.bindCurrentThread(snap);
+            try {
+                if (snap != null && !AccountSession.isValid(snap)) {
+                    Log.i("ChildModelTask", "账号会话已切换，跳过子任务[" + id + "]");
+                    return;
+                }
+                runnable.run();
+            } finally {
+                AccountSession.unbindCurrentThread();
+            }
         }
 
         protected void setCancelTask(CancelTask cancelTask) {

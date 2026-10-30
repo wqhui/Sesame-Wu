@@ -726,6 +726,12 @@ public class Status {
             Log.record("用户为空，状态保存失败");
             throw new RuntimeException("用户为空，状态保存失败");
         }
+        // 账号已切换：这次写入属于旧账号的任务，丢弃，避免串号。
+        // 注意要放在 updateDay 之前——被丢弃的写入不应该顺带重置内存里的当日状态。
+        if (!AccountSession.isUidCurrent(currentUid) || !AccountSession.isCurrentThreadAllowed()) {
+            Log.i(TAG, "账号已切换，放弃写入");
+            return;
+        }
         if (updateDay(nowCalendar)) {
             Log.system(TAG, "重置 status.json");
         }
