@@ -24,7 +24,24 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.math.BigDecimal;
+import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.NetworkCapabilities;
+import android.os.Build;
+import android.telephony.TelephonyManager;
+import android.util.DisplayMetrics;
+
+import com.sesame.wu.hook.AuthCodeHelper;
 import com.sesame.wu.util.XHelpers;
 import com.sesame.wu.data.ConfigV2;
 import com.sesame.wu.data.ModelFields;
@@ -248,6 +265,11 @@ public class AntForestV2 extends ModelTask {
     private BooleanModelField dress;
     private TextModelField dressDetailList;
 
+    /** 无纸阅读：读免费电子书攒阅读时长换森林绿色能量（绿色行为，产出能量球） */
+    private BooleanModelField forestRead;
+    /** 每日换装：每天随机换一套已拥有的森林装扮（只影响外观，不产能量） */
+    private BooleanModelField forestDailyDress;
+
     private static int totalCollected = 0;
     private static int totalHelpCollected = 0;
     private static boolean hasErrorWait = false;
@@ -343,6 +365,8 @@ public class AntForestV2 extends ModelTask {
         modelFields.addField(medicalHealth = new BooleanModelField("medicalHealth", "医疗健康", false));
         modelFields.addField(greenLife = new BooleanModelField("greenLife", "森林集市", false));
         modelFields.addField(marketBrowseTask = new BooleanModelField("marketBrowseTask", "绿植浏览", false));
+        // 无纸阅读：在小程序里读免费电子书，按上报的阅读时长换取森林绿色能量（默认关闭，与 AG 一致）
+        modelFields.addField(forestRead = new BooleanModelField("forestRead", "无纸阅读", false));
         modelFields.addField(greenRent = new BooleanModelField("greenRent", "绿色租赁", false));
         modelFields.addField(youthPrivilege = new BooleanModelField("youthPrivilege", "青春特权 | 森林道具", false));
         modelFields.addField(ecoLife = new BooleanModelField("ecoLife", "绿色行动 | 开启", false));
@@ -362,6 +386,8 @@ public class AntForestV2 extends ModelTask {
         modelFields.addField(dress = new BooleanModelField("dress", "装扮保护 | 开启", false));
         modelFields.addField(dressDetailList = new TextModelField("dressDetailList", "装扮保护 | " + "装扮信息", ""));
         modelFields.addField(new EmptyModelField("dressDetailListClear", "装扮保护 | 装扮信息清除", () -> dressDetailList.reset()));
+        // 每日换装：每天从背包里随机换一套已拥有的装扮，只影响外观、不产能量，默认关闭（与 AG 一致）
+        modelFields.addField(forestDailyDress = new BooleanModelField("forestDailyDress", "每日随机更换森林装扮", false));
         return modelFields;
     }
 
@@ -658,8 +684,19 @@ public class AntForestV2 extends ModelTask {
                     // 医疗健康 电子小票 4g*10能量
                     queryForestEnergy("BILL");
                 }
+
+                // 无纸阅读：绿色行为，读免费电子书攒阅读时长换森林能量
+                if (forestRead.getValue()) {
+                    runForestRead();
+                }
+
                 if (dress.getValue()) {
                     dress();
+                }
+
+                // 每日换装：每天随机换一套已拥有的装扮（与装扮保护互斥）
+                if (forestDailyDress.getValue()) {
+                    runForestDailyDress();
                 }
 
                 checkAndHandleWhackMole();
@@ -4801,6 +4838,781 @@ public class AntForestV2 extends ModelTask {
             Log.printStackTrace(TAG, th);
         }
         return false;
+    }
+
+    /* ========================= 无纸阅读 ========================= */
+
+    /**
+     * 无纸阅读每日完成标记（Status 里的当日标记，跨天自动清空）。
+     */
+    private static final String FLAG_FOREST_READ_DONE = "Forest::readForest";
+
+    /**
+     * 每日换装完成标记（Status 里的当日标记，跨天自动清空）。
+     */
+    private static final String FLAG_FOREST_DAILY_DRESS = "Forest::dailyDress";
+
+    /** 无纸阅读小程序 appId：授权登录、Referer、x-mass-tappid 都绑定它 */
+    private static final String FOREST_READ_APP_ID = "2021003114652763";
+
+    /** 无纸阅读小程序前端版本号：参与拼 Referer 页面地址 */
+    private static final String FOREST_READ_VERSION = "0.2.2410251510.53";
+
+    /** 无纸阅读是小程序自有网关，不走支付宝 RPC，只能直连该域名 */
+    private static final String FOREST_READ_HOST = "https://m.zhangwenwh.com/api";
+
+    /** 单轮最多连读章节数：只防服务端一直不回满额时把森林线程拖住 */
+    private static final int FOREST_READ_MAX_CHAPTERS = 60;
+
+    /** 单轮最多尝试书籍数：一本书读不出能量时换下一本，避免无限换书 */
+    private static final int FOREST_READ_MAX_BOOKS = 3;
+
+    /** 每章上报的阅读秒数区间（秒）：服务端按上报秒数折算绿色能量 */
+    private static final int FOREST_READ_REPORT_MIN_SECONDS = 333;
+
+    private static final int FOREST_READ_REPORT_MAX_SECONDS = 1000;
+
+    /** 阅读能量进度查询失败时的兜底总量：仅用于判定"是否已满"，真实值以服务端为准 */
+    private static final int FOREST_READ_TOTAL_FALLBACK = 150;
+
+    /** 无纸阅读状态按账号隔离：token 复用，避免每次进入都重新授权 */
+    private static final Map<String, ForestReadState> forestReadStateMap = new ConcurrentHashMap<>();
+
+    /**
+     * 无纸阅读的进程内状态。token 当日复用；已读书目用于自动换书时跳过。
+     */
+    private static final class ForestReadState {
+
+        /** 授权登录拿到的 Bearer token */
+        private String token = "";
+
+        /** 本次执行累计获得的能量（结束时向森林日志汇总一条） */
+        private int totalEnergy = 0;
+
+        /** 单轮已读章节数（用于封顶，防长时间占用线程） */
+        private int chapterRounds = 0;
+
+        /** 本轮已尝试过的书：读不出能量时换下一本 */
+        private final Set<String> triedBooks = new HashSet<>();
+
+        /** 历史上已读完的书：换书时跳过，避免重复从头读 */
+        private final Set<String> finishedBooks = new HashSet<>();
+    }
+
+    /**
+     * 无纸阅读：一种绿色行为任务。
+     * <p>在"无纸阅读"小程序里读免费电子书，把阅读时长上报给服务端，按秒折算成
+     * 森林绿色能量球——收益就是森林里的阅读能量（当日有上限，满额即停）。
+     * <p>登录态复用：先用授权码走 /authorization 换 token，token 缓存到进程内，
+     * 下次执行先校验再复用，失效才重新授权，避免反复弹授权/加重风控。
+     * <p>流程与 AG 的 ForestRead / Sesame-M 的 ReadForestTask 一致：书城选免费书 →
+     * 逐章上报阅读时长 + 同步最近阅读 → 回查 /user/forestPro 确认能量是否增加。
+     */
+    private void runForestRead() {
+        ForestReadState state = forestReadState(UserIdMap.getCurrentUid());
+        synchronized (state) {
+            state.totalEnergy = 0;
+            state.chapterRounds = 0;
+            try {
+                if (Status.hasFlagToday(FLAG_FOREST_READ_DONE)) {
+                    Log.i(TAG, "无纸阅读今日已完成，跳过");
+                    return;
+                }
+                Log.record("无纸阅读📖开始执行自动阅读任务");
+                String token = forestReadLogin(state);
+                if (token == null) {
+                    forestReadSummary(state, "登录失败");
+                    return;
+                }
+                for (int i = 0; i < FOREST_READ_MAX_BOOKS; i++) {
+                    JSONObject book = forestReadSelectFreeBook(token, state);
+                    if (book == null) {
+                        forestReadSummary(state, "暂无更多未读免费书籍");
+                        return;
+                    }
+                    String bookId = book.optString("book_id");
+                    if (StringUtil.isEmpty(bookId)) {
+                        forestReadSummary(state, "书目信息异常");
+                        return;
+                    }
+                    String bookName = book.optString("name", bookId);
+                    Boolean energyFull = forestReadBook(token, state, bookId, bookName);
+                    if (Boolean.TRUE.equals(energyFull)) {
+                        // 当日阅读能量已满：落当日标记，今天不再进阅读流程
+                        Status.flagToday(FLAG_FOREST_READ_DONE, UserIdMap.getCurrentUid());
+                        Log.forest("无纸阅读📖今日能量已满，本次共获得" + state.totalEnergy + "g");
+                        return;
+                    }
+                    if (Boolean.FALSE.equals(energyFull)) {
+                        // 区分"真拿不到能量"和"本轮章节封顶"，日志便于排查
+                        if (state.chapterRounds >= FOREST_READ_MAX_CHAPTERS) {
+                            forestReadSummary(state, "本轮已达章节上限，下轮继续");
+                        } else {
+                            forestReadSummary(state, "当前无法继续获得阅读能量");
+                        }
+                        return;
+                    }
+                }
+                forestReadSummary(state, "已达单轮换书上限");
+            } catch (Throwable t) {
+                Log.i(TAG, "runForestRead err:");
+                Log.printStackTrace(TAG, t);
+                // 异常中断也向森林日志输出本轮累计能量，避免异常轮次森林日志没有记录
+                forestReadSummary(state, "异常中断");
+            }
+        }
+    }
+
+    /**
+     * 取当前账号的阅读状态（进程内复用 token 与已读书目）。
+     */
+    private static ForestReadState forestReadState(String userId) {
+        String key = StringUtil.isEmpty(userId) ? "default" : userId;
+        ForestReadState state = forestReadStateMap.get(key);
+        if (state == null) {
+            state = new ForestReadState();
+            ForestReadState old = forestReadStateMap.putIfAbsent(key, state);
+            if (old != null) {
+                state = old;
+            }
+        }
+        return state;
+    }
+
+    /**
+     * 取阅读 token：优先复用缓存（先校验），失效再用授权码重新登录。
+     *
+     * @return 可用 token；失败返回 null
+     */
+    private String forestReadLogin(ForestReadState state) {
+        try {
+            if (!StringUtil.isEmpty(state.token) && forestReadTokenValid(state.token)) {
+                Log.record("无纸阅读📖复用登录凭证");
+                return state.token;
+            }
+            // authCode 由支付宝 Oauth2 授权服务签发，失败通常是没在该小程序里授权过
+            String authCode = AuthCodeHelper.getAuthCode(FOREST_READ_APP_ID);
+            if (StringUtil.isEmpty(authCode)) {
+                Log.error("无纸阅读📖授权码为空，请先在支付宝里手动打开一次无纸阅读小程序");
+                return null;
+            }
+            JSONObject body = new JSONObject();
+            body.put("auth_code", authCode);
+            body.put("app_id", FOREST_READ_APP_ID);
+            body.put("cid", "7001");
+            String raw = forestReadRequest("POST", "/authorization", body, null,
+                    forestReadReferer(null, null));
+            JSONObject jo = StringUtil.isEmpty(raw) ? null : new JSONObject(raw);
+            if (jo == null || jo.optInt("code") != 2000) {
+                Log.error("无纸阅读📖登录失败[" + (jo == null ? "空响应" : jo.optString("msg")) + "]");
+                return null;
+            }
+            JSONObject data = jo.optJSONObject("data");
+            String token = data == null ? "" : data.optString("token");
+            if (StringUtil.isEmpty(token)) {
+                Log.error("无纸阅读📖登录失败，响应缺少 token");
+                return null;
+            }
+            state.token = token;
+            Log.record("无纸阅读📖授权登录成功");
+            return token;
+        } catch (Throwable t) {
+            Log.i(TAG, "forestReadLogin err:");
+            Log.printStackTrace(TAG, t);
+            return null;
+        }
+    }
+
+    /**
+     * 校验缓存的 token 是否仍有效：带 token 请求 /authorization，code==2000 视为有效。
+     */
+    private boolean forestReadTokenValid(String token) {
+        try {
+            String raw = forestReadRequest("POST", "/authorization", new JSONObject(), token,
+                    forestReadReferer(null, null));
+            JSONObject jo = StringUtil.isEmpty(raw) ? null : new JSONObject(raw);
+            return jo != null && jo.optInt("code") == 2000;
+        } catch (Throwable t) {
+            Log.i(TAG, "forestReadTokenValid err:");
+            Log.printStackTrace(TAG, t);
+            return false;
+        }
+    }
+
+    /**
+     * 从书城首页 block_resource 里挑一本免费的、没读过也没在本轮试过的书。
+     *
+     * @return 书对象（含 book_id / name）；没有可读的返回 null
+     */
+    private JSONObject forestReadSelectFreeBook(String token, ForestReadState state) {
+        try {
+            String raw = forestReadRequest("GET", "/index/index?type=1", null, token,
+                    forestReadReferer(null, null));
+            JSONObject jo = StringUtil.isEmpty(raw) ? null : new JSONObject(raw);
+            JSONArray dataList = jo == null ? null : jo.optJSONArray("data");
+            if (dataList == null) {
+                return null;
+            }
+            for (int i = 0; i < dataList.length(); i++) {
+                JSONObject block = dataList.optJSONObject(i);
+                JSONArray books = block == null ? null : block.optJSONArray("block_resource");
+                if (books == null) {
+                    continue;
+                }
+                for (int j = 0; j < books.length(); j++) {
+                    JSONObject book = books.optJSONObject(j);
+                    if (book == null) {
+                        continue;
+                    }
+                    String bookId = book.optString("book_id");
+                    if (StringUtil.isEmpty(bookId) || !forestReadIsFree(book)) {
+                        continue;
+                    }
+                    if (state.triedBooks.contains(bookId) || state.finishedBooks.contains(bookId)) {
+                        continue;
+                    }
+                    return book;
+                }
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "forestReadSelectFreeBook err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return null;
+    }
+
+    /**
+     * 免费书判定：价格解析后为 0（服务端用 "0.00" 表示免费）。
+     */
+    private static boolean forestReadIsFree(JSONObject book) {
+        try {
+            String price = book.optString("price", "");
+            if (StringUtil.isEmpty(price)) {
+                return false;
+            }
+            return new BigDecimal(price.trim()).signum() == 0;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * 逐章阅读一本书。
+     *
+     * @return {@link Boolean#TRUE} 当日能量已满；{@link Boolean#FALSE} 继续读也拿不到能量；
+     *         null 本书正常读完，可以换下一本
+     */
+    private Boolean forestReadBook(String token, ForestReadState state, String bookId, String bookName)
+            throws Exception {
+        JSONObject chapter = forestReadChapterData(token, bookId, "");
+        if (chapter == null) {
+            state.triedBooks.add(bookId);
+            Log.record("无纸阅读📖[" + bookName + "]章节获取失败，换下一本");
+            return Boolean.FALSE;
+        }
+        // 记住上一章的进度值：本章上报后再查一次，差值就是本章产出的能量
+        int lastEnergy = -1;
+        int noGainCount = 0;
+        int noDataCount = 0;
+        while (chapter != null) {
+            if (state.chapterRounds >= FOREST_READ_MAX_CHAPTERS) {
+                Log.record("无纸阅读📖本轮已达章节上限" + FOREST_READ_MAX_CHAPTERS + "，下轮继续");
+                return Boolean.FALSE;
+            }
+            state.chapterRounds++;
+            String chapterId = chapter.optString("id");
+            String chapterName = chapter.optString("name", "未知");
+            String nextId = chapter.optString("next_id");
+            if (StringUtil.isEmpty(chapterId)) {
+                state.triedBooks.add(bookId);
+                return Boolean.FALSE;
+            }
+            if (lastEnergy < 0) {
+                int[] firstProgress = forestReadEnergy(token, bookId, chapterId);
+                if (firstProgress == null) {
+                    // 初始进度都查不到，无法判定增量，跳过此书
+                    state.triedBooks.add(bookId);
+                    Log.record("无纸阅读📖[" + bookName + "]初始进度查询失败，跳过此书");
+                    return Boolean.FALSE;
+                }
+                if (firstProgress[0] >= firstProgress[1]) {
+                    // 当日阅读能量已经满了，直接收工
+                    return Boolean.TRUE;
+                }
+                lastEnergy = firstProgress[0];
+                Log.record("无纸阅读📖[" + bookName + "]当前进度" + firstProgress[0] + "/" + firstProgress[1] + "g");
+            }
+            // 上报本章阅读时长（秒）：服务端按秒折算绿色能量
+            JSONObject reportBody = new JSONObject();
+            reportBody.put("book_id", bookId);
+            forestReadPutChapterId(reportBody, chapterId);
+            reportBody.put("time", RandomUtil.nextInt(FOREST_READ_REPORT_MIN_SECONDS,
+                    FOREST_READ_REPORT_MAX_SECONDS));
+            String reportRaw = forestReadRequest("POST", "/user/updateWel", reportBody, token,
+                    forestReadReferer(bookId, chapterId));
+            JSONObject reportJo = StringUtil.isEmpty(reportRaw) ? null : new JSONObject(reportRaw);
+            if (reportJo == null || reportJo.optInt("code") != 2000) {
+                // 上报被拒时仍继续回查进度：真拿不到能量会由下面的无收益判定收尾
+                Log.record("无纸阅读📖[" + bookName + "]本章时长上报未成功，继续回查进度");
+            }
+            TimeUtil.sleep(500L);
+            // 同步"最近阅读"，与真实小程序行为保持一致
+            JSONObject recentBody = new JSONObject();
+            recentBody.put("book_id", bookId);
+            forestReadPutChapterId(recentBody, chapterId);
+            recentBody.put("chapter_name", chapterName);
+            forestReadRequest("POST", "/book/set_read_recently", recentBody, token,
+                    forestReadReferer(bookId, chapterId));
+            TimeUtil.sleep(800L);
+            int[] chapterProgress = forestReadEnergy(token, bookId, chapterId);
+            if (chapterProgress != null) {
+                noDataCount = 0;
+                int gain = chapterProgress[0] - lastEnergy;
+                if (gain > 0) {
+                    state.totalEnergy += gain;
+                    noGainCount = 0;
+                    Log.record("无纸阅读📖[" + bookName + "]" + chapterName + "获得" + gain
+                            + "g，进度" + chapterProgress[0] + "/" + chapterProgress[1]);
+                } else {
+                    noGainCount++;
+                    Log.record("无纸阅读📖[" + bookName + "]进度同步" + chapterProgress[0] + "/"
+                            + chapterProgress[1] + "，本章无能量增加");
+                }
+                lastEnergy = chapterProgress[0];
+                if (chapterProgress[0] >= chapterProgress[1]) {
+                    return Boolean.TRUE;
+                }
+                if (noGainCount >= 5) {
+                    state.triedBooks.add(bookId);
+                    Log.record("无纸阅读📖[" + bookName + "]连续5章无能量增加，可能已达上限，换下一本");
+                    return Boolean.FALSE;
+                }
+            } else {
+                // 进度查询失败（网络抖动）：保持 lastEnergy 不变、不计无能量次数，继续下一章，
+                // 下次查询成功时 gain 会把这章的能量补记回来，避免漏记
+                noDataCount++;
+                Log.record("无纸阅读📖[" + bookName + "]进度查询失败，继续下一章（能量累计到下次记录）");
+                if (noDataCount >= 5) {
+                    state.triedBooks.add(bookId);
+                    Log.record("无纸阅读📖[" + bookName + "]连续5章进度查询失败，网络异常，换下一本");
+                    return Boolean.FALSE;
+                }
+            }
+            if (StringUtil.isEmpty(nextId) || "null".equals(nextId) || "0".equals(nextId)) {
+                // 全书读完：记入已读书目，后续换书跳过
+                state.finishedBooks.add(bookId);
+                Log.record("无纸阅读📖[" + bookName + "]已读完");
+                return null;
+            }
+            chapter = forestReadChapterData(token, bookId, nextId);
+            if (chapter == null) {
+                state.triedBooks.add(bookId);
+                return Boolean.FALSE;
+            }
+            TimeUtil.sleep(RandomUtil.nextInt(300, 800));
+        }
+        return Boolean.FALSE;
+    }
+
+    /**
+     * 查询阅读能量进度。
+     *
+     * @return {current, total}；查询失败返回 null（调用方据此保持原进度，不误判为无收益）
+     */
+    private int[] forestReadEnergy(String token, String bookId, String chapterId) {
+        // 进度接口偶发超时：本地重试一次消化抖动，仍失败则交给调用方兜底
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                String raw = forestReadRequest("GET", "/user/forestPro", null, token,
+                        forestReadReferer(bookId, chapterId));
+                JSONObject jo = StringUtil.isEmpty(raw) ? null : new JSONObject(raw);
+                JSONObject data = jo == null ? null : jo.optJSONObject("data");
+                if (data == null) {
+                    return null;
+                }
+                int total = data.optInt("total", FOREST_READ_TOTAL_FALLBACK);
+                if (total <= 0) {
+                    total = FOREST_READ_TOTAL_FALLBACK;
+                }
+                return new int[]{data.optInt("current"), total};
+            } catch (SocketTimeoutException e) {
+                TimeUtil.sleep(1000L);
+            } catch (Throwable t) {
+                Log.i(TAG, "forestReadEnergy err:");
+                Log.printStackTrace(TAG, t);
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 取章节详情：chapterId 为空取第一章，否则按 chapter_id 取下一章。
+     * <p>小程序翻页用 chapter_id，chapter_num 恒为空，与抓包一致。
+     */
+    private JSONObject forestReadChapterData(String token, String bookId, String chapterId) {
+        try {
+            String path = "/book/chapter?book_id=" + forestReadEncode(bookId);
+            if (!StringUtil.isEmpty(chapterId)) {
+                path = path + "&chapter_id=" + forestReadEncode(chapterId) + "&chapter_num=&source=";
+            }
+            String raw = forestReadRequest("GET", path, null, token, forestReadReferer(bookId, chapterId));
+            if (StringUtil.isEmpty(raw)) {
+                return null;
+            }
+            JSONObject jo = new JSONObject(raw);
+            if (jo.optInt("code") != 2000) {
+                return null;
+            }
+            return jo.optJSONObject("data");
+        } catch (Throwable t) {
+            Log.i(TAG, "forestReadChapterData err:");
+            Log.printStackTrace(TAG, t);
+            return null;
+        }
+    }
+
+    /**
+     * 章节号能转数字就按数字上报，转不动就按字符串，与小程序行为一致。
+     */
+    private static void forestReadPutChapterId(JSONObject body, String chapterId) throws JSONException {
+        try {
+            body.put("chapter_id", Long.parseLong(chapterId));
+        } catch (Throwable t) {
+            body.put("chapter_id", chapterId);
+        }
+    }
+
+    /**
+     * 拼 Referer：模拟小程序页面路径，章节页带 bid/cid，与真实抓包一致。
+     */
+    private static String forestReadReferer(String bookId, String chapterId) {
+        String base = "https://" + FOREST_READ_APP_ID + ".hybrid.alipay-eco.com/"
+                + FOREST_READ_APP_ID + "/" + FOREST_READ_VERSION + "/index.html";
+        if (!StringUtil.isEmpty(bookId) && !StringUtil.isEmpty(chapterId)) {
+            return base + "#moduleA/pages/chapter/index?__appxPageId=" + RandomUtil.nextInt(1, 21)
+                    + "&bid=" + bookId + "&cid=" + chapterId;
+        }
+        if (!StringUtil.isEmpty(bookId)) {
+            return base + "#moduleA/pages/chapter/index?__appxPageId=" + RandomUtil.nextInt(1, 21)
+                    + "&bid=" + bookId;
+        }
+        return base + "#pages/index/index";
+    }
+
+    /**
+     * 按无纸阅读小程序的真实抓包校准 User-Agent：
+     * 设备/系统/Chrome 部分取自系统 http.agent，支付宝版本取自运行环境，
+     * 其余（MYWeb/UWS/UCBS、网络类型、屏幕规格）按真实格式补齐，不再用整串硬编码的机型 UA。
+     */
+    private static String forestReadUserAgent() {
+        String systemUa = System.getProperty("http.agent");
+        if (StringUtil.isEmpty(systemUa)) {
+            systemUa = "Mozilla/5.0 (Linux; Android 11)";
+        }
+        // 真实 UA 里 Mobile Safari/537.36 位于 UCBS 之后，系统 UA 末尾自带的那份要先去掉
+        String base = systemUa.replace(" Mobile Safari/537.36", "").trim();
+        String alipayVersion = ApplicationHook.getAlipayVersion().getVersionString();
+        return base
+                + " MYWeb/1.11.126.260911211123 UWS/3.22.2.9999 UCBS/3.22.2.9999_220000000000"
+                + " Mobile Safari/537.36 NebulaSDK/1.8.100112 Nebula"
+                + " AlipayDefined(nt:" + forestReadNetworkType() + ",ws:" + forestReadScreenSpec() + ")"
+                + " AliApp(AP/" + alipayVersion + ") AlipayClient/" + alipayVersion
+                + " Language/zh-Hans isConcaveScreen/true"
+                + " Region/CNAriver/" + alipayVersion + " DTN/2.0";
+    }
+
+    /**
+     * 当前网络类型（WIFI/5G/4G），取不到按 WIFI。
+     */
+    private static String forestReadNetworkType() {
+        try {
+            Context context = ApplicationHook.getContext();
+            if (context != null) {
+                ConnectivityManager cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+                NetworkCapabilities caps = cm == null ? null : cm.getNetworkCapabilities(cm.getActiveNetwork());
+                if (caps != null) {
+                    if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                        return "WIFI";
+                    }
+                    if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            TelephonyManager tm = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
+                            if (tm != null && tm.getDataNetworkType() == TelephonyManager.NETWORK_TYPE_NR) {
+                                return "5G";
+                            }
+                        }
+                        return "4G";
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return "WIFI";
+    }
+
+    /**
+     * 屏幕规格（宽|0|密度），取不到用 393|0|2.75。
+     */
+    private static String forestReadScreenSpec() {
+        try {
+            Context context = ApplicationHook.getContext();
+            if (context != null) {
+                DisplayMetrics dm = context.getResources().getDisplayMetrics();
+                int width = Math.round(dm.widthPixels / dm.density);
+                float density = Math.round(dm.density * 100) / 100f;
+                return width + "|0|" + density;
+            }
+        } catch (Throwable ignored) {
+        }
+        return "393|0|2.75";
+    }
+
+    /**
+     * 无纸阅读直连请求：小程序自有网关不走支付宝 RPC，请求头需自己按抓包拼。
+     *
+     * @param method GET/POST
+     * @param path   以 / 开头的接口路径
+     * @param body   POST 请求体，GET 传 null
+     * @param token  Bearer token，可为空
+     * @return 原始响应文本；无响应体返回空串
+     */
+    private static String forestReadRequest(String method, String path, JSONObject body, String token,
+                                            String referer) throws Exception {
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(FOREST_READ_HOST + path).openConnection();
+            conn.setConnectTimeout(10000);
+            conn.setReadTimeout(20000);
+            conn.setRequestMethod(method);
+            conn.setUseCaches(false);
+            conn.setRequestProperty("content-type", "application/json;charset=UTF-8");
+            conn.setRequestProperty("referer", referer == null ? "" : referer);
+            conn.setRequestProperty("user-agent", forestReadUserAgent());
+            conn.setRequestProperty("x-requested-with", "com.eg.android.AlipayGphone");
+            conn.setRequestProperty("x-mass-tappid", FOREST_READ_APP_ID);
+            conn.setRequestProperty("accept-language", "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7");
+            conn.setRequestProperty("x-release-type", "ONLINE");
+            if (!StringUtil.isEmpty(token)) {
+                conn.setRequestProperty("authorization", "Bearer " + token);
+            }
+            if ("POST".equals(method)) {
+                byte[] bytes = (body == null ? "{}" : body.toString()).getBytes(StandardCharsets.UTF_8);
+                conn.setDoOutput(true);
+                conn.setFixedLengthStreamingMode(bytes.length);
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(bytes);
+                }
+            }
+            InputStream is = conn.getResponseCode() >= 400 ? conn.getErrorStream() : conn.getInputStream();
+            if (is == null) {
+                return "";
+            }
+            try (InputStream input = is) {
+                ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                byte[] buffer = new byte[4096];
+                int len;
+                while ((len = input.read(buffer)) != -1) {
+                    baos.write(buffer, 0, len);
+                }
+                return baos.toString("UTF-8");
+            }
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
+    }
+
+    /**
+     * URL 查询参数编码：书号/章节号按 UTF-8 编码，避免特殊字符截断请求。
+     */
+    private static String forestReadEncode(String value) {
+        try {
+            return URLEncoder.encode(value == null ? "" : value, "UTF-8");
+        } catch (Throwable t) {
+            return value == null ? "" : value;
+        }
+    }
+
+    /**
+     * 结束时向森林日志输出一条汇总；逐章进度只走运行记录，避免刷屏。
+     */
+    private static void forestReadSummary(ForestReadState state, String reason) {
+        if (state.totalEnergy > 0) {
+            Log.forest("无纸阅读📖" + reason + "，本次共获得能量" + state.totalEnergy + "g");
+        } else {
+            Log.record("无纸阅读📖" + reason);
+        }
+    }
+
+    /* ========================= 每日换装 ========================= */
+
+    /**
+     * 每日换装：每天从背包里按装扮槽位随机挑一件已拥有且未过期的装扮穿上，
+     * 再回查主页 indexDressVO.dressDetailList 确认真的穿上了才落当日标记。
+     * <p>收益说明：装扮只影响森林外观，不产出能量；它属于"每日换装"玩法，
+     * 注意与「装扮保护」互斥——保护会把换上的装扮还原，所以保护开启时本轮跳过。
+     */
+    private void runForestDailyDress() {
+        try {
+            if (Status.hasFlagToday(FLAG_FOREST_DAILY_DRESS)) {
+                return;
+            }
+            if (dress.getValue()) {
+                Log.record("每日换装👗装扮保护已开启，两者会互相覆盖，本轮跳过换装");
+                return;
+            }
+            // positionType -> position：与装扮保护共用同一份映射（dressMap 双向都存了）
+            String[] positionTypes = {"treeMain", "bgSkyCloud", "bgSky0", "bgGroundA", "bgGroundB", "bgGroundC"};
+            long now = System.currentTimeMillis();
+            Map<String, String[]> selected = new LinkedHashMap<>(); // position -> [batchType, dressType]
+            for (String positionType : positionTypes) {
+                String position = dressMap.get(positionType);
+                if (position == null) {
+                    continue;
+                }
+                List<JSONObject> candidates = forestDressCandidates(positionType, position, now);
+                if (candidates.isEmpty()) {
+                    continue;
+                }
+                JSONObject pick = candidates.get(RandomUtil.nextInt(0, candidates.size()));
+                String dressType = pick.optString("dressType");
+                if (StringUtil.isEmpty(dressType)) {
+                    continue;
+                }
+                selected.put(position, new String[]{pick.optString("batchType"), dressType});
+            }
+            if (selected.isEmpty()) {
+                Log.record("每日换装👗背包里没有可用装扮，本轮跳过");
+                return;
+            }
+            for (Map.Entry<String, String[]> entry : selected.entrySet()) {
+                JSONObject jo = new JSONObject(AntForestRpcCall.wearDress(entry.getValue()[1]));
+                if (!MessageUtil.checkResultCode("每日换装👗[" + entry.getKey() + "]", jo)) {
+                    Log.record("每日换装👗槽位" + entry.getKey() + "穿戴请求未成功");
+                }
+                TimeUtil.sleep(500L);
+            }
+            // 回查主页：以主页实际穿戴为准，服务端受理不代表已生效
+            Map<String, String[]> worn = forestQueryWornDress();
+            int matched = 0;
+            boolean allMatched = true;
+            for (Map.Entry<String, String[]> entry : selected.entrySet()) {
+                String[] wornDetail = worn.get(entry.getKey());
+                String[] want = entry.getValue();
+                boolean hit = wornDetail != null
+                        && ((!StringUtil.isEmpty(want[0]) && want[0].equals(wornDetail[0]))
+                        || (!StringUtil.isEmpty(want[1]) && want[1].equals(wornDetail[1])));
+                if (hit) {
+                    matched++;
+                } else {
+                    allMatched = false;
+                }
+            }
+            if (allMatched) {
+                Status.flagToday(FLAG_FOREST_DAILY_DRESS, UserIdMap.getCurrentUid());
+                Log.forest("每日换装👗已换上" + matched + "个槽位的随机装扮");
+            } else {
+                Log.record("每日换装👗穿戴已提交，" + matched + "/" + selected.size()
+                        + "个槽位回查生效，剩余槽位留待下次确认");
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "runForestDailyDress err:");
+            Log.printStackTrace(TAG, t);
+        }
+    }
+
+    /**
+     * 查某槽位背包里的可用装扮：有剩余次数（remainNum>0）、未过期、posList 含该槽位。
+     */
+    private List<JSONObject> forestDressCandidates(String positionType, String position, long now) {
+        List<JSONObject> candidates = new ArrayList<>();
+        try {
+            JSONObject jo = new JSONObject(AntForestRpcCall.listUserDressForBackpack(positionType));
+            if (!MessageUtil.checkResultCode("每日换装👗", jo)) {
+                return candidates;
+            }
+            // 部分版本把库存包在 resData 里，两种结构都兼容
+            JSONObject resData = jo.optJSONObject("resData");
+            JSONObject data = resData != null ? resData : jo;
+            JSONArray list = data.optJSONArray("userHoldDressVOList");
+            if (list == null) {
+                return candidates;
+            }
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject item = list.optJSONObject(i);
+                if (item == null) {
+                    continue;
+                }
+                // remainNum 为 0 表示已无剩余次数（装扮保护里也按过期处理）
+                if (item.optInt("remainNum", 1) <= 0) {
+                    continue;
+                }
+                long expireTime = item.optLong("expireTime", 0L);
+                if (expireTime > 0 && expireTime <= now) {
+                    continue;
+                }
+                if (StringUtil.isEmpty(item.optString("dressType"))) {
+                    continue;
+                }
+                if (!forestDressFitsPosition(item, position)) {
+                    continue;
+                }
+                candidates.add(item);
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "forestDressCandidates err:");
+            Log.printStackTrace(TAG, t);
+            return candidates;
+        }
+        return candidates;
+    }
+
+    /**
+     * 库存项是否适配该槽位：posList 里包含该 position。
+     */
+    private static boolean forestDressFitsPosition(JSONObject item, String position) {
+        JSONArray posList = item.optJSONArray("posList");
+        if (posList == null) {
+            return false;
+        }
+        for (int i = 0; i < posList.length(); i++) {
+            if (position.equals(posList.optString(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 回查主页当前穿戴：position -> [batchType, dressType]。
+     */
+    private Map<String, String[]> forestQueryWornDress() {
+        Map<String, String[]> worn = new HashMap<>();
+        try {
+            JSONObject jo = new JSONObject(AntForestRpcCall.queryHomePage());
+            if (!MessageUtil.checkResultCode("每日换装👗", jo)) {
+                return worn;
+            }
+            JSONObject indexDressVO = jo.optJSONObject("indexDressVO");
+            JSONArray list = indexDressVO == null ? null : indexDressVO.optJSONArray("dressDetailList");
+            if (list == null) {
+                return worn;
+            }
+            for (int i = 0; i < list.length(); i++) {
+                JSONObject item = list.optJSONObject(i);
+                if (item == null) {
+                    continue;
+                }
+                worn.put(item.optString("position"),
+                        new String[]{item.optString("batchType"), item.optString("dressType")});
+            }
+        } catch (Throwable t) {
+            Log.i(TAG, "forestQueryWornDress err:");
+            Log.printStackTrace(TAG, t);
+        }
+        return worn;
     }
 
     /**
