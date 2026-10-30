@@ -8,6 +8,8 @@ import com.elvishew.xlog.printer.file.FilePrinter;
 import com.elvishew.xlog.printer.file.backup.NeverBackupStrategy;
 import com.elvishew.xlog.printer.file.clean.NeverCleanStrategy;
 import com.elvishew.xlog.printer.file.naming.FileNameGenerator;
+
+import com.sesame.wu.util.idMap.UserIdMap;
 import com.sesame.wu.model.normal.base.BaseModel;
 
 import java.text.ParseException;
@@ -53,7 +55,7 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("runtime"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {t}: {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {t}: {m}"))
                     .build()).build();
 
     private static final Logger recordLogger = XLog.tag("RECORD").printers(
@@ -61,7 +63,7 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("record"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
                     .build()).build();
 
     private static final Logger systemLogger = XLog.tag("SYSTEM").printers(
@@ -69,7 +71,7 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("system"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {t}: {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {t}: {m}"))
                     .build()).build();
 
     private static final Logger debugLogger = XLog.tag("DEBUG").printers(
@@ -77,7 +79,7 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("debug"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {t}: {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {t}: {m}"))
                     .build()).build();
 
     private static final Logger forestLogger = XLog.tag("FOREST").printers(
@@ -85,7 +87,7 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("forest"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
                     .build()).build();
 
     private static final Logger goldenBeansLogger = XLog.tag("GOLDENBEANS").printers(
@@ -93,7 +95,7 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("goldenbeans"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
                     .build()).build();
 
     private static final Logger farmLogger = XLog.tag("FARM").printers(
@@ -101,7 +103,7 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("farm"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
                     .build()).build();
 
     private static final Logger memberLogger = XLog.tag("MEMBER").printers(
@@ -109,7 +111,7 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("member"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
                     .build()).build();
 
     private static final Logger otherLogger = XLog.tag("OTHER").printers(
@@ -117,7 +119,7 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("other"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {m}"))
                     .build()).build();
 
     private static final Logger errorLogger = XLog.tag("ERROR").printers(
@@ -125,14 +127,14 @@ public class Log {
                     .fileNameGenerator(new CustomDateFileNameGenerator("error"))
                     .backupStrategy(new NeverBackupStrategy())
                     .cleanStrategy(new NeverCleanStrategy())
-                    .flattener(new AccountFlattener("{d HH:mm:ss.SSS} {t}: {m}"))
+                    .flattener(new PatternFlattener("{d HH:mm:ss.SSS} {t}: {m}"))
                     .build()).build();
 
     public static void i(String s) {
         if (!com.sesame.wu.data.AppConfig.INSTANCE.getEnableViewRuntimeLog()) {
             return;
         }
-        runtimeLogger.i(s);
+        runtimeLogger.i(withAccount(s));
     }
 
     public static void i(String tag, String s) {
@@ -142,7 +144,7 @@ public class Log {
     public static void record(String str) {
         // 记录日志(record)已停用,只按「查看运行日志」开关写入运行日志
         if (com.sesame.wu.data.AppConfig.INSTANCE.getEnableViewRuntimeLog()) {
-            runtimeLogger.i(str);
+            runtimeLogger.i(withAccount(str));
         }
     }
 
@@ -152,7 +154,7 @@ public class Log {
         if (!com.sesame.wu.data.AppConfig.INSTANCE.getEnableViewRuntimeLog()) {
             return;
         }
-        systemLogger.i(tag + ", " + s);
+        systemLogger.i(withAccount(tag + ", " + s));
     }
 
     public static void forest(String s) {
@@ -160,7 +162,7 @@ public class Log {
             return;
         }
         record(s);
-        forestLogger.i(s);
+        forestLogger.i(withAccount(s));
     }
 
     public static void goldenBeans(String s) {
@@ -168,7 +170,7 @@ public class Log {
             return;
         }
         record(s);
-        goldenBeansLogger.i(s);
+        goldenBeansLogger.i(withAccount(s));
     }
 
     /**
@@ -183,7 +185,7 @@ public class Log {
             return;
         }
         record(s);
-        farmLogger.i(s);
+        farmLogger.i(withAccount(s));
     }
 
     /**
@@ -197,7 +199,7 @@ public class Log {
             return;
         }
         record(s);
-        memberLogger.i(s);
+        memberLogger.i(withAccount(s));
     }
 
     public static void other(String s) {
@@ -205,19 +207,19 @@ public class Log {
             return;
         }
         record(s);
-        otherLogger.i(s);
+        otherLogger.i(withAccount(s));
     }
 
     public static void debug(String s) {
         if (!com.sesame.wu.data.AppConfig.INSTANCE.getEnableDebugLog()) {
             return;
         }
-        debugLogger.d(s);
+        debugLogger.d(withAccount(s));
     }
 
     public static void error(String s) {
         if (com.sesame.wu.data.AppConfig.INSTANCE.getEnableViewErrorLog()) {
-            errorLogger.i(s);
+            errorLogger.i(withAccount(s));
         }
         i(s);
     }
@@ -225,7 +227,7 @@ public class Log {
     public static void printStackTrace(Throwable t) {
         String str = android.util.Log.getStackTraceString(t);
         if (com.sesame.wu.data.AppConfig.INSTANCE.getEnableViewErrorLog()) {
-            errorLogger.i(str);
+            errorLogger.i(withAccount(str));
         }
         i(str);
     }
@@ -233,9 +235,30 @@ public class Log {
     public static void printStackTrace(String tag, Throwable t) {
         String str = tag + ", " + android.util.Log.getStackTraceString(t);
         if (com.sesame.wu.data.AppConfig.INSTANCE.getEnableViewErrorLog()) {
-            errorLogger.i(str);
+            errorLogger.i(withAccount(str));
         }
         i(str);
+    }
+
+    /**
+     * 行尾追加账号标识（uid 后 4 位），便于区分多个账号的日志。
+     *
+     * <p>为什么放行尾而不是行首：日志查看器用
+     * {@code ^(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\w+):\s*(.*)$} 解析每一行，
+     * 行首加前缀会让正则整行匹配失败。
+     *
+     * <p>为什么用 uid 后 4 位而不是昵称：昵称会随改名/改备注变化，历史日志就对不上了。
+     */
+    private static String withAccount(String s) {
+        if (s == null) {
+            return null;
+        }
+        String uid = UserIdMap.getCurrentUid();
+        if (uid == null || uid.isEmpty()) {
+            return s;
+        }
+        String tail = uid.length() <= 4 ? uid : uid.substring(uid.length() - 4);
+        return s + " [" + tail + "]";
     }
 
     public static String getLogFileName(String logName) {

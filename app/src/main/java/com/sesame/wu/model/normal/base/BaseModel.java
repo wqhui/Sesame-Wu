@@ -86,7 +86,6 @@ public class BaseModel extends Model {
     @Getter
     private static final BooleanModelField showToast = new BooleanModelField("showToast", "气泡提示", true);
     //public static final BooleanModelField closeCaptchaDialogVPN = new BooleanModelField("closeCaptchaDialogVPN", "关闭请检查是否使用了代理软件或VPN", false);
-    @Getter
     /** 全局请求间隔下限（毫秒）：两个未单独注册限流的 RPC 之间至少隔这么久。 */
     private static final IntegerModelField globalRpcIntervalMin = new IntegerModelField("globalRpcIntervalMin", "全局请求间隔 | 最小(毫秒)", 100, 0, 2000);
     /** 全局请求间隔上限（毫秒）：每次实际间隔在 [最小, 最大] 内随机。 */
