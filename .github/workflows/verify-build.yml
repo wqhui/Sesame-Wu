@@ -84,10 +84,19 @@ jobs:
           echo "Using build-tools: $BT_DIR"
           echo "${ANDROID_SIGNING_KEY}" | base64 -d > "$RUNNER_TEMP/wqhui-sign.jks"
           # 只签本次实际构建出来的 flavor（目录不存在即跳过）
+          # 注意：必须先判断目录存在再 find。set -e 下 find 作用于不存在的目录会返回 1，
+          # 命令替换赋值失败会让整个脚本提前退出——这正是只勾 legacy 时打包失败的原因。
           for flavor in normal compatible legacy; do
             APK_DIR="app/build/outputs/apk/$flavor/release"
-            APK_FILE=$(find "$APK_DIR" -name "*.apk" | head -n 1)
-            [ -n "$APK_FILE" ] || { echo "No APK in $APK_DIR"; continue; }
+            if [ ! -d "$APK_DIR" ]; then
+              echo "跳过 $flavor：未构建（目录不存在）"
+              continue
+            fi
+            APK_FILE=$(find "$APK_DIR" -name "*.apk" -print -quit 2>/dev/null || true)
+            if [ -z "$APK_FILE" ]; then
+              echo "跳过 $flavor：目录里没有 apk"
+              continue
+            fi
             echo "Signing $(basename "$APK_FILE")"
             "$BT_DIR/zipalign" -f 4 "$APK_FILE" "$RUNNER_TEMP/aligned.apk"
             "$BT_DIR/apksigner" sign \
@@ -101,7 +110,8 @@ jobs:
 
       - name: List APK outputs
         run: |
-          find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \;
+          # 同样要容错：只构建部分 flavor 时目录可能不全，find 返回非 0 会让步骤失败
+          find app/build/outputs/apk -name "*.apk" -exec ls -lh {} \; 2>/dev/null || true
 
       # 上传三种产物便于直接安装/做免 Root 测试
       - name: Upload APKs
