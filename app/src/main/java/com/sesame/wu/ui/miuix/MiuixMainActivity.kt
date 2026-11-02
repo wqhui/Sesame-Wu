@@ -981,7 +981,7 @@ fun ConfigTab(activity: MiuixMainActivity) {
     // 除了分组自身的名称/描述，还要能搜到具体配置项（如「无纸阅读」「浮球」）——
     // 原先只按分组名过滤，搜配置项名称永远是空结果。
     val fieldsByGroup = remember {
-        val map = com.sesame.wu.data.ConfigV2.INSTANCE.modelFieldsMap
+        val map = com.sesame.wu.data.ConfigV2.getAllModelFields()
         Model.getModelList()
             .groupBy { it.group }
             .mapValues { (_, models) ->

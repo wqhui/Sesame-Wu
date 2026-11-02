@@ -26,6 +26,17 @@ public class ConfigV2 {
 
     private final Map<String, ModelFields> modelFieldsMap = new ConcurrentHashMap<>();
 
+    /**
+     * 供 Kotlin 调用的静态访问器。
+     *
+     * <p>Kotlin 直接写 {@code ConfigV2.INSTANCE.modelFieldsMap} 会解析到私有字段上
+     * （getModelFieldsMap 由 Lombok 生成，Kotlin 编译器在这个模块里看不到），
+     * 所以这里显式暴露一个静态方法。
+     */
+    public static Map<String, ModelFields> getAllModelFields() {
+        return INSTANCE.modelFieldsMap;
+    }
+
     public void setModelFieldsMap(Map<String, ModelFields> newModels) {
         modelFieldsMap.clear();
         Map<String, ModelConfig> modelConfigMap = ModelTask.getModelConfigMap();
