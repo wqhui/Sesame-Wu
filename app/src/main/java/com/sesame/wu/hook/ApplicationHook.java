@@ -216,8 +216,7 @@ public class ApplicationHook {
                     Log.i(TAG, "hook matchVersion successfully");
                 }
             } catch (Throwable t) {
-                Log.i(TAG, "hook matchVersion err:");
-                Log.printStackTrace(TAG, t);
+                Log.printStackTrace("hook matchVersion 失败", t);
             }
             try {
                 // Java 层拦截 native 层通过 JNI 弹出的 Toast:命中「芝麻开门/芝麻关门」等文案时直接吞掉
@@ -245,8 +244,7 @@ public class ApplicationHook {
                 });
                 Log.i(TAG, "hook toast filter successfully");
             } catch (Throwable t) {
-                Log.i(TAG, "hook toast filter err:");
-                Log.printStackTrace(TAG, t);
+                Log.printStackTrace("hook toast filter 失败", t);
             }
             try {
                 hookIfExists("com.alipay.mobile.quinox.LauncherActivity", "onResume",
@@ -284,8 +282,7 @@ public class ApplicationHook {
                 });
                 Log.i(TAG, "hook login successfully");
             } catch (Throwable t) {
-                Log.i(TAG, "hook login err:");
-                Log.printStackTrace(TAG, t);
+                Log.printStackTrace("hook login 失败", t);
             }
             // 兜底：AlipayLogin.onResume 在部分版本/场景下比 LauncherActivity 更稳定（reOpenApp 也会显式拉起）
             try {
@@ -314,8 +311,7 @@ public class ApplicationHook {
                 if (String.valueOf(t.getMessage()).contains("Method not found")) {
                     Log.i(TAG, "hook login resume (fallback) 跳过: " + t.getMessage());
                 } else {
-                    Log.i(TAG, "hook login resume err:");
-                    Log.printStackTrace(TAG, t);
+                    Log.printStackTrace("hook login resume 失败", t);
                 }
             }
             try {
@@ -447,8 +443,7 @@ public class ApplicationHook {
                 });
                 Log.i(TAG, "hook service onCreate successfully");
             } catch (Throwable t) {
-                Log.i(TAG, "hook service onCreate err:");
-                Log.printStackTrace(TAG, t);
+                Log.printStackTrace("hook service onCreate 失败", t);
             }
             try {
                 XHelpers.findAndHookMethod("android.app.Service", classLoader, "onDestroy", new XC_MethodHook() {
@@ -467,8 +462,7 @@ public class ApplicationHook {
                     }
                 });
             } catch (Throwable t) {
-                Log.i(TAG, "hook service onDestroy err:");
-                Log.printStackTrace(TAG, t);
+                Log.printStackTrace("hook service onDestroy 失败", t);
             }
             try {
                 // 逐个独立尝试：原先 4 个挤在一个 try 里，第一个类缺失会让后面 3 个全跳过
@@ -482,8 +476,7 @@ public class ApplicationHook {
                         COUNTER_FG_BG, Context.class, XC_MethodReplacement.returnConstant(true));
                 Log.i(TAG, "hook other service (FgBg + MiscUtils) done");
             } catch (Throwable t) {
-                Log.i(TAG, "hook other service err:");
-                Log.printStackTrace(TAG, t);
+                Log.printStackTrace("hook other service 失败", t);
             }
             hooked = true;
 
@@ -776,8 +769,7 @@ public class ApplicationHook {
                         });
                         Log.i(TAG, "hook record request successfully");
                     } catch (Throwable t) {
-                        Log.i(TAG, "hook record request err:");
-                        Log.printStackTrace(TAG, t);
+                        Log.printStackTrace("hook record request 失败", t);
                     }
                     try {
                         rpcResponseUnhook = XHelpers.findAndHookMethod("com.alibaba.ariver.engine.common.bridge.internal.DefaultBridgeCallback", classLoader, "sendJSONResponse", classLoader.loadClass(ClassUtil.JSON_OBJECT_NAME), new XC_MethodHook() {
@@ -795,8 +787,7 @@ public class ApplicationHook {
                         });
                         Log.i(TAG, "hook record response successfully");
                     } catch (Throwable t) {
-                        Log.i(TAG, "hook record response err:");
-                        Log.printStackTrace(TAG, t);
+                        Log.printStackTrace("hook record response 失败", t);
                     }
                 }
                 NotificationUtil.start(service);
@@ -857,8 +848,7 @@ public class ApplicationHook {
                     });
             Log.i(TAG, "hook webview shouldInterceptRequest successfully");
         } catch (Throwable t) {
-            Log.i(TAG, "hook webview shouldInterceptRequest err:");
-            Log.printStackTrace(TAG, t);
+            Log.printStackTrace("hook webview shouldInterceptRequest 失败", t);
         }
 
         // 2) OkHttp3 Interceptor —— 抓取 native HTTP 请求(含请求/响应体),覆盖 mtop 等普通 HTTP
@@ -882,8 +872,7 @@ public class ApplicationHook {
                 Log.i(TAG, "okhttp3.OkHttpClient not found, skip okhttp capture");
             }
         } catch (Throwable t) {
-            Log.i(TAG, "hook okhttp newBuilder err:");
-            Log.printStackTrace(TAG, t);
+            Log.printStackTrace("hook okhttp newBuilder 失败", t);
         }
     }
 
@@ -1326,8 +1315,7 @@ public class ApplicationHook {
                     broadcastReceiverRegistered = false;
                     Log.i(TAG, "hook unregisterBroadcastReceiver successfully");
                 } catch (Throwable t) {
-                    Log.i(TAG, "hook unregisterBroadcastReceiver err:");
-                    Log.printStackTrace(TAG, t);
+                    Log.printStackTrace("hook unregisterBroadcastReceiver 失败", t);
                 }
             }
 
@@ -1348,8 +1336,7 @@ public class ApplicationHook {
             broadcastReceiverRegistered = true;
             Log.i(TAG, "hook registerBroadcastReceiver successfully");
         } catch (Throwable th) {
-            Log.i(TAG, "hook registerBroadcastReceiver err:");
-            Log.printStackTrace(TAG, th);
+            Log.printStackTrace("hook registerBroadcastReceiver 失败", th);
         }
     }
 
