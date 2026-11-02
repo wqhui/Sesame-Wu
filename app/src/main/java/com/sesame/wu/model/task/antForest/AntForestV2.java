@@ -439,33 +439,35 @@ public class AntForestV2 extends ModelTask {
             wateringExecutedThisRound = false;
 
             //GameTask.Orchard_ncscc.report("农场上车车", 1);
-            if (waterFriendEnergyFirst.getValue()) {
+            if (!TaskCommon.IS_ENERGY_TIME && waterFriendEnergyFirst.getValue()) {
                 waterFriendEnergy();
                 wateringExecutedThisRound = true;
             }
 
 
-            if (useEnergyRainLimit.getValue()) {
+            if (!TaskCommon.IS_ENERGY_TIME && useEnergyRainLimit.getValue()) {
                 useEnergyRainCard();
             }
 
-            if (energyRain.getValue()) {
+            if (!TaskCommon.IS_ENERGY_TIME && energyRain.getValue()) {
                 energyRain();
             }
 
-            if (ecoLife.getValue()) {
+            if (!TaskCommon.IS_ENERGY_TIME && ecoLife.getValue()) {
                 ecoLife();
             }
 
-            if (youthPrivilege.getValue()) {
+            if (!TaskCommon.IS_ENERGY_TIME && youthPrivilege.getValue()) {
                 // 青春特权道具（双击卡/能量罩/加速器）改走 listTaskopengreen：
                 // 原实现用的 queryTaskList 对本场景返回空 forestTasksNew，三项道具从未触发领取
                 queryVitalityYouthTaskList();
             }
             //连续兑换使用道具卡片
-            continuousUseCardOptions();
+            if (!TaskCommon.IS_ENERGY_TIME) {
+                continuousUseCardOptions();
+            }
 
-            if (receiveForestTaskAward.getValue()) {
+            if (!TaskCommon.IS_ENERGY_TIME && receiveForestTaskAward.getValue()) {
                 vantiepSign();
             }
 
@@ -503,10 +505,12 @@ public class AntForestV2 extends ModelTask {
                 collectPKEnergy();
             }
 
-            if (!TaskCommon.IS_ENERGY_TIME && selfHomeObject != null) {
+            if (selfHomeObject != null) {
                 String whackMoleStatus = selfHomeObject.optString("whackMoleStatus");
-                if (Objects.equals("CAN_PLAY", whackMoleStatus) || Objects.equals("CAN_INITIATIVE_PLAY", whackMoleStatus) || Objects.equals("NEED_MORE_FRIENDS", whackMoleStatus)) {
+                if (!TaskCommon.IS_ENERGY_TIME && (Objects.equals("CAN_PLAY", whackMoleStatus) || Objects.equals("CAN_INITIATIVE_PLAY", whackMoleStatus) || Objects.equals("NEED_MORE_FRIENDS", whackMoleStatus))) {
+                    if (!TaskCommon.IS_ENERGY_TIME) {
                     checkAndHandleWhackMole();
+                }
                 }
                 boolean hasMore = false;
                 do {
@@ -586,7 +590,7 @@ public class AntForestV2 extends ModelTask {
                             }
                         }
                     }
-                    if (collectProp.getValue()) {
+                    if (!TaskCommon.IS_ENERGY_TIME && collectProp.getValue()) {
                         JSONArray givenProps = selfHomeObject.has("givenProps") ? selfHomeObject.getJSONArray("givenProps") : new JSONArray();
                         if (givenProps.length() > 0) {
                             for (int i = 0; i < givenProps.length(); i++) {
@@ -607,18 +611,18 @@ public class AntForestV2 extends ModelTask {
                     }
                 } while (hasMore);
                 //强制重复浇水一次
-                if (doubleWaterFriendEnergy.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && doubleWaterFriendEnergy.getValue()) {
                     if (!Status.hasFlagToday("Forest::doubleWaterFriendEnergy")) {
                         doubleWaterFriendEnergy();
                     }
                 }
 
-                if (!wateringExecutedThisRound) {
+                if (!TaskCommon.IS_ENERGY_TIME && !wateringExecutedThisRound) {
                     waterFriendEnergy();
                 }
 
                 // 组队合种浇水
-                //if (partnerteamWater.getValue()) {
+                //if (!TaskCommon.IS_ENERGY_TIME && partnerteamWater.getValue()) {
                 //    if (partnerteamWaterNum.getValue() > 0 && partnerteamWaterNum.getValue() <= 5000) {
                 //        partnerteamWater(partnerteamWaterNum.getValue());
                 //    }
@@ -631,54 +635,56 @@ public class AntForestV2 extends ModelTask {
                 }
 
                 // 组队合种浇水
-                if (partnerteamWater.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && partnerteamWater.getValue()) {
                     teamCooperateWater();
                 }
                 // 真爱合种浇水
-                if (loveteamWater.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && loveteamWater.getValue()) {
                     if (loveteamWaterNum.getValue() >= 20 && loveteamWaterNum.getValue() <= 10000) {
                         loveteam(loveteamWaterNum.getValue());
                     }
                 }
 
                 // 森林寻宝
-                if (ForestHunt.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && ForestHunt.getValue()) {
                     ForestChouChouLe forestChouChouLe = new ForestChouChouLe();
                     forestChouChouLe.chouChouLe(ForestHuntDraw.getValue(), ForestHuntHelp.getValue(), ForestHuntHelpList.getValue(), NORMALForestHuntHelp.getValue(), ACTIVITYForestHuntHelp.getValue(), AntForestHuntTaskList.getValue());
                 }
 
-                if (expiredEnergy.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && expiredEnergy.getValue()) {
                     popupTask();
                 }
 
-                if (receiveForestTaskAward.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && receiveForestTaskAward.getValue()) {
                     queryCommonSign();
                     queryTaskList();
                 }
 
+                if (!TaskCommon.IS_ENERGY_TIME) {
                 giveProp();
-                if (vitalityExchangeBenefit.getValue()) {
+            }
+                if (!TaskCommon.IS_ENERGY_TIME && vitalityExchangeBenefit.getValue()) {
                     vitalityExchangeBenefit();
                 }
                 /* 森林集市 */
-                if (greenLife.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && greenLife.getValue()) {
                     greenLife();
                 }
 
                 // 绿植浏览（独立任务，与森林集市无关）
-                if (marketBrowseTask.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && marketBrowseTask.getValue()) {
                     GreenPlantBrowse.run();
                 }
 
                 // 绿色租赁
-                if (greenRent.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && greenRent.getValue()) {
                     if (!Status.hasFlagToday("Forest::greenRent")) {
                         greenRent();
                         Status.flagToday("Forest::greenRent");
                     }
                 }
 
-                if (medicalHealth.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && medicalHealth.getValue()) {
                     // 医疗健康 绿色医疗 16g*6能量
                     queryForestEnergy("FEEDS");
                     // 医疗健康 电子小票 4g*10能量
@@ -686,23 +692,25 @@ public class AntForestV2 extends ModelTask {
                 }
 
                 // 无纸阅读：绿色行为，读免费电子书攒阅读时长换森林能量
-                if (forestRead.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && forestRead.getValue()) {
                     runForestRead();
                 }
 
-                if (dress.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && dress.getValue()) {
                     dress();
                 }
 
                 // 每日换装：每天随机换一套已拥有的装扮（与装扮保护互斥）
-                if (forestDailyDress.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && forestDailyDress.getValue()) {
                     runForestDailyDress();
                 }
 
-                checkAndHandleWhackMole();
+                if (!TaskCommon.IS_ENERGY_TIME) {
+                    checkAndHandleWhackMole();
+                }
 
                 //森林乐园
-                if (drawGameCenterAward.getValue()) {
+                if (!TaskCommon.IS_ENERGY_TIME && drawGameCenterAward.getValue()) {
                     doforestgame();
                     queryOptionalPlay();
                 }
@@ -992,7 +1000,9 @@ public class AntForestV2 extends ModelTask {
                 String nextAction = selfHomeObject.optString("nextAction");
                 if ("WhackMole".equalsIgnoreCase(nextAction)) {
                     Log.record("检测到6秒拼手速强制弹窗，先执行拼手速");
+                    if (!TaskCommon.IS_ENERGY_TIME) {
                     checkAndHandleWhackMole();
+                }
                 }
                 return collectUserEnergy(UserIdMap.getCurrentUid(), selfHomeObject, "ordinary");
             }
@@ -1721,7 +1731,9 @@ public class AntForestV2 extends ModelTask {
                 } else {
                     // 主动执行打地鼠（今日首次）
                     Log.record("🎮 开始执行6秒拼手速（今日首次）");
+                    if (!TaskCommon.IS_ENERGY_TIME) {
                     checkAndHandleWhackMole();
+                }
                     Status.flagToday("forest::whackMole::executed");
                     Log.record("✅ 6秒拼手速已完成，今天不再执行");
                 }
@@ -5459,7 +5471,7 @@ public class AntForestV2 extends ModelTask {
             if (Status.hasFlagToday(FLAG_FOREST_DAILY_DRESS)) {
                 return;
             }
-            if (dress.getValue()) {
+            if (!TaskCommon.IS_ENERGY_TIME && dress.getValue()) {
                 Log.record("每日换装👗装扮保护已开启，两者会互相覆盖，本轮跳过换装");
                 return;
             }
