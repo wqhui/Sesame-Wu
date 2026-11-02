@@ -289,17 +289,32 @@ public class ApplicationHook {
                 hookIfExists(ClassUtil.CURRENT_USING_ACTIVITY, "onResume", COUNTER_SWITCH, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
+                        String targetUid = getUserId();
+                        if (targetUid == null) {
+                            // 已初始化过就不必重复提示未登录
+                            if (!init) {
+                                Log.record("用户未登录");
+                                Toast.show("用户未登录");
+                            }
+                            return;
+                        }
+
+                        // 切号检查：登录页 resume 是最可靠的切号信号之一。
+                        // 原先这里只有「if (init) return」，导致已登录状态下切号
+                        // （App 不冷启动、只跳到登录页）完全感知不到。
+                        String currentUid = UserIdMap.getCurrentUid();
+                        if (init && currentUid != null && !targetUid.equals(currentUid)) {
+                            Log.record("用户已切换（登录页）");
+                            Toast.show("用户已切换");
+                            initHandler(true);
+                            return;
+                        }
+
                         // 如果 LauncherActivity hook 已触发过 init，则跳过本次兜底
                         if (init) {
                             return;
                         }
                         Log.i(TAG, "Login onResume (fallback)");
-                        String targetUid = getUserId();
-                        if (targetUid == null) {
-                            Log.record("用户未登录");
-                            Toast.show("用户未登录");
-                            return;
-                        }
                         initHandler(true);
                     }
                 });
