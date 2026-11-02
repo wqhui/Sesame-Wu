@@ -1,5 +1,7 @@
 package com.sesame.wu.util;
 
+import com.sesame.wu.util.idMap.UserIdMap;
+
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -40,15 +42,18 @@ public final class AccountSession {
     private static final AtomicLong EPOCH = new AtomicLong(0);
 
     /** 当前生效的账号 uid（登出时为 null） */
-    private static volatile String activeUid = null;
+    // 不再自己保存 activeUid：账号的唯一权威来源是 UserIdMap.currentUid。
+    // 之前两个地方各存一份，一旦某条路径只更新了其中一个就会出现
+    // 「currentUid 已变、activeUid 还是旧值」，isUidCurrent() 一律返回 false，
+    // 配置与状态保存被全部误拒。
 
-    /** 当前生效的会话代数，与 activeUid 成对更新 */
+    /** 当前生效的会话代数 */
     private static volatile long activeEpoch = 0;
 
     /**
      * 切号进行中标志：beginSwitch() 置 true、apply() 置 false。
      * 处于该窗口期内时 isValid() 一律返回 false——
-     * 因为此时 activeUid 还是旧值、新的 uid 已经在 UserIdMap 里生效，
+     * 因为此时新的 uid 已经在 UserIdMap 里生效、而 epoch 还没更新，
      * 任何基于 uid 的判断都不可靠，索性全部拦下。
      */
     private static volatile boolean switching = false;
@@ -64,14 +69,14 @@ public final class AccountSession {
     }
 
     /**
-     * 取当前 (activeUid, activeEpoch) 作为快照。
+     * 取当前的 (UserIdMap.currentUid, activeEpoch) 作为快照。
      *
-     * <p>注意：这里刻意不加锁。与 {@link #apply(String, long)} 并发时，
+     * <p>注意：这里刻意不加锁。与 {@link #apply(long)} 并发时，
      * 可能读到「新 uid + 旧 epoch」这样的错位组合，导致后续 isValid() 返回 false，
      * 结果是该次任务被跳过（安全的方向），而不会出现旧任务被误判为有效的危险情况。
      */
     public static Snapshot snapshot() {
-        return new Snapshot(activeUid, activeEpoch);
+        return new Snapshot(UserIdMap.getCurrentUid(), activeEpoch);
     }
 
     /**
@@ -129,7 +134,7 @@ public final class AccountSession {
      * <p>本方法只做内存操作，不 sleep、不等待、不 interrupt——
      * 它的调用方跑在 UI 线程，任何阻塞都会 ANR。
      *
-     * @return 新的会话代数，调用方需要在切换完成后原样传给 {@link #apply(String, long)}
+     * @return 新的会话代数，调用方需要在切换完成后原样传给 {@link #apply(long)}
      */
     public static synchronized long beginSwitch() {
         long epoch = EPOCH.incrementAndGet();
@@ -139,13 +144,12 @@ public final class AccountSession {
     }
 
     /**
-     * 切号完成：设置 activeUid / activeEpoch 并解除 switching。
+     * 切号完成：设置 activeEpoch 并解除 switching。
      *
-     * <p>{@code uid} 允许为 null（登出场景）：此时 activeUid=null、activeEpoch=epoch，
+     * <p>uid 不再由这里设置——登出场景下 UserIdMap.currentUid 为 null，快照自然失效。
      * 所有已绑定的快照同样失效，旧任务无法再写入或发请求。
      */
-    public static synchronized void apply(String uid, long epoch) {
-        activeUid = uid;
+    public static synchronized void apply(long epoch) {
         activeEpoch = epoch;
         switching = false;
     }
@@ -160,7 +164,7 @@ public final class AccountSession {
         return !switching
                 && s != null
                 && s.uid != null
-                && s.uid.equals(activeUid)
+                && s.uid.equals(UserIdMap.getCurrentUid())
                 && s.epoch == activeEpoch;
     }
 
@@ -174,11 +178,11 @@ public final class AccountSession {
         if (uid == null) {
             return true;
         }
-        return uid.equals(activeUid);
+        return uid.equals(UserIdMap.getCurrentUid());
     }
 
     public static String getActiveUid() {
-        return activeUid;
+        return UserIdMap.getCurrentUid();
     }
 
     public static long getActiveEpoch() {

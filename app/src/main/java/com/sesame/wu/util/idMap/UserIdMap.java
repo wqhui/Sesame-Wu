@@ -102,21 +102,22 @@ public class UserIdMap {
      */
     public synchronized static void setCurrentUserId(String userId) {
         if (userId == null || userId.isEmpty()) {
-            // 登出：会话直接作废。activeUid 置 null 后，所有旧任务的写入和请求都会被拦下，
-            // 避免它们落到「下一个登录的账号」上。
+            // 登出：会话直接作废。currentUid 置 null 后快照自然失效，
+            // 旧任务的写入和请求都会被拦下，避免落到「下一个登录的账号」上。
             long e = AccountSession.beginSwitch();
             currentUid = null;
-            AccountSession.apply(null, e);
+            AccountSession.apply(e);
             return;
         }
+        // 同账号且不在切换中：不做无谓的 epoch 递增，否则每次打开配置页
+        // （ConfigPreload 会调这里）都会把在途任务的快照打废。
+        // 账号的唯一来源就是 currentUid，所以只比它一个就够了。
         if (userId.equals(currentUid) && !AccountSession.isSwitching()) {
-            // 同账号且不在切换中：不做无谓的 epoch 递增。
-            // 否则每次 Activity onResume 都会把在途任务的快照打废，任务被大面积跳过。
             return;
         }
         long epoch = AccountSession.beginSwitch();   // ① 在途任务快照立刻失效
         currentUid = userId;                          // ② 立即切换（不阻塞！）
-        AccountSession.apply(userId, epoch);          // ③ 应用新会话
+        AccountSession.apply(epoch);                  // ③ 应用新会话
     }
     
     public static String getCurrentMaskName() {
