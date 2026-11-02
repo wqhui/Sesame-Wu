@@ -978,13 +978,27 @@ fun ConfigTab(activity: MiuixMainActivity) {
     // 顶部搜索框:按分组名/描述过滤配置分组入口
     var searchText by remember { mutableStateOf("") }
     val query = searchText.trim()
+    // 除了分组自身的名称/描述，还要能搜到具体配置项（如「无纸阅读」「浮球」）——
+    // 原先只按分组名过滤，搜配置项名称永远是空结果。
+    val fieldsByGroup = remember {
+        val map = com.sesame.wu.data.ConfigV2.INSTANCE.modelFieldsMap
+        Model.getModelList()
+            .groupBy { it.group }
+            .mapValues { (_, models) ->
+                models.flatMap { m -> map[m.name]?.values?.toList() ?: emptyList() }
+            }
+    }
     val filteredGroups = if (query.isEmpty()) {
         ModelGroup.values().toList()
     } else {
         ModelGroup.values().filter { g ->
             g.getName().contains(query, ignoreCase = true) ||
                 g.code.contains(query, ignoreCase = true) ||
-                (GROUP_DESC[g] ?: "").contains(query, ignoreCase = true)
+                (GROUP_DESC[g] ?: "").contains(query, ignoreCase = true) ||
+                fieldsByGroup[g]?.any { f ->
+                    (f.name ?: "").contains(query, ignoreCase = true) ||
+                        (f.description ?: "").contains(query, ignoreCase = true)
+                } == true
         }
     }
     TextField(
