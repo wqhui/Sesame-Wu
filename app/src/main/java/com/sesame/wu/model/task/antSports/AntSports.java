@@ -67,9 +67,18 @@ public class AntSports extends ModelTask {
     private IntegerModelField latestSyncStepTime;
     private IntegerModelField syncStepInterval;
     private IntegerModelField syncStepBatches;
+    private BooleanModelField syncStepCatchUp;
 
     /** 上次增加步数的时刻（当日分钟 + 1）；0 表示当天还没增加过。 */
     private static final String FLAG_LAST_SYNC_MINUTE = "sport::lastSyncMinute";
+
+    /**
+     * 追赶时单次最多补「几份」。
+     *
+     * <p>长时间不打开时，按时间进度算出来的欠账可能一次就是一两万步；
+     * 即便开了「落后时按进度补齐」，也要有个硬上限兜住，避免出现一次补出天量步数。
+     */
+    private static final int CATCH_UP_MAX_BATCHES = 4;
     /** 当日主动推送已确认不可用（新版支付宝移除该接口）：不再重试，避免每次运行都刷日志。 */
     private static final String FLAG_PUSH_UNAVAILABLE = "sport::syncStepPushUnavailable";
     private BooleanModelField tiyubiz;
@@ -154,6 +163,8 @@ public class AntSports extends ModelTask {
         syncStepInterval.setDescription("两次补偿的最小间隔");
         modelFields.addField(syncStepBatches = new IntegerModelField("syncStepBatches", "同步步数 | 分批次数", 12, 1, 60));
         syncStepBatches.setDescription("补偿量分几次补完");
+        modelFields.addField(syncStepCatchUp = new BooleanModelField("syncStepCatchUp", "步数补偿 | 落后时按进度补齐", true));
+        syncStepCatchUp.setDescription("勾选：打开频率低时按时间进度一次补齐落下的步数；取消：每次固定只补一份");
         modelFields.addField(latestExchangeTime = new IntegerModelField("latestExchangeTime", "行走捐 | 最晚捐步时间(24小时制)", 22, 0, 23));
         modelFields.addField(minExchangeCount = new IntegerModelField("minExchangeCount", "行走捐 | 最小捐步步数", 10));
         modelFields.addField(neverLand = new BooleanModelField("neverLand", "健康岛 | 开启", false));
@@ -351,8 +362,14 @@ public class AntSports extends ModelTask {
         // 本批增加量：至少一份；若落后于「按时间进度应到的累计」就补齐欠账。
         // 进度线是为了保证当天能补足设定值——打开次数不确定，只按一份一份加可能补不满。
         // 正常情况下打开频率够，每次就是一份，不会一次窜到满。
-        int expected = (int) ((long) total * elapsed / windowMin);
-        int want = Math.max(perBatch, expected - forged);
+        // 落后时是否按时间进度补齐：关掉就每次只补一份，不会一次窜很多
+        int want = perBatch;
+        if (Boolean.TRUE.equals(syncStepCatchUp.getValue())) {
+            int expected = (int) ((long) total * elapsed / windowMin);
+            // 再套一层硬上限，防长时间不打开时一次补出天量
+            int maxCatchUp = perBatch * CATCH_UP_MAX_BATCHES;
+            want = Math.max(perBatch, Math.min(expected - forged, maxCatchUp));
+        }
         int batch = Math.min(remain, want + RandomUtil.nextInt(0, 101));
         int target = base + batch;
         // 主动推送（RpcManager.a）只是「顺便告诉服务端」；真正让步数显示出来的是
