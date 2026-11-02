@@ -1296,12 +1296,17 @@ public class AntSports extends ModelTask {
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return false;
             }
-            JSONArray userExchangeRecords = jo.getJSONArray("userExchangeRecords");
-            if (userExchangeRecords.length() == 0) {
+            // 服务端在「从未兑换过」时不返回该字段，getJSONArray 会直接抛异常，
+            // 被下面的 catch 吞掉 → 这里永远 return false → 捐赠功能静默失效
+            JSONArray userExchangeRecords = jo.optJSONArray("userExchangeRecords");
+            if (userExchangeRecords == null || userExchangeRecords.length() == 0) {
                 return true;
             }
-            jo = userExchangeRecords.getJSONObject(0);
-            long gmtCreate = jo.getLong("gmtCreate");
+            jo = userExchangeRecords.optJSONObject(0);
+            if (jo == null) {
+                return true;
+            }
+            long gmtCreate = jo.optLong("gmtCreate", 0L);
             if (TimeUtil.isLessThanNowOfDays(gmtCreate)) {
                 return true;
             }
