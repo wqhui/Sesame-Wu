@@ -145,15 +145,14 @@ public class AntOrchard extends ModelTask {
         modelFields.addField(orchardListTask = new BooleanModelField("orchardListTask", "农场任务", false));
         modelFields.addField(AutoAntOrchardTaskList = new BooleanModelField("AutoAntOrchardTaskList", "农场任务 | 自动黑白名单", true));
         modelFields.addField(AntOrchardTaskList = new SelectModelField("AntOrchardTaskList", "农场任务 | 黑名单列表", new LinkedHashSet<>(), AlipayAntOrchardTaskList::getList));
+        // 浮球任务来自首页 feeds / 投放位，不在 orchardListTask 的 taskList 里，故独立开关；
+        // 默认关闭：每次 run 会多 2 个查询 + 最多 1 分钟的时长上报等待，
+        // 与森林集市/绿植浏览/森林寻宝等新功能开关的默认值保持一致。
+        modelFields.addField(orchardHomeGame = new BooleanModelField("orchardHomeGame", "农场任务 | 首页浮球游戏", false));
         modelFields.addField(orchardSpreadManure = new BooleanModelField("orchardSpreadManure", "农场施肥 | 开启", false));
         modelFields.addField(useBatchSpread = new BooleanModelField("useBatchSpread", "一键施肥5次", false));
         modelFields.addField(orchardSpreadManureSceneList = new SelectAndCountModelField("orchardSpreadManureSceneList", "农场施肥 | 场景列表", new LinkedHashMap<>(), AlipayPlantScene::getList, "请填写每日施肥次数"));
         modelFields.addField(drawGameCenterAward = new BooleanModelField("drawGameCenterAward", "农场乐园 | 游戏宝箱", true));
-        // AG 的浮球游戏随「领取农场任务奖励」一起执行、没有单独开关，这里沿用默认开启；
-        // 与「农场任务」开关解耦：浮球任务来自首页 feeds/投放位，不在 orchardListTask 的 taskList 里
-        // 默认关闭：每次 run 会多 2 个查询 + 可能 30~60 秒的时长上报等待，
-        // 与本项目其它新功能开关（森林集市/绿植浏览/森林寻宝）保持一致，由用户按需开启。
-        modelFields.addField(orchardHomeGame = new BooleanModelField("orchardHomeGame", "农场任务 | 首页浮球游戏", false));
         modelFields.addField(orchardChouChouLe = new BooleanModelField("orchardChouChouLe", "抽抽乐 | 自动完成与抽奖", false));
         // 注：Sesame-Wu 的 ModelField 没有 M 的 setDependsOn（条件显示）机制，
         // 故这两个字段不挂依赖、始终显示；勾选与否由各自开关自行判断
