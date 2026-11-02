@@ -82,6 +82,7 @@ import com.sesame.wu.model.task.antFarm.AntFarmRpcCall;
 import com.sesame.wu.model.task.antGame.GameTask;
 import com.sesame.wu.rpc.intervallimit.FixedOrRangeIntervalLimit;
 import com.sesame.wu.rpc.intervallimit.RpcIntervalLimit;
+import com.sesame.wu.rpc.intervallimit.IntervalLimit;
 import com.sesame.wu.ui.ObjReference;
 import com.sesame.wu.util.AverageMath;
 import com.sesame.wu.util.FileUtil;
@@ -217,6 +218,8 @@ public class AntForestV2 extends ModelTask {
     private BooleanModelField collectProp;
     private StringModelField queryInterval;
     private StringModelField collectInterval;
+    /** 收好友能量的间隔（毫秒），格式「最小-最大」，0 表示不限流。 */
+    private StringModelField collectEnergyInterval;
     private StringModelField doubleCollectInterval;
     private ChoiceModelField doubleClickType;
     private ListModelField.ListJoinCommaToStringModelField doubleCardTime;
@@ -323,6 +326,7 @@ public class AntForestV2 extends ModelTask {
         modelFields.addField(expiredEnergy = new BooleanModelField("expiredEnergy", "收取过期能量", false));
         modelFields.addField(queryInterval = new StringModelField("queryInterval", "查询间隔(毫秒或毫秒范围)", "500-1000"));
         modelFields.addField(collectInterval = new StringModelField("collectInterval", "收取间隔" + "(毫秒或毫秒范围)", "1000" + "-1500"));
+        modelFields.addField(collectEnergyInterval = new StringModelField("collectEnergyInterval", "收好友能量间隔(毫秒或毫秒范围)", "80-200"));
         modelFields.addField(doubleCollectInterval = new StringModelField("doubleCollectInterval", "双击间隔(毫秒或毫秒范围)", "50-150"));
         modelFields.addField(balanceNetworkDelay = new BooleanModelField("balanceNetworkDelay", "平衡网络延迟", true));
         modelFields.addField(advanceTime = new IntegerModelField("advanceTime", "提前时间(毫秒)", 0, Integer.MIN_VALUE, 500));
@@ -414,7 +418,43 @@ public class AntForestV2 extends ModelTask {
                 new FixedOrRangeIntervalLimit(queryInterval.getValue(), 10, 10000));
         RpcIntervalLimit.addIntervalLimit("alipay.antforest.forest.h5.queryFriendHomePage",
                 new FixedOrRangeIntervalLimit(queryInterval.getValue(), 10, 10000));
-        RpcIntervalLimit.addIntervalLimit("alipay.antmember.forest.h5.collectEnergy", 0);
+        // 收好友能量的间隔走配置（默认 80ms），改配置即时生效，不用重启
+        RpcIntervalLimit.addIntervalLimit("alipay.antmember.forest.h5.collectEnergy", new IntervalLimit() {
+            private volatile long time = 0L;
+
+            @Override
+            public Integer getInterval() {
+                // 配置格式「最小-最大」，如 80-200；填 0 表示不限流
+                String cfg = collectEnergyInterval.getValue();
+                if (cfg == null || cfg.trim().isEmpty()) {
+                    return 80;
+                }
+                String[] parts = cfg.trim().split("-");
+                try {
+                    int min = Integer.parseInt(parts[0].trim());
+                    int max = parts.length > 1 ? Integer.parseInt(parts[1].trim()) : min;
+                    if (min < 0) {
+                        min = 0;
+                    }
+                    if (max < min) {
+                        max = min;
+                    }
+                    return max == min ? min : RandomUtil.nextInt(min, max + 1);
+                } catch (Throwable ignored) {
+                    return 80;
+                }
+            }
+
+            @Override
+            public Long getTime() {
+                return time;
+            }
+
+            @Override
+            public void setTime(Long time) {
+                this.time = time == null ? 0L : time;
+            }
+        });
         RpcIntervalLimit.addIntervalLimit("alipay.antmember.forest.h5.queryEnergyRanking", 100);
         RpcIntervalLimit.addIntervalLimit("alipay.antforest.forest.h5.fillUserRobFlag", 500);
         tryCountInt = tryCount.getValue();
