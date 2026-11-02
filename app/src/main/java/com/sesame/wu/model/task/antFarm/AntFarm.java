@@ -2786,7 +2786,7 @@ public class AntFarm extends ModelTask {
                         JSONObject cuisineVO = jo.getJSONObject("cuisineVO");
                         Log.farm("小鸡厨房👨🏻‍🍳制作[" + cuisineVO.getString("name") + "]");
                     }
-                    TimeUtil.sleep(RandomUtil.delay());
+                    TimeUtil.sleep(RandomUtil.nextInt(150, 451));
                 }
             }
         } catch (Throwable t) {
@@ -2818,6 +2818,8 @@ public class AntFarm extends ModelTask {
                 if (!useFarmFood(list.get(i))) {
                     return;
                 }
+                // 用食材是消耗类操作，连着做多道菜更容易被判成脚本行为（1009）
+                TimeUtil.sleep(RandomUtil.nextInt(150, 451));
             }
         } catch (Throwable t) {
             Log.i(TAG, "useFarmFood err:");
