@@ -982,22 +982,25 @@ fun ConfigTab(activity: MiuixMainActivity) {
     // 原先只按分组名过滤，搜配置项名称永远是空结果。
     // 整段包在 runCatching 里：这里一旦抛异常就是配置页闪退，而界面崩溃不会写进模块日志，
     // 排查成本很高。宁可搜索键失效，也不能让配置页起不来。
-    val fieldsByGroup = remember {
-        runCatching {
-            val map = com.sesame.wu.data.ConfigV2.getAllModelFields()
-            val result = HashMap<ModelGroup, List<com.sesame.wu.data.ModelField<*>>>()
+    val fieldsByGroup: Map<ModelGroup, List<com.sesame.wu.data.ModelField<*>>> = remember {
+        try {
+            val fieldMap = com.sesame.wu.data.ConfigV2.getAllModelFields()
+            val grouped = HashMap<ModelGroup, MutableList<com.sesame.wu.data.ModelField<*>>>()
             for (model in Model.getModelList()) {
-                val group = model.group ?: continue
-                val fields = map[model.name]?.values
-                if (fields.isNullOrEmpty()) {
+                // initAllModel() 反射实例化失败时会往列表里塞 null，直接取 group 就是 NPE
+                if (model == null) {
                     continue
                 }
-                result.getOrPut(group) { ArrayList() }.addAll(fields)
+                val group = model.group ?: continue
+                val fields = fieldMap[model.name]?.values ?: continue
+                grouped.getOrPut(group) { ArrayList() }.addAll(fields)
             }
-            result
-        }.onFailure {
-            com.sesame.wu.util.Log.printStackTrace("配置搜索构建索引失败", it)
-        }.getOrDefault(emptyMap())
+            grouped
+        } catch (t: Throwable) {
+            // 这里一旦抛出去就是配置页闪退，宁可搜索失效也要让页面能打开
+            com.sesame.wu.util.Log.printStackTrace("配置搜索构建索引失败", t)
+            emptyMap()
+        }
     }
     val filteredGroups = if (query.isEmpty()) {
         ModelGroup.values().toList()
