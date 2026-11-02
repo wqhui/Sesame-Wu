@@ -209,10 +209,10 @@ private const val SEARCH_DEBOUNCE_MILLIS = 260L
 private const val REFRESH_INTERVAL_MILLIS = 2000L
 
 /** 行首时间戳 + TAG；账号标识在行尾，会原样落进 body，不影响这里的匹配 */
-private val LOG_HEADER_REGEX = Regex("^(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s+(\\w+):\\s*(.*)$")
+private val LOG_HEADER_REGEX = Regex("^(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s+(?:(\\w+):\\s*)?(.*)$")
 
 /** 只用来判断「这一行是不是条目首行」，所以不要求匹配到行尾 */
-private val LOG_HEADER_PREFIX_REGEX = Regex("^(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s+(\\w+):\\s*")
+private val LOG_HEADER_PREFIX_REGEX = Regex("^(\\d{2}:\\d{2}:\\d{2}\\.\\d{3})\\s+(?:(\\w+):\\s*)?")
 
 class MiuixLogViewerActivity : MiuixBaseActivity() {
 
