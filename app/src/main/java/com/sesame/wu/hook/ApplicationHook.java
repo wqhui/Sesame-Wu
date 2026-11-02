@@ -206,8 +206,15 @@ public class ApplicationHook {
                 }
             });
             try {
-                XHelpers.findAndHookMethod("com.alipay.mobile.nebulaappproxy.api.rpc.H5AppRpcUpdate", classLoader, "matchVersion", classLoader.loadClass(ClassUtil.H5PAGE_NAME), Map.class, String.class, XC_MethodReplacement.returnConstant(false));
-                Log.i(TAG, "hook matchVersion successfully");
+                // H5Page 是【参数】而不是类名，必须先探测：类不存在时整个 hook 根本不会执行
+                Class<?> h5Page = XHelpers.findClassIfExists(ClassUtil.H5PAGE_NAME, classLoader);
+                if (h5Page == null) {
+                    Log.record("⚠️Hook 不可用（类不存在）：" + ClassUtil.H5PAGE_NAME);
+                } else {
+                    hookIfExists("com.alipay.mobile.nebulaappproxy.api.rpc.H5AppRpcUpdate", "matchVersion",
+                            COUNTER_NONE, h5Page, Map.class, String.class, XC_MethodReplacement.returnConstant(false));
+                    Log.i(TAG, "hook matchVersion successfully");
+                }
             } catch (Throwable t) {
                 Log.i(TAG, "hook matchVersion err:");
                 Log.printStackTrace(TAG, t);
@@ -242,7 +249,8 @@ public class ApplicationHook {
                 Log.printStackTrace(TAG, t);
             }
             try {
-                XHelpers.findAndHookMethod("com.alipay.mobile.quinox.LauncherActivity", classLoader, "onResume", new XC_MethodHook() {
+                hookIfExists("com.alipay.mobile.quinox.LauncherActivity", "onResume",
+                        COUNTER_SWITCH, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         Log.i(TAG, "Activity onResume");
@@ -281,7 +289,7 @@ public class ApplicationHook {
             }
             // 兜底：AlipayLogin.onResume 在部分版本/场景下比 LauncherActivity 更稳定（reOpenApp 也会显式拉起）
             try {
-                XHelpers.findAndHookMethod(ClassUtil.CURRENT_USING_ACTIVITY, classLoader, "onResume", new XC_MethodHook() {
+                hookIfExists(ClassUtil.CURRENT_USING_ACTIVITY, "onResume", COUNTER_SWITCH, new XC_MethodHook() {
                     @Override
                     protected void afterHookedMethod(MethodHookParam param) {
                         // 如果 LauncherActivity hook 已触发过 init，则跳过本次兜底
@@ -463,21 +471,79 @@ public class ApplicationHook {
                 Log.printStackTrace(TAG, t);
             }
             try {
-                // Sesame-AG 风格：将前后台检测相关 hook 合并为一个 try-catch，
-                // 减少重复日志，统一处理类缺失的情况
-                XHelpers.findAndHookMethod("com.alipay.mobile.common.fgbg.FgBgMonitorImpl", classLoader, "isInBackground", XC_MethodReplacement.returnConstant(false));
-                XHelpers.findAndHookMethod("com.alipay.mobile.common.fgbg.FgBgMonitorImpl", classLoader, "isInBackground", boolean.class, XC_MethodReplacement.returnConstant(false));
-                XHelpers.findAndHookMethod("com.alipay.mobile.common.fgbg.FgBgMonitorImpl", classLoader, "isInBackgroundV2", XC_MethodReplacement.returnConstant(false));
-                XHelpers.findAndHookMethod("com.alipay.mobile.common.transport.utils.MiscUtils", classLoader, "isAtFrontDesk", classLoader.loadClass("android.content.Context"), XC_MethodReplacement.returnConstant(true));
-                Log.i(TAG, "hook other service (FgBg + MiscUtils) successfully");
+                // 逐个独立尝试：原先 4 个挤在一个 try 里，第一个类缺失会让后面 3 个全跳过
+                hookIfExists("com.alipay.mobile.common.fgbg.FgBgMonitorImpl", "isInBackground",
+                        COUNTER_FG_BG, XC_MethodReplacement.returnConstant(false));
+                hookIfExists("com.alipay.mobile.common.fgbg.FgBgMonitorImpl", "isInBackground",
+                        COUNTER_FG_BG, boolean.class, XC_MethodReplacement.returnConstant(false));
+                hookIfExists("com.alipay.mobile.common.fgbg.FgBgMonitorImpl", "isInBackgroundV2",
+                        COUNTER_FG_BG, XC_MethodReplacement.returnConstant(false));
+                hookIfExists("com.alipay.mobile.common.transport.utils.MiscUtils", "isAtFrontDesk",
+                        COUNTER_FG_BG, Context.class, XC_MethodReplacement.returnConstant(true));
+                Log.i(TAG, "hook other service (FgBg + MiscUtils) done");
             } catch (Throwable t) {
                 Log.i(TAG, "hook other service err:");
                 Log.printStackTrace(TAG, t);
             }
             hooked = true;
+
+            // 汇总：能挂上几个、缺哪些，一眼可见（避免类缺失被静默吞掉）
+            Log.record("Hook 状态：切号检测 " + switchHookOk + " 项、前后台感知 " + fgBgHookOk + " 项");
+            if (switchHookOk == 0) {
+                Log.error("账号切换检测全部失败，切号后将无法自动重载。已尝试："
+                        + "① com.alipay.mobile.quinox.LauncherActivity#onResume、"
+                        + "② " + ClassUtil.CURRENT_USING_ACTIVITY + "#onResume（均不存在或 hook 失败）");
+            }
+            if (fgBgHookOk == 0) {
+                Log.error("前后台感知全部失败，后台任务可能被限流变慢。已尝试："
+                        + "① com.alipay.mobile.common.fgbg.FgBgMonitorImpl#isInBackground(isInBackgroundV2)、"
+                        + "② com.alipay.mobile.common.transport.utils.MiscUtils#isAtFrontDesk（均不存在或 hook 失败）");
+            }
             Log.i(TAG, "load success: " + lpparam.packageName);
         }
     }
+
+    /** 切号检测成功挂上的 hook 数量；为 0 说明切号后无法自动重载。 */
+    private static int switchHookOk = 0;
+
+    /** 前后台感知成功挂上的 hook 数量；为 0 说明后台任务可能被限流。 */
+    private static int fgBgHookOk = 0;
+
+    /**
+     * 类不存在时静默跳过（写运行日志便于排查），存在则真去 hook，并把结果累加到计数器。
+     *
+     * <p>不同支付宝版本里这些类时有时无。用 findClassIfExists 探测，可以把「版本差异」
+     * 和「真的 hook 失败」区分开，也避免像合并 try 那样——一个类缺失就把后面几个 hook 全跳过。
+     *
+     * @param okCounterRef 传 0 表示不计数
+     */
+    private static boolean hookIfExists(String className, String methodName, int counter, Object... parameterTypesAndCallback) {
+        boolean ok;
+        if (XHelpers.findClassIfExists(className, classLoader) == null) {
+            Log.record("⚠️Hook 不可用（类不存在）：" + className + "#" + methodName);
+            ok = false;
+        } else {
+            try {
+                XHelpers.findAndHookMethod(className, classLoader, methodName, parameterTypesAndCallback);
+                ok = true;
+            } catch (Throwable t) {
+                Log.printStackTrace("Hook 失败：" + className + "#" + methodName, t);
+                ok = false;
+            }
+        }
+        if (ok) {
+            if (counter == COUNTER_SWITCH) {
+                switchHookOk++;
+            } else if (counter == COUNTER_FG_BG) {
+                fgBgHookOk++;
+            }
+        }
+        return ok;
+    }
+
+    private static final int COUNTER_NONE = 0;
+    private static final int COUNTER_SWITCH = 1;
+    private static final int COUNTER_FG_BG = 2;
 
     private static void setWakenAtTimeAlarm() {
         try {
