@@ -258,7 +258,10 @@ public class Log {
             return s;
         }
         String tail = uid.length() <= 4 ? uid : uid.substring(uid.length() - 4);
-        return s + " [" + tail + "]";
+        // 昵称便于辨认，后四位用于昵称重名/改名后仍能对上账号
+        String showName = UserIdMap.getShowName(uid);
+        String prefix = (showName == null || showName.isEmpty() || showName.equals(uid)) ? "" : showName;
+        return "[" + prefix + tail + "] " + s;
     }
 
     public static String getLogFileName(String logName) {
