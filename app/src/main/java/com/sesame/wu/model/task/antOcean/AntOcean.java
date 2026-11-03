@@ -149,8 +149,8 @@ public class AntOcean extends ModelTask {
             //添加蹲点清理自己海洋
             autocleanOcean(UserIdMap.getCurrentUid());
 
-            // 神秘海洋（摸鱼）功能
-            if (antfishEnable.getValue()) {
+            // 神秘海洋（摸鱼）功能：只收能量时间不做
+            if (!TaskCommon.IS_ENERGY_TIME && antfishEnable.getValue()) {
                 antfishRun();
             }
 

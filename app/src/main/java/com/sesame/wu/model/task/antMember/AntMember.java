@@ -209,7 +209,7 @@ public class AntMember extends ModelTask {
                 CheckInTaskRpcManager();
                 collectSesame();
             }
-            if (enableSesameAlchemy.getValue()) {
+            if (!TaskCommon.IS_ENERGY_TIME && enableSesameAlchemy.getValue()) {
                 doSesameAlchemy();
             }
             
