@@ -112,6 +112,12 @@ public class AntOcean extends ModelTask {
 
     @Override
     public void run() {
+        // 保底：check() 只挡 startTask，如果本轮在此之前已经启动，这里再挡一次，
+        // 否则会出现「暂停日志已打、摸鱼还在跑」的情况
+        if (TaskCommon.IS_ENERGY_TIME) {
+            Log.forest("任务跳过⏸️神奇海洋:仅收能量时间（执行中生效）");
+            return;
+        }
         try {
             rpcStoppedThisRun = false;
             if (!queryOceanStatus()) {

@@ -287,6 +287,11 @@ public class AntFarm extends ModelTask {
 
     @Override
     public void run() {
+        // 保底：check() 只挡 startTask，本轮若在窗口开始前已启动，这里再挡一次
+        if (TaskCommon.IS_ENERGY_TIME) {
+            Log.farm("任务跳过⏸️蚂蚁庄园:仅收能量时间（执行中生效）");
+            return;
+        }
         try {
             farmTaskAwardBusy = false;
             feedTroughFullThisRun = false;

@@ -174,6 +174,11 @@ public class AntMember extends ModelTask {
     
     @Override
     public void run() {
+        // 保底：check() 只挡 startTask，执行中再挡一次，避免暂停日志之后流程还继续
+        if (TaskCommon.IS_ENERGY_TIME) {
+            Log.member("任务跳过⏸️蚂蚁会员:仅收能量时间（执行中生效）");
+            return;
+        }
         try {
             //初始任务列表
             if (!Status.hasFlagToday("BlackList::initMember")) {

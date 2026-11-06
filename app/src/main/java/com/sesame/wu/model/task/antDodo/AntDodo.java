@@ -110,6 +110,11 @@ public class AntDodo extends ModelTask {
 
     @Override
     public void run() {
+        // 保底：check() 只挡 startTask，本轮若在窗口开始前已启动，这里再挡一次
+        if (TaskCommon.IS_ENERGY_TIME) {
+            Log.other("任务跳过⏸️神奇物种:仅收能量时间（执行中生效）");
+            return;
+        }
         try {
             //初始任务列表
             if (!Status.hasFlagToday("BlackList::initAntDodo")) {
