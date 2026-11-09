@@ -683,11 +683,16 @@ public class AntMember extends ModelTask {
                             }
                         }
                         String type = category.optString("type");
-                        if (Objects.equals("BROWSE", type)) {
+                        // 组类型不可靠：type 不是 BROWSE 的组里也可能混着浏览类任务，
+                        // 例如「做任务赚积分」组（type=OTHERS）里的「逛一逛淘宝斗地主」，
+                        // 其 targetBusiness 是 BROWSE#UNLIMITED#xxx。只按组类型过滤会把这类整组丢掉。
+                        // 所以这里一律按任务自身的 targetBusiness 挑出浏览类来处理。
+                        JSONArray browseOnly = pickBrowseTask(taskList);
+                        if (browseOnly.length() > 0) {
                             // doBrowseTask 内部已按 applyTask / executeTask 逐步随机延迟
-                            doubleCheck = doBrowseTask(taskList);
+                            doubleCheck = doBrowseTask(browseOnly) || doubleCheck;
                         }
-                        else {
+                        if (!Objects.equals("BROWSE", type)) {
                             ExtensionsHandle.handleAlphaRequest("antMember", "doMoreTask", category);
                             randomSleep(1500, 3000);
                         }
@@ -921,6 +926,54 @@ public class AntMember extends ModelTask {
     }
     
     // 蚂蚁积分-做浏览任务
+    /**
+     * 从任意分类里挑出 targetBusiness 首段为 BROWSE 的任务。
+     *
+     * <p>分类自带的 type 字段并不可靠——非 BROWSE 组里也可能夹着浏览类任务，
+     * 按组过滤会把它们整组丢掉，所以按任务自身判断。
+     */
+    private static JSONArray pickBrowseTask(JSONArray taskList) {
+        JSONArray picked = new JSONArray();
+        if (taskList == null) {
+            return picked;
+        }
+        for (int i = 0; i < taskList.length(); i++) {
+            JSONObject task = taskList.optJSONObject(i);
+            if (task == null) {
+                continue;
+            }
+            // 与 doBrowseTask 保持一致的取法：
+            // 旧结构在 taskConfigInfo、新结构在 simpleTaskConfig，部分版本提到 task 顶层
+            JSONObject taskConfigInfo = task.optJSONObject("taskConfigInfo");
+            JSONObject simpleTaskConfig = task.optJSONObject("simpleTaskConfig");
+            JSONObject config = taskConfigInfo != null ? taskConfigInfo : simpleTaskConfig;
+
+            JSONArray targetBusinessArr = null;
+            if (config != null) {
+                targetBusinessArr = config.optJSONArray("targetBusiness");
+            }
+            if (targetBusinessArr == null || targetBusinessArr.length() == 0) {
+                targetBusinessArr = task.optJSONArray("targetBusiness");
+            }
+            String targetBusiness = "";
+            if (targetBusinessArr != null && targetBusinessArr.length() > 0) {
+                targetBusiness = targetBusinessArr.optString(0, "");
+            }
+            if (targetBusiness.isEmpty()) {
+                if (config != null) {
+                    targetBusiness = config.optString("targetBusiness", "");
+                }
+                if (targetBusiness.isEmpty()) {
+                    targetBusiness = task.optString("targetBusiness", "");
+                }
+            }
+            if (targetBusiness.startsWith("BROWSE")) {
+                picked.put(task);
+            }
+        }
+        return picked;
+    }
+
     private Boolean doBrowseTask(JSONArray taskList) {
         boolean doubleCheck = false;
         try {
