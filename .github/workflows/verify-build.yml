@@ -117,6 +117,6 @@ jobs:
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: sesame-wu-apks-${{ github.run_number }}
+          name: sesame-wu-apks-${{ inputs.version }}
           path: app/build/outputs/apk/**/release/*.apk
           if-no-files-found: error
