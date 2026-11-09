@@ -2027,8 +2027,29 @@ public class AntFarm extends ModelTask {
                 if (taskStatus == TaskStatus.RECEIVED || taskStatus != Mode) {
                     continue;
                 }
-                if (taskStatus == TaskStatus.TODO && !doFarmTask(jo, taskSceneCode)) {
-                    continue;
+                if (taskStatus == TaskStatus.TODO) {
+                    // 多阶段任务（如「玩一玩小游戏」）每次只推进一档，需要按
+                    // rightsTimesLimit - rightsTimes 循环推满；单阶段任务 limit<=1，循环 1 次行为不变。
+                    // 上限 100：部分版本 rightsTimesLimit 编码的是肥料额而非次数，避免循环爆量。
+                    int rightsTimes = jo.optInt("rightsTimes", 0);
+                    int rightsLimit = jo.optInt("rightsTimesLimit", 0);
+                    int rounds = rightsLimit > 1 ? Math.min(rightsLimit - rightsTimes, 100) : 1;
+                    if (rounds < 1) {
+                        rounds = 1;
+                    }
+                    boolean submitted = true;
+                    for (int r = 0; r < rounds; r++) {
+                        if (!doFarmTask(jo, taskSceneCode)) {
+                            submitted = false;
+                            break;
+                        }
+                        if (r + 1 < rounds) {
+                            TimeUtil.sleep(RandomUtil.nextInt(800, 1500));
+                        }
+                    }
+                    if (!submitted) {
+                        continue;
+                    }
                 }
                 if (taskStatus == TaskStatus.FINISHED && !receiveFarmTaskAward(jo)) {
                     continue;
