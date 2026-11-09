@@ -1329,6 +1329,41 @@ public class AntForestV2 extends ModelTask {
         }
     }
 
+    /**
+     * 收能量类操作之间的随机间隔，复用「收好友能量间隔」配置（默认 80-200ms）。
+     *
+     * <p>收好友能量、PK 榜、收礼盒都是同一类高频写操作，用同一份配置，
+     * 避免一处随机、一处固定形成可识别的时间特征。
+     */
+    private void collectEnergyDelay() {
+        String cfg = collectEnergyInterval.getValue();
+        int min = 80;
+        int max = 200;
+        if (cfg != null && !cfg.trim().isEmpty()) {
+            String[] parts = cfg.trim().split("-");
+            try {
+                min = Integer.parseInt(parts[0].trim());
+                if (parts.length > 1) {
+                    max = Integer.parseInt(parts[1].trim());
+                } else {
+                    max = min;
+                }
+            } catch (Throwable ignored) {
+                // 解析失败按默认 80~200
+            }
+        }
+        if (min < 0) {
+            min = 0;
+        }
+        if (max < min) {
+            max = min;
+        }
+        if (max <= 0) {
+            return;
+        }
+        TimeUtil.sleep(max == min ? min : RandomUtil.nextInt(min, max + 1));
+    }
+
     private void collectGiftBox(JSONObject userHomeObject) {
         try {
             JSONObject giftBoxInfo = userHomeObject.optJSONObject("giftBoxInfo");
@@ -1353,7 +1388,7 @@ public class AntForestV2 extends ModelTask {
                             Log.printStackTrace(t);
                             break;
                         } finally {
-                            TimeUtil.sleep(500);
+                            collectEnergyDelay();
                         }
                     }
                 }
