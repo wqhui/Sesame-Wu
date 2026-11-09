@@ -44,6 +44,7 @@ import android.util.DisplayMetrics;
 import com.sesame.wu.hook.AuthCodeHelper;
 import com.sesame.wu.util.XHelpers;
 import com.sesame.wu.data.ConfigV2;
+import com.sesame.wu.data.Model;
 import com.sesame.wu.data.ModelFields;
 import com.sesame.wu.data.ModelGroup;
 import com.sesame.wu.data.RuntimeInfo;
@@ -220,6 +221,11 @@ public class AntForestV2 extends ModelTask {
     private StringModelField collectInterval;
     /** 收好友能量的间隔（毫秒），格式「最小-最大」，0 表示不限流。 */
     private StringModelField collectEnergyInterval;
+    /**
+     * 绿色行为（医疗健康 / 绿色租赁 / 绿植浏览 / 绿色行动）的浏览停留时长（秒），
+     * 格式「最小-最大」，每次随机取一个值；填 0 表示不等待。
+     */
+    private StringModelField greenBehaviorStay;
     private StringModelField doubleCollectInterval;
     private ChoiceModelField doubleClickType;
     private ListModelField.ListJoinCommaToStringModelField doubleCardTime;
@@ -366,6 +372,7 @@ public class AntForestV2 extends ModelTask {
         modelFields.addField(AutoAntForestVitalityTaskList = new BooleanModelField("AutoAntForestVitalityTaskList", "活力值 | 自动黑白名单", true));
         modelFields.addField(AntForestVitalityTaskList = new SelectModelField("AntForestVitalityTaskList", "活力值 | 黑名单列表", new LinkedHashSet<>(), AlipayAntForestVitalityTaskList::getList));
         modelFields.addField(collectGiftBox = new BooleanModelField("collectGiftBox", "领取礼盒", false));
+        modelFields.addField(greenBehaviorStay = new StringModelField("greenBehaviorStay", "绿色行为 | 浏览停留(秒，如 30-35)", "30-35"));
         modelFields.addField(medicalHealth = new BooleanModelField("medicalHealth", "医疗健康", false));
         modelFields.addField(greenLife = new BooleanModelField("greenLife", "森林集市", false));
         modelFields.addField(marketBrowseTask = new BooleanModelField("marketBrowseTask", "绿植浏览", false));
@@ -1705,6 +1712,8 @@ public class AntForestV2 extends ModelTask {
             }
             int remainBubble = jo.optInt("remainBubble");
             for (int i = 0; i < remainBubble; i++) {
+                // 先「打开」再等一段浏览时间，最后才生成，符合真实操作顺序
+                browseDelay();
                 ja = produceForestEnergy(scene);
                 if (ja.length() == 0 || !harvestForestEnergy(scene, ja)) {
                     return;
@@ -2009,7 +2018,8 @@ public class AntForestV2 extends ModelTask {
                 Log.i(TAG, "绿色租赁⏭️本轮无可发能量，跳过");
                 return;
             }
-            TimeUtil.sleep(200);
+            // 查机会 = 打开页面，等一段模拟浏览后再生成
+            browseDelay();
             jo = new JSONObject(AntForestRpcCall.generateEnergy());
             if (!MessageUtil.checkSuccess(TAG, jo)) {
                 return;
@@ -2122,6 +2132,50 @@ public class AntForestV2 extends ModelTask {
         }
     }
 
+    /**
+     * 绿色行为在「打开页面」与「生成能量」之间插入一段随机浏览时间。
+     *
+     * <p>官方这几类绿色行为都要求浏览约 30 秒后才计入完成，而此前实现是查完就立刻
+     * 生成（医疗健康 0 秒、绿色租赁 0.2 秒、绿植浏览 1 秒、绿色行动 0 秒），
+     * 这是最典型的脚本特征，比请求频率更容易触发风控。
+     */
+    private static void browseDelay() {
+        // 本方法被静态方法（greenRent / sendEnergyByAction）调用，配置字段是实例字段，
+        // 这里通过 Model 取回当前实例再读
+        AntForestV2 self = Model.getModel(AntForestV2.class);
+        if (self == null) {
+            return;
+        }
+        String cfg = self.greenBehaviorStay.getValue();
+        int min = 30;
+        int max = 35;
+        if (cfg != null && !cfg.trim().isEmpty()) {
+            String[] parts = cfg.trim().split("-");
+            try {
+                min = Integer.parseInt(parts[0].trim());
+                if (parts.length > 1) {
+                    max = Integer.parseInt(parts[1].trim());
+                } else {
+                    max = min;
+                }
+            } catch (Throwable ignored) {
+                // 解析失败按默认 30~35
+            }
+        }
+        if (min < 0) {
+            min = 0;
+        }
+        if (max < min) {
+            max = min;
+        }
+        if (max == 0) {
+            return;
+        }
+        int sec = max == min ? min : RandomUtil.nextInt(min, max + 1);
+        Log.i(TAG, "绿色行为浏览等待 " + sec + " 秒");
+        TimeUtil.sleep(sec * 1000L);
+    }
+
     private static void sendEnergyByAction(String sourceType) {
         try {
             // 线上逛街每天只能完成一次：当天已发出（或额度已用尽）后不再问询，
@@ -2140,6 +2194,8 @@ public class AntForestV2 extends ModelTask {
                 Status.flagToday(doneFlag);
                 return;
             }
+            // consult = 打开页面，等一段模拟浏览后再发
+            browseDelay();
             // 集市逛街能量：服务端一轮只发一份，需循环问到「拿到能量」或「额度已达上限」为止。
             // 原先只问一次——首次 send 返回 0 能量（服务端异步未落状态）时当轮就白跑了。
             // 加轮次上限，防服务端恒回可发但不产生能量时死循环
@@ -4000,6 +4056,8 @@ public class AntForestV2 extends ModelTask {
                     if ("photoguangpan".equals(actionId)) {
                         continue;
                     }
+                    // 打卡前先模拟浏览该行为页面
+                    browseDelay();
                     JSONObject jo = new JSONObject(EcoLifeRpcCall.tick(actionId, dayPoint, source));
                     if (MessageUtil.checkResultCode(TAG, jo)) {
                         Log.forest("绿色打卡🍀[" + actionName + "]");
