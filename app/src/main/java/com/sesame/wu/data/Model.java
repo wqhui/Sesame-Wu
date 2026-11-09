@@ -103,8 +103,20 @@ public abstract class Model {
         return (T) modelMap.get(modelClazz);
     }
 
+    /**
+     * 当前已实例化的模型列表。
+     *
+     * <p>initAllModel() 用反射逐个实例化，某个类构造失败时只记日志、modelArray 对应位置
+     * 留 null。这里把 null 过滤掉，避免每个调用方都得自己判空——漏一处就是 NPE。
+     */
     public static List<Model> getModelList() {
-        return readOnlyModelList;
+        List<Model> result = new ArrayList<>(modelArray.length);
+        for (Model model : modelArray) {
+            if (model != null) {
+                result.add(model);
+            }
+        }
+        return result;
     }
 
     public static synchronized void initAllModel() {
