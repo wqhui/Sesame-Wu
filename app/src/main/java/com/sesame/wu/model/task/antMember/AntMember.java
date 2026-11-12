@@ -68,6 +68,8 @@ public class AntMember extends ModelTask {
 
     /** 会员签到页任务最多翻多少页：只防服务端 pageNo 不生效时死循环。 */
     private static final int MAX_SIGN_PAGE = 8;
+    /** 游戏中心证书列表翻页上限：服务端恒回 hasNextPage=true 时原实现会无限翻页 */
+    private static final int MAX_POINT_CERT_PAGE = 30;
 
     /**
      * 当日任务列表「连续」取不到到上限：置当日标记，后续轮次不再请求，避免反复触发加重风控。
@@ -328,29 +330,39 @@ public class AntMember extends ModelTask {
             if (AntMemberTask) {
                 boolean hasNextPage = true;
                 int page = 1;
+                // 加页数上限：旧实现只信服务端的 hasNextPage，恒为 true 时会一直查下去
                 do {
                     jo = new JSONObject(AntMemberRpcCall.queryPointCert(page, 8));
                     TimeUtil.sleep(500);
                     if (!MessageUtil.checkResultCode(TAG, jo)) {
                         break;
                     }
-                    hasNextPage = jo.getBoolean("hasNextPage");
+                    hasNextPage = jo.optBoolean("hasNextPage", false);
                     page++;
-                    JSONArray jaCertList = jo.getJSONArray("certList");
+                    JSONArray jaCertList = jo.optJSONArray("certList");
+                    if (jaCertList == null) {
+                        break;
+                    }
                     for (int i = 0; i < jaCertList.length(); i++) {
-                        jo = jaCertList.getJSONObject(i);
-                        String bizTitle = jo.getString("bizTitle");
-                        AntMemberTaskListMap.add(bizTitle, bizTitle);
+                        jo = jaCertList.optJSONObject(i);
+                        if (jo == null) {
+                            continue;
+                        }
+                        String bizTitle = jo.optString("bizTitle", "");
+                        if (!bizTitle.isEmpty()) {
+                            AntMemberTaskListMap.add(bizTitle, bizTitle);
+                        }
                     }
                 }
-                while (hasNextPage);
+                while (hasNextPage && page <= MAX_POINT_CERT_PAGE);
                 
                 jo = new JSONObject(AntMemberRpcCall.queryAllStatusTaskList());
                 // 该接口成功时没有 success/resultCode，只有 availableTaskList，
                 // 用通用 checkResultCode 会一律判失败，候选就永远登记不上（与运行期是同一个坑）
                 if (jo.has("availableTaskList")) {
-                    JSONArray availableTaskList = jo.getJSONArray("availableTaskList");
-                    for (int i = 0; i < availableTaskList.length(); i++) {
+                    // 两个数组彼此独立：availableTaskList 缺失时不能让 taskHistoryList 也一起跳过（M 同款写法）
+                    JSONArray availableTaskList = jo.optJSONArray("availableTaskList");
+                    for (int i = 0; availableTaskList != null && i < availableTaskList.length(); i++) {
                         JSONObject task = availableTaskList.optJSONObject(i);
                         // 新结构改用 simpleTaskConfig(title)，旧结构是 taskConfigInfo(name)；
                         // 用 getJSONObject/getString 取值时缺字段会抛异常，整个候选列表都建不出来
@@ -369,8 +381,8 @@ public class AntMember extends ModelTask {
                             AntMemberTaskListMap.add(name, name);
                         }
                     }
-                    JSONArray taskHistoryList = jo.getJSONArray("taskHistoryList");
-                    for (int i = 0; i < taskHistoryList.length(); i++) {
+                    JSONArray taskHistoryList = jo.optJSONArray("taskHistoryList");
+                    for (int i = 0; taskHistoryList != null && i < taskHistoryList.length(); i++) {
                         JSONObject task = taskHistoryList.optJSONObject(i);
                         JSONObject cfg = task == null ? null : task.optJSONObject("taskConfigInfo");
                         if (cfg == null && task != null) {
@@ -461,17 +473,29 @@ public class AntMember extends ModelTask {
             if (collectSesame) {
                 jo = new JSONObject(AntMemberRpcCall.queryHome());
                 if (MessageUtil.checkResultCode(TAG, jo)) {
-                    JSONObject entrance = jo.getJSONObject("entrance");
+                    JSONObject entrance = jo.optJSONObject("entrance");
+                    if (entrance == null) {
+                        return;
+                    }
                     if (entrance.optBoolean("openApp")) {
                         jo = new JSONObject(AntMemberRpcCall.CreditAccumulateStrategyRpcManager());
                         TimeUtil.sleep(300);
                         if (MessageUtil.checkResultCode(TAG, jo)) {
                             if (jo.has("data")) {
-                                JSONObject data = jo.getJSONObject("data");
+                                JSONObject data = jo.optJSONObject("data");
+                                if (data == null) {
+                                    return;
+                                }
                                 if (data.has("completeVOS")) {
-                                    JSONArray completeVOS = data.getJSONArray("completeVOS");
+                                    JSONArray completeVOS = data.optJSONArray("completeVOS");
+                                    if (completeVOS == null) {
+                                        return;
+                                    }
                                     for (int i = 0; i < completeVOS.length(); i++) {
-                                        JSONObject toCompleteVO = completeVOS.getJSONObject(i);
+                                        JSONObject toCompleteVO = completeVOS.optJSONObject(i);
+                                        if (toCompleteVO == null) {
+                                            continue;
+                                        }
                                         String title = toCompleteVO.optString("title");
                                         if (title.isEmpty()) {
                                             continue;
@@ -480,9 +504,15 @@ public class AntMember extends ModelTask {
                                     }
                                 }
                                 if (data.has("toCompleteVOS")) {
-                                    JSONArray toCompleteVOS = data.getJSONArray("toCompleteVOS");
+                                    JSONArray toCompleteVOS = data.optJSONArray("toCompleteVOS");
+                                    if (toCompleteVOS == null) {
+                                        return;
+                                    }
                                     for (int i = 0; i < toCompleteVOS.length(); i++) {
-                                        JSONObject toCompleteVO = toCompleteVOS.getJSONObject(i);
+                                        JSONObject toCompleteVO = toCompleteVOS.optJSONObject(i);
+                                        if (toCompleteVO == null) {
+                                            continue;
+                                        }
                                         String title = toCompleteVO.optString("title");
                                         if (title.isEmpty()) {
                                             continue;
@@ -540,8 +570,8 @@ public class AntMember extends ModelTask {
                 JSONObject jo = new JSONObject(AntMemberRpcCall.queryMemberSigninCalendar());
                 TimeUtil.sleep(500);
                 if (MessageUtil.checkResultCode(TAG, jo)) {
-                    if (jo.getBoolean("autoSignInSuccess")) {
-                        Log.member("会员任务📅签到[坚持" + jo.getString("signinSumDay") + "天]#获得[" + jo.getString("signinPoint") + "积分]");
+                    if (jo.optBoolean("autoSignInSuccess", false)) {
+                        Log.member("会员任务📅签到[坚持" + jo.optString("signinSumDay", "") + "天]#获得[" + jo.optString("signinPoint", "") + "积分]");
                     }
                     Status.flagToday("member::sign");
                 }
@@ -594,17 +624,23 @@ public class AntMember extends ModelTask {
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return;
             }
-            boolean hasNextPage = jo.getBoolean("hasNextPage");
-            JSONArray jaCertList = jo.getJSONArray("certList");
+            boolean hasNextPage = jo.optBoolean("hasNextPage", false);
+            JSONArray jaCertList = jo.optJSONArray("certList");
+            if (jaCertList == null) {
+                return;
+            }
             for (int i = 0; i < jaCertList.length(); i++) {
-                jo = jaCertList.getJSONObject(i);
-                String bizTitle = jo.getString("bizTitle");
+                jo = jaCertList.optJSONObject(i);
+                if (jo == null) {
+                    continue;
+                }
+                String bizTitle = jo.optString("bizTitle", "");
                 //黑名单任务跳过
                 if (AntMemberTaskList.getValue().contains(bizTitle)) {
                     continue;
                 }
-                String id = jo.getString("id");
-                int pointAmount = jo.getInt("pointAmount");
+                String id = jo.optString("id", "");
+                int pointAmount = jo.optInt("pointAmount", 0);
                 jo = new JSONObject(AntMemberRpcCall.receivePointByUser(id));
                 if (MessageUtil.checkResultCode(TAG, jo)) {
                     Log.member("会员任务🎖️领取[" + bizTitle + "]奖励#获得[" + pointAmount + "积分]");
@@ -679,7 +715,10 @@ public class AntMember extends ModelTask {
                         }
                         return false;
                     }
-                    JSONArray categoryTaskList = jo.getJSONArray("categoryTaskList");
+                    JSONArray categoryTaskList = jo.optJSONArray("categoryTaskList");
+                    if (categoryTaskList == null) {
+                        break;
+                    }
                     // 首页就没有任务列表：说明今日取不到任务(风控/1009 时也表现为空)，按失败记账。
                     // 后续页为空只是分页到底，不能据此记账（否则会连带跳过本日的其它任务接口）。
                     if (categoryTaskList.length() == 0) {
@@ -701,7 +740,10 @@ public class AntMember extends ModelTask {
                     // 本页是否出现了没见过的任务 id：一个都没有说明分页到底了
                     boolean anyNewTask = false;
                     for (int i = 0; i < categoryTaskList.length(); i++) {
-                        JSONObject category = categoryTaskList.getJSONObject(i);
+                        JSONObject category = categoryTaskList.optJSONObject(i);
+                        if (category == null) {
+                            continue;
+                        }
                         // 先判断该分类有没有任务列表：无列表说明没有可做的任务，不做 doMoreTask 上报
                         JSONArray taskList = category.optJSONArray("taskList");
                         if (taskList == null || taskList.length() == 0) {
@@ -731,7 +773,7 @@ public class AntMember extends ModelTask {
                             }
                             // 分页去重键：旧结构 id，新结构 configId
                             if (cfg.has("id")) {
-                                if (seenTaskIds.add(cfg.getLong("id"))) {
+                                if (seenTaskIds.add(cfg.optLong("id", 0L))) {
                                     anyNewTask = true;
                                 }
                             }
@@ -1016,13 +1058,22 @@ public class AntMember extends ModelTask {
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return;
             }
-            jo = jo.getJSONObject("data");
-            JSONArray promiseSimpleTemplates = jo.getJSONArray("promiseSimpleTemplates");
+            jo = jo.optJSONObject("data");
+            if (jo == null) {
+                return;
+            }
+            JSONArray promiseSimpleTemplates = jo.optJSONArray("promiseSimpleTemplates");
+            if (promiseSimpleTemplates == null) {
+                return;
+            }
             for (int i = 0; i < promiseSimpleTemplates.length(); i++) {
-                jo = promiseSimpleTemplates.getJSONObject(i);
-                String templateId = jo.getString("templateId");
-                String promiseName = jo.getString("promiseName");
-                String status = jo.getString("status");
+                jo = promiseSimpleTemplates.optJSONObject(i);
+                if (jo == null) {
+                    continue;
+                }
+                String templateId = jo.optString("templateId", "");
+                String promiseName = jo.optString("promiseName", "");
+                String status = jo.optString("status", "");
                 if ("un_join".equals(status) && promiseList.getValue().contains(templateId)) {
                     promiseJoin(querySingleTemplate(templateId));
                 }
@@ -1042,30 +1093,68 @@ public class AntMember extends ModelTask {
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return null;
             }
-            jo = jo.getJSONObject("data");
+            jo = jo.optJSONObject("data");
+            if (jo == null) {
+                return null;
+            }
             JSONObject result = new JSONObject();
             
             result.put("joinFromOuter", false);
-            result.put("templateId", jo.getString("templateId"));
-            result.put("autoRenewStatus", Boolean.valueOf(jo.getString("autoRenewStatus")));
+            result.put("templateId", jo.optString("templateId", ""));
+            result.put("autoRenewStatus", Boolean.valueOf(jo.optString("autoRenewStatus", "")));
             
-            JSONObject joinGuarantyRule = jo.getJSONObject("joinGuarantyRule");
-            joinGuarantyRule.put("selectValue", joinGuarantyRule.getJSONArray("canSelectValues").getString(0));
+            JSONObject joinGuarantyRule = jo.optJSONObject("joinGuarantyRule");
+            if (joinGuarantyRule == null) {
+                return null;
+            }
+            // canSelectValues 是字符串数组，直接 [0] 在缺失/空数组时抛 JSONException，
+            // 整个模板构造都返回 null；这里判空后返回 null，语义与其它必填字段一致
+            JSONArray joinGuarantyValues = joinGuarantyRule.optJSONArray("canSelectValues");
+            if (joinGuarantyValues == null || joinGuarantyValues.length() == 0) {
+                Log.record("会员模板 跳过[" + jo.optString("templateId", "") + "]#缺少字段 joinGuarantyRule.canSelectValues");
+                return null;
+            }
+            joinGuarantyRule.put("selectValue", joinGuarantyValues.getString(0));
             joinGuarantyRule.remove("canSelectValues");
             result.put("joinGuarantyRule", joinGuarantyRule);
             
-            JSONObject joinRule = jo.getJSONObject("joinRule");
-            joinRule.put("selectValue", joinRule.getJSONArray("canSelectValues").getString(0));
+            JSONObject joinRule = jo.optJSONObject("joinRule");
+            if (joinRule == null) {
+                return null;
+            }
+            JSONArray joinRuleValues = joinRule.optJSONArray("canSelectValues");
+            if (joinRuleValues == null || joinRuleValues.length() == 0) {
+                Log.record("会员模板 跳过[" + jo.optString("templateId", "") + "]#缺少字段 joinRule.canSelectValues");
+                return null;
+            }
+            joinRule.put("selectValue", joinRuleValues.getString(0));
             joinRule.remove("joinRule");
             result.put("joinRule", joinRule);
             
-            JSONObject periodTargetRule = jo.getJSONObject("periodTargetRule");
-            periodTargetRule.put("selectValue", periodTargetRule.getJSONArray("canSelectValues").getString(0));
+            JSONObject periodTargetRule = jo.optJSONObject("periodTargetRule");
+            if (periodTargetRule == null) {
+                return null;
+            }
+            JSONArray periodTargetValues = periodTargetRule.optJSONArray("canSelectValues");
+            if (periodTargetValues == null || periodTargetValues.length() == 0) {
+                Log.record("会员模板 跳过[" + jo.optString("templateId", "") + "]#缺少字段 periodTargetRule.canSelectValues");
+                return null;
+            }
+            periodTargetRule.put("selectValue", periodTargetValues.getString(0));
             periodTargetRule.remove("canSelectValues");
             result.put("periodTargetRule", periodTargetRule);
             
-            JSONObject dataSourceRule = jo.getJSONObject("dataSourceRule");
-            dataSourceRule.put("selectValue", dataSourceRule.getJSONArray("canSelectValues").getJSONObject(0).getString("merchantId"));
+            JSONObject dataSourceRule = jo.optJSONObject("dataSourceRule");
+            if (dataSourceRule == null) {
+                return null;
+            }
+            JSONArray dataSourceValues = dataSourceRule.optJSONArray("canSelectValues");
+            JSONObject firstDataSource = dataSourceValues == null ? null : dataSourceValues.optJSONObject(0);
+            if (firstDataSource == null) {
+                Log.record("会员模板 跳过[" + jo.optString("templateId", "") + "]#缺少字段 dataSourceRule.canSelectValues");
+                return null;
+            }
+            dataSourceRule.put("selectValue", firstDataSource.optString("merchantId", ""));
             dataSourceRule.remove("canSelectValues");
             result.put("dataSourceRule", dataSourceRule);
             return result;
@@ -1086,8 +1175,11 @@ public class AntMember extends ModelTask {
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return;
             }
-            jo = jo.getJSONObject("data");
-            String promiseName = jo.getString("promiseName");
+            jo = jo.optJSONObject("data");
+            if (jo == null) {
+                return;
+            }
+            String promiseName = jo.optString("promiseName", "");
             Log.member("生活记录📝加入[" + promiseName + "]");
         }
         catch (Throwable t) {
@@ -1158,10 +1250,20 @@ public class AntMember extends ModelTask {
         boolean doubleCheck = false;
         try {
             for (int i = 0; i < taskList.length(); i++) {
-                JSONObject task = taskList.getJSONObject(i);
-                if (task.getBoolean("hybrid")) {
-                    int periodCurrentCount = Integer.parseInt(task.getJSONObject("extInfo").getString("PERIOD_CURRENT_COUNT"));
-                    int periodTargetCount = Integer.parseInt(task.getJSONObject("extInfo").getString("PERIOD_TARGET_COUNT"));
+                JSONObject task = taskList.optJSONObject(i);
+                if (task == null) {
+                    continue;
+                }
+                if (task.optBoolean("hybrid", false)) {
+                    // extInfo 缺失时链式裸取抛异常；即使存在，Integer.parseInt("") 也会抛 NumberFormatException，
+                    // 直接改用 optInt，缺字段按 0 计
+                    JSONObject extInfo = task.optJSONObject("extInfo");
+                    if (extInfo == null) {
+                        Log.record("会员任务 跳过[" + task.optString("title", "") + "]#缺少字段 extInfo");
+                        continue;
+                    }
+                    int periodCurrentCount = extInfo.optInt("PERIOD_CURRENT_COUNT", 0);
+                    int periodTargetCount = extInfo.optInt("PERIOD_TARGET_COUNT", 0);
                     int count = periodTargetCount > periodCurrentCount ? periodTargetCount - periodCurrentCount : 0;
                     if (count > 0) {
                         // 必须用 |= ：写成 doubleCheck = doubleCheck || doBrowseTask(...) 时，
@@ -1639,8 +1741,14 @@ public class AntMember extends ModelTask {
                 Log.i(TAG + ".goldBillCollect.goldBillCollect", jsonObject.optString("resultDesc"));
                 return;
             }
-            JSONObject object = jsonObject.getJSONObject("result");
-            JSONArray jsonArray = object.getJSONArray("collectedList");
+            JSONObject object = jsonObject.optJSONObject("result");
+            if (object == null) {
+                return;
+            }
+            JSONArray jsonArray = object.optJSONArray("collectedList");
+            if (jsonArray == null) {
+                return;
+            }
             int length = jsonArray.length();
             if (length == 0) {
                 return;
@@ -1664,8 +1772,11 @@ public class AntMember extends ModelTask {
         try {
             JSONObject jsonObject = new JSONObject(AntMemberRpcCall.batchReceivePointBall());
             if (MessageUtil.checkSuccess(TAG, jsonObject)) {
-                JSONObject dataObj = jsonObject.getJSONObject("data");
-                String totalAmount = dataObj.getString("totalAmount");
+                JSONObject dataObj = jsonObject.optJSONObject("data");
+                if (dataObj == null) {
+                    return;
+                }
+                String totalAmount = dataObj.optString("totalAmount", "");
                 Log.member("游戏中心🎮批量领取#获得[" + totalAmount + "玩乐豆]");
             }
         }
@@ -1684,8 +1795,10 @@ public class AntMember extends ModelTask {
         try {
             JSONObject jsonObject = new JSONObject(AntMemberRpcCall.continueSignIn());
             if (MessageUtil.checkSuccess(TAG, jsonObject)) {
-                JSONObject toastModule = jsonObject.getJSONObject("data").getJSONObject("autoSignInToastModule");
-                String desc = toastModule.getString("desc");
+                // 签到成功但缺 data/autoSignInToastModule 时只影响日志文案，不能因此把签到判成失败
+                JSONObject signData = jsonObject.optJSONObject("data");
+                JSONObject toastModule = signData == null ? null : signData.optJSONObject("autoSignInToastModule");
+                String desc = toastModule == null ? "" : toastModule.optString("desc", "");
                 String beanNum = desc.substring(desc.indexOf("玩乐豆+") + 4);
                 Log.member("游戏中心🎮每日签到#获得[" + beanNum + "玩乐豆]");
                 return true;
@@ -1707,15 +1820,15 @@ public class AntMember extends ModelTask {
         try {
             // 本项目仍只处理 actionType=VIEW：Sesame-M 在接入前已把这里放开成"各类都尝试一次"，
             // 那属于行为放开而非框架接入，本次不跟着改，避免把真实请求面放大
-            if (!"VIEW".equals(taskObj.getString("actionType"))) {
+            if (!"VIEW".equals(taskObj.optString("actionType", ""))) {
                 return;
             }
             
-            String taskId = taskObj.getString("taskId");
-            String subTitle = taskObj.getString("subTitle");
-            String taskStatus = taskObj.getString("taskStatus");
+            String taskId = taskObj.optString("taskId", "");
+            String subTitle = taskObj.optString("subTitle", "");
+            String taskStatus = taskObj.optString("taskStatus", "");
             String actionType = taskObj.optString("actionType");
-            int prizeAmount = taskObj.getInt("prizeAmount");
+            int prizeAmount = taskObj.optInt("prizeAmount", 0);
             
             // 黑名单任务跳过：自动拉黑写的就是本列表，不认它黑名单就形同虚设
             if (AntMemberTaskList.getValue().contains(subTitle)) {
@@ -1848,12 +1961,28 @@ public class AntMember extends ModelTask {
             if (!jsonObject.has("data")) {
                 return;
             }
-            JSONArray taskModuleList = jsonObject.getJSONObject("data").getJSONArray("taskModuleList");
+            // data/taskModuleList 链式裸取，缺任一层整轮任务都不做
+            JSONObject modularData = jsonObject.optJSONObject("data");
+            JSONArray taskModuleList = modularData == null ? null : modularData.optJSONArray("taskModuleList");
+            if (taskModuleList == null) {
+                Log.record("会员任务 跳过#缺少字段 data.taskModuleList");
+                return;
+            }
             for (int i = 0; i < taskModuleList.length(); i++) {
-                JSONObject moduleObj = taskModuleList.getJSONObject(i);
-                JSONArray taskList = moduleObj.getJSONArray("taskList");
+                JSONObject moduleObj = taskModuleList.optJSONObject(i);
+                if (moduleObj == null) {
+                    continue;
+                }
+                JSONArray taskList = moduleObj.optJSONArray("taskList");
+                if (taskList == null) {
+                    continue;
+                }
                 for (int j = 0; j < taskList.length(); j++) {
-                    processTask(taskList.getJSONObject(j));
+                    JSONObject moduleTask = taskList.optJSONObject(j);
+                    if (moduleTask == null) {
+                        continue;
+                    }
+                    processTask(moduleTask);
                 }
             }
             verifyPendingTasks();
@@ -2052,8 +2181,10 @@ public class AntMember extends ModelTask {
             String response = ApplicationHook.requestString("com.alipay.gamecenteruprod.biz.rpc.v3.queryPointBallList", "[{}]");
             JSONObject jsonObject = new JSONObject(response);
             if (MessageUtil.checkSuccess(TAG, jsonObject)) {
-                JSONArray pointBallList = jsonObject.getJSONObject("data").getJSONArray("pointBallList");
-                if (pointBallList.length() > 0) {
+                // M 已修：data/pointBallList 逐层判空，缺字段按「今天没有小球」处理
+                JSONObject ballData = jsonObject.optJSONObject("data");
+                JSONArray pointBallList = ballData == null ? null : ballData.optJSONArray("pointBallList");
+                if (pointBallList != null && pointBallList.length() > 0) {
                     batchReceivePointBall();
                 }
             }
@@ -2075,10 +2206,16 @@ public class AntMember extends ModelTask {
         try {
             JSONObject jsonObject = new JSONObject(AntMemberRpcCall.queryPointBallList());
             if (MessageUtil.checkSuccess(TAG, jsonObject)) {
-                JSONObject dataObj = jsonObject.getJSONObject("data");
+                JSONObject dataObj = jsonObject.optJSONObject("data");
+                if (dataObj == null) {
+                    return;
+                }
                 if (dataObj.has("signInBallModule")) {
-                    JSONObject signInModule = dataObj.getJSONObject("signInBallModule");
-                    if (!signInModule.getBoolean("signInStatus")) {
+                    JSONObject signInModule = dataObj.optJSONObject("signInBallModule");
+                    if (signInModule == null) {
+                        return;
+                    }
+                    if (!signInModule.optBoolean("signInStatus", false)) {
                         if (dailySignIn()) {
                             Status.flagToday("gameCenterSignIn");
                         }
@@ -2163,7 +2300,11 @@ public class AntMember extends ModelTask {
                 Log.record("会员积分[未实名账号无可兑换权益]");
                 return;
             }
-            collectMemberPointExchangeBenefit(jo.getJSONArray("entityInfoList"));
+            // has() 只证明 key 存在，值为 null 时裸取会抛异常中断整个权益流程
+            JSONArray entityInfoList = jo.optJSONArray("entityInfoList");
+            if (entityInfoList != null) {
+                collectMemberPointExchangeBenefit(entityInfoList);
+            }
             // 权益导航分类：对齐 Sesame-AG 49dd3818，按分类码分页补齐完整目录。
             // 原先只登记公益道具一个 deliveryId 的权益，导致「权益列表」几乎选不到东西。
             for (String naviCode : MEMBER_BENEFIT_NAVI_CODES) {
@@ -2283,7 +2424,10 @@ public class AntMember extends ModelTask {
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return;
             }
-            JSONObject entrance = jo.getJSONObject("entrance");
+            JSONObject entrance = jo.optJSONObject("entrance");
+            if (entrance == null) {
+                return;
+            }
             if (!entrance.optBoolean("openApp")) {
                 Log.member("芝麻信用💌未开通");
                 return;
@@ -2297,17 +2441,26 @@ public class AntMember extends ModelTask {
             if (!jo.has("data")) {
                 return;
             }
-            JSONObject data = jo.getJSONObject("data");
+            JSONObject data = jo.optJSONObject("data");
+            if (data == null) {
+                return;
+            }
             if (!data.has("toCompleteVOS")) {
                 return;
             }
-            JSONArray toCompleteVOS = data.getJSONArray("toCompleteVOS");
+            JSONArray toCompleteVOS = data.optJSONArray("toCompleteVOS");
+            if (toCompleteVOS == null) {
+                return;
+            }
             // 本轮已上报的任务（templateId → 标题）及上报前完成度，用于回读校验
             LinkedHashMap<String, String> reported = new LinkedHashMap<>();
             LinkedHashMap<String, Integer> beforeComplete = new LinkedHashMap<>();
             for (int i = 0; i < toCompleteVOS.length(); i++) {
-                JSONObject toCompleteVO = toCompleteVOS.getJSONObject(i);
-                String taskTitle = toCompleteVO.has("title") ? toCompleteVO.getString("title") : "未知任务";
+                JSONObject toCompleteVO = toCompleteVOS.optJSONObject(i);
+                if (toCompleteVO == null) {
+                    continue;
+                }
+                String taskTitle = toCompleteVO.has("title") ? toCompleteVO.optString("title", "") : "未知任务";
                 //黑名单任务跳过
                 if (MemberCreditSesameTaskList.getValue().contains(taskTitle)) {
                     continue;
@@ -2325,8 +2478,8 @@ public class AntMember extends ModelTask {
                     continue;
                 }
                 
-                String taskTemplateId = toCompleteVO.getString("templateId");
-                int needCompleteNum = toCompleteVO.has("needCompleteNum") ? toCompleteVO.getInt("needCompleteNum") : 1;
+                String taskTemplateId = toCompleteVO.optString("templateId", "");
+                int needCompleteNum = toCompleteVO.has("needCompleteNum") ? toCompleteVO.optInt("needCompleteNum", 0) : 1;
                 int completedNum = toCompleteVO.optInt("completedNum", 0);
                 String s = null;
                 String recordId = null;
@@ -2358,7 +2511,9 @@ public class AntMember extends ModelTask {
                     MessageUtil.checkResultCodeAndMarkTaskBlackList("MemberCreditSesameTaskList", taskTitle, responseObj);
                     TimeUtil.sleep(200);
                     if (MessageUtil.checkResultCode(TAG, responseObj)) {
-                        recordId = responseObj.getJSONObject("data").getString("recordId");
+                        // 领取成功但缺 data 时 recordId 保持空，后续按「无记录」处理
+                        JSONObject recordData = responseObj.optJSONObject("data");
+                        recordId = recordData == null ? "" : recordData.optString("recordId", "");
                     } else {
                         // join 被「存在进行中的生活记录」拒绝：刷新列表取本任务那条继续推完
                         if ("PROMISE_HAS_PROCESSING_TEMPLATE".equals(responseObj.optString("resultCode"))) {
@@ -2421,15 +2576,21 @@ public class AntMember extends ModelTask {
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
                     return;
                 }
-                JSONArray ja = jo.getJSONArray("creditFeedbackVOS");
+                JSONArray ja = jo.optJSONArray("creditFeedbackVOS");
+                if (ja == null) {
+                    continue;
+                }
                 for (int j = 0; j < ja.length(); j++) {
-                    jo = ja.getJSONObject(j);
-                    if (!"UNCLAIMED".equals(jo.getString("status"))) {
+                    jo = ja.optJSONObject(j);
+                    if (jo == null) {
+                        continue;
+                    }
+                    if (!"UNCLAIMED".equals(jo.optString("status", ""))) {
                         continue;
                     }
                     //String title = jo.getString("title");
-                    String creditFeedbackId = jo.getString("creditFeedbackId");
-                    String potentialSize = jo.getString("potentialSize");
+                    String creditFeedbackId = jo.optString("creditFeedbackId", "");
+                    String potentialSize = jo.optString("potentialSize", "");
                     jo = new JSONObject(AntMemberRpcCall.collectCreditFeedback(creditFeedbackId));
                     TimeUtil.sleep(300);
                     if (MessageUtil.checkResultCode(TAG, jo)) {
@@ -2444,16 +2605,20 @@ public class AntMember extends ModelTask {
                 LinkedHashMap<String, String> freshProgress = new LinkedHashMap<>();
                 boolean freshOk = false;
                 if (MessageUtil.checkResultCode(TAG, freshJo) && freshJo.has("data")) {
-                    JSONArray freshList = freshJo.getJSONObject("data").optJSONArray("toCompleteVOS");
+                    JSONObject freshData = freshJo.optJSONObject("data");
+                    JSONArray freshList = freshData == null ? null : freshData.optJSONArray("toCompleteVOS");
                     freshOk = true;
                     if (freshList != null) {
                         for (int k = 0; k < freshList.length(); k++) {
-                            JSONObject vo = freshList.getJSONObject(k);
+                            JSONObject vo = freshList.optJSONObject(k);
+                            if (vo == null) {
+                                continue;
+                            }
                             String tid = vo.optString("templateId", "");
                             if (tid.isEmpty()) {
                                 continue;
                             }
-                            int need = vo.has("needCompleteNum") ? vo.getInt("needCompleteNum") : 1;
+                            int need = vo.has("needCompleteNum") ? vo.optInt("needCompleteNum", 0) : 1;
                             if (vo.optBoolean("finishFlag", false) || "已完成".equals(vo.optString("actionText", ""))) {
                                 freshProgress.put(tid, "DONE");
                             } else {
@@ -2503,7 +2668,10 @@ public class AntMember extends ModelTask {
             if (!MessageUtil.checkResultCode(TAG, jo)) {
                 return;
             }
-            JSONArray creditFeedbackVOS = jo.getJSONArray("creditFeedbackVOS");
+            JSONArray creditFeedbackVOS = jo.optJSONArray("creditFeedbackVOS");
+            if (creditFeedbackVOS == null) {
+                return;
+            }
             if (creditFeedbackVOS.length() != 0) {
                 jo = new JSONObject(AntMemberRpcCall.collectAllCreditFeedback());
                 if (MessageUtil.checkResultCode(TAG, jo)) {
@@ -3081,7 +3249,10 @@ public class AntMember extends ModelTask {
                 String res = AntMemberRpcCall.alchemyCompleteTimeLimitedTask(templateId);
                 JSONObject resJo = new JSONObject(res);
                 if (checkAlchemyRes(resJo) && resJo.optJSONObject("data") != null) {
-                    JSONObject d = resJo.getJSONObject("data");
+                    JSONObject d = resJo.optJSONObject("data");
+                    if (d == null) {
+                        return;
+                    }
                     Log.member("芝麻炼金⚗[领取成功] " + taskName + "#获得" + d.optInt("zmlNum", 0) + "粒");
                 }
                 else {
@@ -3104,10 +3275,16 @@ public class AntMember extends ModelTask {
             String response = AntMemberRpcCall.queryRecommendTask();
             JSONObject jsonResponse = new JSONObject(response);
             // 获取 taskDetailList 数组
-            JSONArray taskDetailList = jsonResponse.getJSONArray("taskDetailList");
+            JSONArray taskDetailList = jsonResponse.optJSONArray("taskDetailList");
+            if (taskDetailList == null) {
+                return;
+            }
             // 遍历 taskDetailList
             for (int i = 0; i < taskDetailList.length(); i++) {
-                JSONObject taskDetail = taskDetailList.getJSONObject(i);
+                JSONObject taskDetail = taskDetailList.optJSONObject(i);
+                if (taskDetail == null) {
+                    continue;
+                }
                 // 检查 "canAccess" 的值是否为 true
                 boolean canAccess = taskDetail.optBoolean("canAccess", false);
                 if (!canAccess) {
@@ -3149,18 +3326,27 @@ public class AntMember extends ModelTask {
                     continue;
                 }
                 // 获取 taskId
-                String taskId = taskMaterial.getString("taskId");
+                String taskId = taskMaterial.optString("taskId", "");
                 // 调用 trigger 方法
                 String triggerResponse = AntMemberRpcCall.trigger(taskId);
                 JSONObject triggerResult = new JSONObject(triggerResponse);
                 // 检查 success 字段
-                boolean success = triggerResult.getBoolean("success");
+                boolean success = triggerResult.optBoolean("success", false);
                 if (success) {
                     // 从 triggerResponse 中获取 prizeSendInfo 数组
-                    JSONArray prizeSendInfo = triggerResult.getJSONArray("prizeSendInfo");
+                    JSONArray prizeSendInfo = triggerResult.optJSONArray("prizeSendInfo");
+                    if (prizeSendInfo == null) {
+                        continue;
+                    }
                     if (prizeSendInfo.length() > 0) {
-                        JSONObject prizeInfo = prizeSendInfo.getJSONObject(0);
-                        JSONObject extInfo = prizeInfo.getJSONObject("extInfo");
+                        JSONObject prizeInfo = prizeSendInfo.optJSONObject(0);
+                        if (prizeInfo == null) {
+                            continue;
+                        }
+                        JSONObject extInfo = prizeInfo.optJSONObject("extInfo");
+                        if (extInfo == null) {
+                            continue;
+                        }
                         // 获取 promoCampName
                         String promoCampName = extInfo.optString("promoCampName", "Unknown Promo Campaign");
                         // 输出日志信息
@@ -3181,13 +3367,19 @@ public class AntMember extends ModelTask {
             String response = AntMemberRpcCall.queryOrdinaryTask();
             JSONObject jsonResponse = new JSONObject(response);
             // 检查是否请求成功
-            if (jsonResponse.getBoolean("success")) {
+            if (jsonResponse.optBoolean("success", false)) {
                 // 获取任务详细列表
-                JSONArray taskDetailList = jsonResponse.getJSONArray("taskDetailList");
+                JSONArray taskDetailList = jsonResponse.optJSONArray("taskDetailList");
+                if (taskDetailList == null) {
+                    return;
+                }
                 // 遍历任务详细列表
                 for (int i = 0; i < taskDetailList.length(); i++) {
                     // 获取当前任务对象
-                    JSONObject task = taskDetailList.getJSONObject(i);
+                    JSONObject task = taskDetailList.optJSONObject(i);
+                    if (task == null) {
+                        continue;
+                    }
                     // 提取任务 ID、处理状态和触发类型
                     String taskId = task.optString("taskId");
                     String taskProcessStatus = task.optString("taskProcessStatus");
@@ -3201,11 +3393,16 @@ public class AntMember extends ModelTask {
                         // 解析 sendtriggerResponse
                         JSONObject sendTriggerJson = new JSONObject(sendtriggerResponse);
                         // 判断任务是否成功
-                        if (sendTriggerJson.getBoolean("success")) {
+                        if (sendTriggerJson.optBoolean("success", false)) {
                             // 从 sendtriggerResponse 中获取 prizeSendInfo 数组
-                            JSONArray prizeSendInfo = sendTriggerJson.getJSONArray("prizeSendInfo");
+                            JSONArray prizeSendInfo = sendTriggerJson.optJSONArray("prizeSendInfo");
+                            if (prizeSendInfo == null) {
+                                continue;
+                            }
                             // 获取 prizeName
-                            String prizeName = prizeSendInfo.getJSONObject(0).getString("prizeName");
+                            // 数组为空时 [0] 会抛异常，缺奖励名只影响日志
+                            JSONObject firstPrize = prizeSendInfo.optJSONObject(0);
+                            String prizeName = firstPrize == null ? "" : firstPrize.optString("prizeName", "");
                             Log.member("我的快递💌完成[" + prizeName + "]");
                         }
                         else {
@@ -3233,8 +3430,8 @@ public class AntMember extends ModelTask {
             if (!signed) {
                 jo = new JSONObject(AntMemberRpcCall.openBoxAward());
                 if (MessageUtil.checkSuccess(TAG, jo)) {
-                    int amount = jo.getInt("amount");
-                    int consecutiveSignInDays = jo.getInt("consecutiveSignInDays");
+                    int amount = jo.optInt("amount", 0);
+                    int consecutiveSignInDays = jo.optInt("consecutiveSignInDays", 0);
                     Log.member("攒消费金💰签到[坚持" + consecutiveSignInDays + "天]#获得[" + amount + "消费金]");
                 }
             }
