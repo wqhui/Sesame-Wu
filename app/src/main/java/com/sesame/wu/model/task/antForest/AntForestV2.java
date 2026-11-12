@@ -1667,8 +1667,10 @@ public class AntForestV2 extends ModelTask {
      */
     private void collectRobExpandEnergy() {
         try {
-            JSONObject joHomePage = new JSONObject(AntForestRpcCall.queryHomePage());
-            if (MessageUtil.checkResultCode(TAG, joHomePage)) {
+            // 复用 querySelfHome：组队版首页把个人数据放在 teamHomeResult.mainMember 下，
+            // 直接读根对象取不到在用道具，表现就是组队模式下倍卡整轮静默不收取
+            JSONObject joHomePage = querySelfHome();
+            if (joHomePage != null) {
                 collectRobExpandEnergy(joHomePage);
             }
         } catch (Throwable th) {
@@ -1689,12 +1691,20 @@ public class AntForestV2 extends ModelTask {
                 ja = joHomePage.optJSONArray("usingUserProps");
             }
             if (ja == null) {
+                Log.i(TAG, "额外能量⏭️未在使用倍卡");
                 return;
             }
             for (int i = 0; i < ja.length(); i++) {
-                JSONObject jo = ja.getJSONObject(i);
-                if (PropGroup.robExpandCard.name().equals(jo.getString("propGroup"))) {
-                    collectRobExpandEnergy(jo.optString("extInfo"), jo.getString("propId"), jo.getString("propType"));
+                // 单个道具结构异常不能中断整轮扫描：逐项兜住，取不到字段按跳过处理
+                try {
+                    JSONObject jo = ja.optJSONObject(i);
+                    if (jo == null || !PropGroup.robExpandCard.name().equals(jo.optString("propGroup"))) {
+                        continue;
+                    }
+                    collectRobExpandEnergy(jo.optString("extInfo"), jo.optString("propId"), jo.optString("propType"));
+                } catch (Throwable th) {
+                    Log.i(TAG, "collectRobExpandEnergy item err:");
+                    Log.printStackTrace(TAG, th);
                 }
             }
         } catch (Throwable th) {
@@ -1709,9 +1719,16 @@ public class AntForestV2 extends ModelTask {
         }
         try {
             JSONObject jo = new JSONObject(extInfo);
-            double leftEnergy = Double.parseDouble(jo.optString("leftEnergy", "0"));
-            if (leftEnergy > collectRobExpandEnergy.getValue() || (Objects.equals(jo.optString("overLimitToday", "false"), "true") && leftEnergy > 0)) {
+            // 双精度解析：leftEnergy 可能是数字也可能是字符串，optDouble 两种都能吃，
+            // 避免数字格式异常把整次扫描吞掉
+            double leftEnergy = jo.optDouble("leftEnergy", 0);
+            int threshold = collectRobExpandEnergy.getValue();
+            boolean overLimitToday = Objects.equals(jo.optString("overLimitToday", "false"), "true");
+            if (leftEnergy > threshold || (overLimitToday && leftEnergy > 0)) {
                 collectRobExpandEnergy(propId, propType);
+            } else {
+                // 被阈值拦下不是服务端行为，留过程日志便于区分「没进分支」与「服务端拒绝」
+                Log.i(TAG, "额外能量⏭️剩余[" + leftEnergy + "g]未超过阈值[" + threshold + "g]");
             }
         } catch (Throwable th) {
             Log.i(TAG, "collectRobExpandEnergy err:");
@@ -2276,7 +2293,9 @@ public class AntForestV2 extends ModelTask {
                         String signKey = signRecord.getString("signKey");
                         if (signKey.equals(currentSignKey)) {
                             if (!signRecord.getBoolean("signed")) {
-                                JSONObject resData2 = new JSONObject(AntForestRpcCall.antiepSign(signId, "ANTFOREST_ENERGY_SIGN", UserIdMap.getCurrentUid()));
+                                // antiepSign(entityId, userId, sceneCode)：原实现把 userId 与 sceneCode 传反，
+                                // 接口必然失败，过期能量一直签不上
+                                JSONObject resData2 = new JSONObject(AntForestRpcCall.antiepSign(signId, UserIdMap.getCurrentUid(), "ANTFOREST_ENERGY_SIGN"));
                                 if (MessageUtil.checkSuccess(TAG, resData2)) {
                                     int expiredEnergy = signRecord.getInt("awardCount");
                                     Log.forest("过期能量💊[" + expiredEnergy + "g]");
@@ -2451,6 +2470,12 @@ public class AntForestV2 extends ModelTask {
 
     // skuId, sku
     Map<String, JSONObject> skuInfo = new HashMap<>();
+
+    /**
+     * 最近一次清单拉取是否完整：有分类请求失败即为 false。
+     * 不完整时不能把缺失的 skuId 判为「已下架」，否则一次网络抖动会把配置里的兑换项全部拉黑。
+     */
+    private boolean skuListComplete = false;
 
     private void vitalityExchangeBenefit() {
         try {
@@ -3121,7 +3146,9 @@ public class AntForestV2 extends ModelTask {
             for (int i = 0; i < bubbleEnergyList.length(); i++) {
                 sum += bubbleEnergyList.getInt(i);
             }
-            TimeUtil.sleep(5000L);
+            // 结算参数里没有点击轨迹，开局到结算的时长是唯一能体现「不是机器」的特征，故随机化，
+            // 固定 5 秒每局完全一致反而像脚本
+            TimeUtil.sleep(5000L + (long) (Math.random() * 5000L));
             if (sum == 50) {
                 Status.flagToday("EnergyRain::PlayGame");
             }
@@ -4339,7 +4366,11 @@ public class AntForestV2 extends ModelTask {
      */
     private boolean getAllSkuInfo() {
         try {
-            if (Status.hasFlagToday("forest::vitalitySkuList")) {
+            // 当日标记只管「今天拉过」；本进程内存里的清单为空（如进程重启）时必须重拉，
+            // 否则调用方会把配置里的每个 skuId 都当成失效，整天拉黑
+            if (Status.hasFlagToday("forest::vitalitySkuList") && !skuInfo.isEmpty()) {
+                // 当日标记只在完整拉取后才落盘，命中即代表清单完整
+                skuListComplete = true;
                 return true;
             }
             // 失败重试上限：服务端持续失败时避免每轮都重拉（单轮最多 5 分类 × 10 页）
@@ -4347,12 +4378,14 @@ public class AntForestV2 extends ModelTask {
             if (retries >= VITALITY_SKU_RETRY_MAX) {
                 return false;
             }
+            boolean complete = true;
             int got = 0;
             for (String labelType : VITALITY_LABEL_TYPES) {
                 int cnt = 0;
                 for (int page = 0; page < VITALITY_ITEM_MAX_PAGES; page++) {
                     JSONObject jo = new JSONObject(AntForestRpcCall.itemList(labelType, page * AntForestRpcCall.VITALITY_ITEM_PAGE_SIZE));
                     if (!MessageUtil.checkSuccess(TAG, jo)) {
+                        complete = false;
                         break;
                     }
                     JSONArray itemInfoVOList = optItemInfoVOList(jo);
@@ -4360,8 +4393,14 @@ public class AntForestV2 extends ModelTask {
                         break;
                     }
                     for (int i = 0; i < itemInfoVOList.length(); i++) {
-                        getSkuInfoByItemInfoVO(itemInfoVOList.getJSONObject(i));
-                        cnt++;
+                        JSONObject spuItem = itemInfoVOList.optJSONObject(i);
+                        if (spuItem == null) {
+                            continue;
+                        }
+                        // 只统计真正入表的条数：解析失败不该被当成「拉到了」
+                        if (getSkuInfoByItemInfoVO(spuItem)) {
+                            cnt++;
+                        }
                     }
                     if (!hasMore(jo)) {
                         break;
@@ -4372,9 +4411,18 @@ public class AntForestV2 extends ModelTask {
             }
             VitalityBenefitIdMap.save(UserIdMap.getCurrentUid());
             Log.i(TAG, "活力值商店列表：共取" + got + "条，清单共" + VitalityBenefitIdMap.getMap().size() + "条");
+            skuListComplete = got > 0 && complete;
             if (got > 0) {
-                // 拉到了才打当日标记；拉不到留给下一轮重试（但当日重试次数有上限）
-                Status.flagToday("forest::vitalitySkuList");
+                if (complete) {
+                    // 完整拉到才打当日标记：部分分类失败时打标会把残缺清单固化一整天
+                    Status.flagToday("forest::vitalitySkuList");
+                } else {
+                    // 清单残缺：清掉可能残留的旧当日标记，否则下一轮早退分支会把这份残缺清单当成
+                    // 「完整」并把缺失的 skuId 整天拉黑
+                    Status.clearFlag("forest::vitalitySkuList");
+                    // 计入重试次数留待下一轮；达到上限后本方法返回 false，调用方据此不判 skuId 失效
+                    accountVitalitySkuRetry();
+                }
                 return true;
             }
             accountVitalitySkuRetry();
@@ -4382,6 +4430,7 @@ public class AntForestV2 extends ModelTask {
         } catch (Throwable th) {
             Log.i(TAG, "getAllSkuInfo err:");
             Log.printStackTrace(TAG, th);
+            skuListComplete = false;
             accountVitalitySkuRetry();
             return false;
         }
@@ -4432,23 +4481,53 @@ public class AntForestV2 extends ModelTask {
         }
     }
 
-    private void getSkuInfoByItemInfoVO(JSONObject spuItem) {
+    /**
+     * 单个 SPU 的 SKU 入表；落盘由调用方整批结束后统一 save，避免逐条写文件。
+     *
+     * @return 是否至少入表一个 SKU——调用方据「成功条数」判是否拉到了清单，
+     * 否则解析全失败也会被当成成功、打上当日标记
+     */
+    private boolean getSkuInfoByItemInfoVO(JSONObject spuItem) {
         try {
-            String spuId = spuItem.getString("spuId");
-            JSONArray skuModelList = spuItem.getJSONArray("skuModelList");
+            String spuId = spuItem.optString("spuId");
+            if (spuId.isEmpty()) {
+                return false;
+            }
+            JSONArray skuModelList = spuItem.optJSONArray("skuModelList");
+            if (skuModelList == null || skuModelList.length() == 0) {
+                return false;
+            }
+            int added = 0;
             for (int i = 0; i < skuModelList.length(); i++) {
-                JSONObject skuModel = skuModelList.getJSONObject(i);
-                String skuId = skuModel.getString("skuId");
-                String skuName = skuModel.getString("skuName");
+                JSONObject skuModel = skuModelList.optJSONObject(i);
+                if (skuModel == null) {
+                    continue;
+                }
+                String skuId = skuModel.optString("skuId");
+                String skuName = skuModel.optString("skuName");
+                if (skuId.isEmpty()) {
+                    continue;
+                }
                 if (!skuModel.has("spuId")) {
                     skuModel.put("spuId", spuId);
                 }
                 skuInfo.put(skuId, skuModel);
                 VitalityBenefitIdMap.add(skuId, skuName);
+                added++;
             }
+            return added > 0;
         } catch (Throwable th) {
             Log.i(TAG, "getSkuInfoByItemInfoVO err:");
             Log.printStackTrace(TAG, th);
+            return false;
+        }
+    }
+
+    /** 清单不可用时的过程日志：每天只提示一次，避免每轮刷屏（不计动作数，也不判 skuId 失效） */
+    private static void warnSkuListUnavailableOnce() {
+        if (!Status.hasFlagToday("forest::vitalitySkuListWarn")) {
+            Log.i(TAG, "活力兑换⏭️商品清单未取到或未取全，本轮跳过（不判定 skuId 失效）");
+            Status.flagToday("forest::vitalitySkuListWarn");
         }
     }
 
@@ -4459,13 +4538,20 @@ public class AntForestV2 extends ModelTask {
      * exchangedCount == 0......
      */
     private Boolean exchangeBenefit(String skuId) {
-        if (skuInfo.isEmpty()) {
+        // 清单为空、或上次只拉到一部分，都要重拉：残缺清单会漏掉配置里的 skuId
+        if (skuInfo.isEmpty() || !skuListComplete) {
             getAllSkuInfo();
         }
         JSONObject sku = skuInfo.get(skuId);
         if (sku == null) {
-            // 失效 skuId（权益下架/换号/服务端改 ID）：打当日标记，当天不再重试；
-            // 否则每轮都会遍历到它并刷一条日志，既刷屏又拖累后续任务
+            // 清单没取到或没取全：无法判定 skuId 是否失效，不能拉黑，
+            // 否则配置里的每一项都会被当天判死，整天只刷「找不到要兑换的权益」
+            if (skuInfo.isEmpty() || !skuListComplete) {
+                warnSkuListUnavailableOnce();
+                return false;
+            }
+            // 清单完整且不含该 skuId：失效 skuId（权益下架/换号/服务端改 ID），
+            // 打当日标记当天不再重试；否则每轮都会遍历到它并刷一条日志，既刷屏又拖累后续任务
             if (!Status.hasFlagToday("forest::exchangeSkuMissing::" + skuId)) {
                 Log.record("活力兑换🎐找不到要兑换的权益！" + skuId + "#今日不再尝试");
                 Status.flagToday("forest::exchangeSkuMissing::" + skuId);
@@ -5524,9 +5610,10 @@ public class AntForestV2 extends ModelTask {
      */
     private static String forestReadRequest(String method, String path, JSONObject body, String token,
                                             String referer) throws Exception {
-        HttpURLConnection conn = null;
+        HttpURLConnection conn = (HttpURLConnection) new URL(FOREST_READ_HOST + path).openConnection();
+        // 是否已把响应体完整读完：决定这条连接能不能回池复用
+        boolean completed = false;
         try {
-            conn = (HttpURLConnection) new URL(FOREST_READ_HOST + path).openConnection();
             conn.setConnectTimeout(10000);
             conn.setReadTimeout(20000);
             conn.setRequestMethod(method);
@@ -5551,6 +5638,7 @@ public class AntForestV2 extends ModelTask {
             }
             InputStream is = conn.getResponseCode() >= 400 ? conn.getErrorStream() : conn.getInputStream();
             if (is == null) {
+                completed = true;
                 return "";
             }
             try (InputStream input = is) {
@@ -5560,10 +5648,15 @@ public class AntForestV2 extends ModelTask {
                 while ((len = input.read(buffer)) != -1) {
                     baos.write(buffer, 0, len);
                 }
-                return baos.toString("UTF-8");
+                String text = baos.toString("UTF-8");
+                // 响应体已完整读完并关闭流：连接可以回 keep-alive 池给下一条请求复用
+                completed = true;
+                return text;
             }
         } finally {
-            if (conn != null) {
+            // 正常读完不断开：连接回到池中供相邻请求复用，省掉每请求一次 TLS 握手（整轮有几十次请求）。
+            // 只有异常中断的连接不可复用，此时必须断开，否则一直占着句柄。
+            if (!completed) {
                 conn.disconnect();
             }
         }
