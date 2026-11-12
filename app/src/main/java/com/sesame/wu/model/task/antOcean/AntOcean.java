@@ -1792,8 +1792,18 @@ public class AntOcean extends ModelTask {
      *
      * <p><b>循环出口</b>：剩余翻牌奖励次数 {@code appraiseRewardRemainNum} 用尽、
      * 这次翻牌没拿到能量、列表里已经没有可翻的牌，或者离线 / 线程被中断。
+     *
+     * <p><b>满额为什么还要单独记当天标记</b>：奖励次数领完后服务端<b>仍然</b>会返回
+     * {@code canAppraise == true} 的鱼牌，只在本次循环里判停挡不住空点——本方法每一轮
+     * 都会被 {@code run()} 调一次，不记标记的话每轮都要重拉一次列表、再对第一张牌空点一次。
+     * 因此确认满额后用 {@link Status#flagToday(String)} 记下 {@code Ocean::FISH_APPRAISE_LIMIT}，
+     * 当天后续轮次直接返回，不再发任何翻牌请求（标记随 status.json 每日重置自动清空）。
      */
     private void appraiseFish() {
+        // 今日已确认满额：连列表都不查，避免每轮一次无意义的空点
+        if (Status.hasFlagToday("Ocean::FISH_APPRAISE_LIMIT")) {
+            return;
+        }
         int earned = 0;
         // 去重键：seasonId:imageId:userId —— 同一张牌本轮只翻一次
         Set<String> attempted = new HashSet<>();
@@ -1806,6 +1816,8 @@ public class AntOcean extends ModelTask {
                 }
                 // 剩余翻牌奖励次数已用尽（字段缺失时按未知处理，不提前退出）
                 if (jo.has("appraiseRewardRemainNum") && jo.optInt("appraiseRewardRemainNum", 0) <= 0) {
+                    // 服务端已明确告知归零：记当天标记，后续轮次不必再来问一遍
+                    Status.flagToday("Ocean::FISH_APPRAISE_LIMIT");
                     break;
                 }
                 JSONArray fishList = jo.optJSONArray("fishList");
@@ -1836,12 +1848,36 @@ public class AntOcean extends ModelTask {
                         Log.error("AI翻牌失败");
                         return;
                     }
-                    int amount = sumAppraiseEnergy(result.optJSONArray("appraiseRewardList"));
+                    JSONArray rewardList = result.optJSONArray("appraiseRewardList");
+                    int amount = sumAppraiseEnergy(rewardList);
                     earned += amount;
                     acted = true;
                     // 翻牌没拿到能量（例如今天奖励已领完）或剩余奖励次数归零 → 本轮到此为止
-                    if (amount <= 0 || (result.has("appraiseRewardRemainNum")
-                            && result.optInt("appraiseRewardRemainNum", 0) <= 0)) {
+                    if (amount <= 0) {
+                        // 翻牌成功却一条奖励都没有：这是「今日奖励次数已领完」的信号
+                        // （服务端此时仍会推出可评的鱼），记当天标记，后续轮次不再空点。
+                        // 若奖励列表里有东西、只是不是能量（拼图等，rightsNums>0），
+                        // 则不下满额结论，避免把一天的点赞次数误封掉。
+                        boolean anyReward = false;
+                        for (int j = 0; rewardList != null && j < rewardList.length(); j++) {
+                            JSONObject reward = rewardList.optJSONObject(j);
+                            JSONObject extInfo = reward == null ? null : reward.optJSONObject("extInfo");
+                            JSONObject popup = extInfo == null ? null : extInfo.optJSONObject("popup");
+                            if (popup != null && popup.optInt("rightsNums", 0) > 0) {
+                                anyReward = true;
+                                break;
+                            }
+                        }
+                        if (!anyReward) {
+                            Status.flagToday("Ocean::FISH_APPRAISE_LIMIT");
+                            Log.i(TAG, "AI翻牌：今日奖励次数已领完#当天不再翻牌");
+                        }
+                        return;
+                    }
+                    if (result.has("appraiseRewardRemainNum")
+                            && result.optInt("appraiseRewardRemainNum", 0) <= 0) {
+                        // 这一张就是今天最后一张：记标记，下一轮直接跳过
+                        Status.flagToday("Ocean::FISH_APPRAISE_LIMIT");
                         return;
                     }
                 }
