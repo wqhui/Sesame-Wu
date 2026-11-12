@@ -21,6 +21,9 @@ public class Statistics {
     private TimeStatistics year = new TimeStatistics();
     private TimeStatistics month = new TimeStatistics();
     private TimeStatistics day = new TimeStatistics();
+
+    /** 本次加载是否解析失败：内存只剩默认值时不得落盘，否则历史月/年累计被清零 */
+    private static volatile boolean loadFailed = false;
     
     public static void addData(DataType dt, int i) {
         Statistics stat = INSTANCE;
@@ -127,6 +130,7 @@ public class Statistics {
     }
     
     public static synchronized Statistics load() {
+        loadFailed = false;
         try {
             File statisticsFile = FileUtil.getStatisticsFile();
             if (statisticsFile.exists()) {
@@ -158,11 +162,12 @@ public class Statistics {
         }
         catch (Throwable t) {
             Log.printStackTrace(TAG, t);
-            Log.i(TAG, "统计文件格式有误，已重置统计文件");
-            Log.system(TAG, "统计文件格式有误，已重置统计文件");
+            // 只回落内存默认值、不写盘：写盘会把历史累计清零
+            loadFailed = true;
+            Log.i(TAG, "统计文件格式有误，本次使用默认值（不写盘，原文件保留）");
+            Log.system(TAG, "统计文件格式有误，本次使用默认值（不写盘，原文件保留）");
             try {
                 JsonUtil.copyMapper().updateValue(INSTANCE, new Statistics());
-                FileUtil.write2File(JsonUtil.toFormatJsonString(INSTANCE), FileUtil.getStatisticsFile());
             }
             catch (JsonMappingException e) {
                 Log.printStackTrace(TAG, e);
@@ -185,6 +190,11 @@ public class Statistics {
     }
     
     public static synchronized void save(Calendar nowCalendar) {
+        if (loadFailed) {
+            // 内存只是默认值：写盘会把历史累计清零
+            Log.debug(TAG + ", 统计文件加载失败，跳过保存");
+            return;
+        }
         if (updateDay(nowCalendar)) {
             Log.system(TAG, "重置 statistics.json");
         }

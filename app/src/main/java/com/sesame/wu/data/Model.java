@@ -138,7 +138,10 @@ public abstract class Model {
                     groupModelConfigMap.put(group, modelConfigMap);
                 }
                 modelConfigMap.put(modelCode, modelConfig);
-            } catch (ReflectiveOperationException e) {
+            } catch (Exception | LinkageError e) {
+                // 单个模型构造失败不能中断其余模型的注册：原先只捕 ReflectiveOperationException，
+                // 构造器里抛运行时异常（如静态初始化/配置读取空指针）会冒泡出 initAllModel，
+                // 其后的模型全部不注册、任务链整段缺失；LinkageError 覆盖类/方法缺失导致的 NoClassDefFoundError。
                 Log.printStackTrace(e);
             }
         }

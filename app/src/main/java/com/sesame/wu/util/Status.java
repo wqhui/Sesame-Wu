@@ -21,6 +21,9 @@ public class Status {
     private static final String TAG = Status.class.getSimpleName();
     
     public static final Status INSTANCE = new Status();
+
+    /** 本次加载是否解析失败：内存只剩默认值时不得落盘，否则当天标记被整份清空 */
+    private static volatile boolean loadFailed = false;
     
     // forest
     private final Map<String, Integer> waterFriendLogList = new HashMap<>();
@@ -665,6 +668,7 @@ public class Status {
     }
     
     public static synchronized Status load() {
+        loadFailed = false;
         String currentUid = UserIdMap.getCurrentUid();
         try {
             if (StringUtil.isEmpty(currentUid)) {
@@ -691,11 +695,12 @@ public class Status {
         }
         catch (Throwable t) {
             Log.printStackTrace(TAG, t);
-            Log.i(TAG, "状态文件格式有误，已重置");
-            Log.system(TAG, "状态文件格式有误，已重置");
+            // 只回落内存默认值、不写盘：写盘会把当天标记整份清空
+            loadFailed = true;
+            Log.i(TAG, "状态文件格式有误，本次使用默认值（不写盘，原文件保留）");
+            Log.system(TAG, "状态文件格式有误，本次使用默认值（不写盘，原文件保留）");
             try {
                 JsonUtil.copyMapper().updateValue(INSTANCE, new Status());
-                FileUtil.write2File(JsonUtil.toFormatJsonString(INSTANCE), FileUtil.getStatusFile(currentUid));
             }
             catch (JsonMappingException e) {
                 Log.printStackTrace(TAG, e);
@@ -730,6 +735,11 @@ public class Status {
         // 注意要放在 updateDay 之前——被丢弃的写入不应该顺带重置内存里的当日状态。
         if (!AccountSession.isUidCurrent(currentUid) || !AccountSession.isCurrentThreadAllowed()) {
             Log.i(TAG, "账号已切换，放弃写入");
+            return;
+        }
+        if (loadFailed) {
+            // 内存只是默认值：写盘会把当天标记清空
+            Log.debug(TAG + ", 状态文件加载失败，跳过保存");
             return;
         }
         if (updateDay(nowCalendar)) {
