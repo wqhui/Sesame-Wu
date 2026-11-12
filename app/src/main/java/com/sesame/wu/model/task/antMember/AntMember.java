@@ -1311,6 +1311,7 @@ public class AntMember extends ModelTask {
             JSONObject applyJo = new JSONObject(AntMemberRpcCall.applyAdTask(bizId, adId, awardNum, extMap));
             if (!isAdTaskOk(applyJo)) {
                 Log.record("会员任务⏭️跳过[" + name + "]#广告任务申请失败");
+                markAdTaskBlackList(applyJo, name, "申请");
                 return false;
             }
             // 广告任务需浏览一段时间后才能完成，抓包约 15 秒
@@ -1319,6 +1320,7 @@ public class AntMember extends ModelTask {
             JSONObject finishJo = new JSONObject(AntMemberRpcCall.taskFinish(bizId));
             if (!isAdTaskOk(finishJo)) {
                 Log.record("会员任务⏭️跳过[" + name + "]#广告任务完成失败");
+                markAdTaskBlackList(finishJo, name, "完成");
                 return false;
             }
             Log.member("会员任务🎖️完成[" + name + "]#获得[" + awardNum + "积分]");
@@ -1333,6 +1335,53 @@ public class AntMember extends ModelTask {
 
     private boolean isAdTaskOk(JSONObject jo) {
         return jo.optBoolean("success") || "SUCCESS".equals(jo.optString("resultCode"));
+    }
+
+    /**
+     * 广告任务**明确不可完成**时加入「会员广告任务 | 黑名单列表」；可重试 / 风控 / 未知一律不拉黑。
+     *
+     * <p>为什么需要：广告任务的申请、完成失败原先只打一行日志，做不了的任务（任务已下线、
+     * 参数不被支持、广告流量风控）每轮都会被重新申请一遍——每次还要白等 15 秒浏览时长，
+     * 并把日志刷满，真正有收益的任务反而被挤到后面。
+     *
+     * <p>为什么只有 {@link TaskBlacklist.Kind#PERMANENT} 才允许拉黑：这是项目既有约定
+     * （见 {@code MessageUtil.checkResultCodeAndMarkTaskBlackList} 的守卫）。RETRYABLE（限流 /
+     * 远端异常 / 网络抖动）、BUSY（102 服务端开小差）、HARD_BLOCK（1009 风控）都是**账号级、
+     * 临时**状态，拉黑单个任务既解决不了问题，又会把它永久停掉；UNKNOWN 无法判断，留给下轮。
+     *
+     * <p>写两处，各有用途：
+     * <ul>
+     *   <li>{@link MessageUtil#MarkTaskBlackList}：写 {@code AntMemberAdTaskList} 字段值并落盘，
+     *       这是运行期 {@code doBrowseTask} 判定黑名单的**唯一来源**（当前进程立刻生效，无需重启）；</li>
+     *   <li>{@link AntMemberAdTaskListMap}：登记任务名到广告任务的**候选池**，任务下架后
+     *       配置页的下拉框仍能列出它，用户看得见也删得掉。</li>
+     * </ul>
+     *
+     * @param jo    服务端失败响应，用于分类
+     * @param title 任务名（与黑名单字段里存的值同源，均取自 config 的 name/title）
+     * @param stage 失败阶段（申请 / 完成），只用于日志区分
+     */
+    private void markAdTaskBlackList(JSONObject jo, String title, String stage) {
+        // 任务名是黑名单的键，空名加进去只会得到一条永远匹配不上的脏数据
+        if (title == null || title.trim().isEmpty()) {
+            return;
+        }
+        if (TaskBlacklist.classify(jo) != TaskBlacklist.Kind.PERMANENT) {
+            return;
+        }
+        try {
+            // 复用共享入口：字段值 + 落盘（内含 ConfigV2.save），不另造一套持久化
+            MessageUtil.MarkTaskBlackList("AntMember", "AntMemberAdTaskList", "会员广告任务", title);
+            AntMemberAdTaskListMap.add(title, title);
+            AntMemberAdTaskListMap.save();
+            Log.record("会员广告任务⏭️[" + title + "]#" + stage + "失败("
+                    + TaskBlacklist.permanentReason(jo) + ")，已加入广告黑名单");
+        }
+        catch (Throwable t) {
+            // 拉黑失败不能连累任务主流程（外层还有 try，但这里失败要能看出是拉黑环节）
+            Log.error("会员广告任务⏭️[" + title + "]#加入广告黑名单失败#" + stage);
+            Log.printStackTrace(TAG, t);
+        }
     }
 
     // 任务积分：旧结构 awardParam.awardParamPoint，新结构 stageVOList[0].awardParam.awardParamPoint
