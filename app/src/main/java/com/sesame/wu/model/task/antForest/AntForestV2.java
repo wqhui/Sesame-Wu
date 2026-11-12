@@ -2174,7 +2174,7 @@ public class AntForestV2 extends ModelTask {
      * 生成（医疗健康 0 秒、绿色租赁 0.2 秒、绿植浏览 1 秒、绿色行动 0 秒），
      * 这是最典型的脚本特征，比请求频率更容易触发风控。
      */
-    private static void browseDelay() {
+    public static void browseDelay() {
         // 本方法被静态方法（greenRent / sendEnergyByAction）调用，配置字段是实例字段，
         // 这里通过 Model 取回当前实例再读
         AntForestV2 self = Model.getModel(AntForestV2.class);

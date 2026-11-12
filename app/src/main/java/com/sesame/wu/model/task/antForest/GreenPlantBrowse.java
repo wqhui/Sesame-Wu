@@ -74,7 +74,7 @@ public class GreenPlantBrowse {
             }
             browseFeeds();
             // 页面倒计时（30 秒）走完才可领奖，照官方停留节奏
-            TimeUtil.sleep(STAY_BEFORE_AWARD_MS);
+            AntForestV2.browseDelay();   // 与其它绿色行为共用「浏览停留」配置
             if (receiveAward()) {
                 Status.flagToday(FLAG_DONE);
             } else {
@@ -117,7 +117,7 @@ public class GreenPlantBrowse {
             if (items == null || items.length() == 0) {
                 break;
             }
-            TimeUtil.sleep(PAGE_INTERVAL_MS);
+            AntForestV2.browseDelay();   // 页间停留同样走配置
         }
     }
 

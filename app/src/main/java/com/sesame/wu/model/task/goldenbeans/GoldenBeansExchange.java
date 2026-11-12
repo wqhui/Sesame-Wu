@@ -20,6 +20,8 @@ public final class GoldenBeansExchange {
     private static final String FLAG_MANURE_AMOUNT = "goldenBeans::manureExchangeBeanAmount";
     /** 当日芝麻粒换豆已获得的金豆数 */
     private static final String FLAG_SESAME_BEAN_AMOUNT = "goldenBeans::sesameExchangeBeanAmount";
+    /** 芝麻粒换豆已达当日上限：打过标记后当天不再查询资格，避免每轮白打接口 */
+    private static final String FLAG_SESAME_FULL = "goldenBeans::sesameExchangeFull";
 
     private GoldenBeansExchange() {
     }
@@ -110,6 +112,10 @@ public final class GoldenBeansExchange {
      */
     public static void exchangeSesame(int interval, int dailyBeanLimit) {
         try {
+            // 当天已确认换满：不再查询资格，省一次接口也省一条日志
+            if (Status.hasFlagToday(FLAG_SESAME_FULL)) {
+                return;
+            }
             JSONObject indexJo = GoldenBeansSupport.parse(goldenbeansRpcCall.homeOf(
                     GoldenBeansEntry.ALCHEMY.bizType, GoldenBeansEntry.ALCHEMY.source));
             if (!GoldenBeansSupport.ok(indexJo)) {
@@ -147,6 +153,14 @@ public final class GoldenBeansExchange {
                     + "]最低兑换[" + minExchangeAmount + "]剩余额度[" + remainQuota
                     + "]单日上限[" + (dailyBeanLimit > 0 ? String.valueOf(dailyBeanLimit) : "不限")
                     + "]今日已换[" + exchangedToday + "]可兑换[" + available + "]");
+            if (available <= 0) {
+                // 服务端额度/芝麻粒已用尽：当天不再查询
+                if (!Status.hasFlagToday(FLAG_SESAME_FULL)) {
+                    Log.record("金豆芝麻粒换豆✅今日额度已用尽，今天不再查询");
+                    Status.flagToday(FLAG_SESAME_FULL);
+                }
+                return;
+            }
 
             if (!pageOpened || beanReward <= 0 || minExchangeAmount <= 0) {
                 Log.record("金豆芝麻粒换豆⏸️服务端资格未满足#跳过");
