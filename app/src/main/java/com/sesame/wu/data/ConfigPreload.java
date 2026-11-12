@@ -1,5 +1,7 @@
 package com.sesame.wu.data;
 
+import com.sesame.wu.entity.AlipayAntMemberAdTaskList;
+import com.sesame.wu.entity.AlipayAntMemberTaskList;
 import com.sesame.wu.util.FileUtil;
 import com.sesame.wu.util.StringUtil;
 import com.sesame.wu.util.idMap.AlchemyAutoBlacklistMap;
@@ -9,6 +11,7 @@ import com.sesame.wu.util.idMap.AntFarmDoFarmTaskListMap;
 import com.sesame.wu.util.idMap.AntFarmDrawMachineTaskListMap;
 import com.sesame.wu.util.idMap.AntForestHuntTaskListMap;
 import com.sesame.wu.util.idMap.AntForestVitalityTaskListMap;
+import com.sesame.wu.util.idMap.AntMemberAdTaskListMap;
 import com.sesame.wu.util.idMap.AntMemberTaskListMap;
 import com.sesame.wu.util.idMap.AntOceanAntiepTaskListMap;
 import com.sesame.wu.util.idMap.AntOceanFishBlackListMap;
@@ -78,6 +81,12 @@ public final class ConfigPreload {
         AntSportsTaskListMap.load();
         PathThemeMapListMap.load();
         AntMemberTaskListMap.load();
+        // 会员任务与会员广告任务的候选各一份映射：分别载入，别让一方覆盖另一方。
+        // 载入后清一次候选实体缓存——候选是静态列表，若在 load 之前被 getList() 建过一份，
+        // 里面会是空表，清掉才会用新载入的映射重建。
+        AlipayAntMemberTaskList.clear();
+        AntMemberAdTaskListMap.load();
+        AlipayAntMemberAdTaskList.clear();
         GoldenBeansTaskListMap.load();
         ConfigV2.load(userId);
     }

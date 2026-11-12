@@ -10,6 +10,8 @@ import java.util.Map;
 
 import com.sesame.wu.data.modelFieldExt.SelectAndCountModelField;
 import com.sesame.wu.data.modelFieldExt.SelectModelField;
+import com.sesame.wu.entity.AlipayAntMemberAdTaskList;
+import com.sesame.wu.entity.AlipayAntMemberTaskList;
 import com.sesame.wu.entity.AlipayrpcRequest;
 import com.sesame.wu.hook.ApplicationHook;
 import com.sesame.wu.model.task.antForest.AntForestRpcCall;
@@ -190,6 +192,11 @@ public class BaseModel extends Model {
             AntStallTaskListMap.clear();
             AntSportsTaskListMap.clear();
             AntMemberTaskListMap.clear();
+            // 会员广告任务是另一份候选映射 + 候选实体缓存，切号时一并清，
+            // 否则广告下拉框会残留上一个账号的任务名
+            AlipayAntMemberTaskList.clear();
+            AntMemberAdTaskListMap.clear();
+            AlipayAntMemberAdTaskList.clear();
             // 这两个列表原先漏了 clear，切换账号后候选项会残留上一个账号的任务
             GoldenBeansTaskListMap.clear();
             PathThemeMapListMap.clear();

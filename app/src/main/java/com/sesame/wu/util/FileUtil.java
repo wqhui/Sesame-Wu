@@ -609,6 +609,19 @@ public class FileUtil {
         }
         return file;
     }
+
+    /**
+     * 会员<b>广告</b>任务名的候选映射文件，与 {@link #getAntMemberTaskListMapFile()} 分开存。
+     * <p>两个下拉框若共用同一份映射，广告任务的候选会被会员任务列表整份覆盖（反之亦然），
+     * 分文件后各存各的候选。
+     */
+    public static File getAntMemberAdTaskListMapFile() {
+        File file = new File(MAIN_DIRECTORY_FILE, "AntMemberAdTask.json");
+        if (file.exists() && file.isDirectory()) {
+            file.delete();
+        }
+        return file;
+    }
     
     public static File getWalkPathIdMapFile() {
         File file = new File(MAIN_DIRECTORY_FILE, "walkPath.json");

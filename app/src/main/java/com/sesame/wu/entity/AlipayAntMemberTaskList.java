@@ -27,6 +27,15 @@ public class AlipayAntMemberTaskList extends IdAndName {
         return list;
     }
 
+    /**
+     * 清掉静态缓存，下次 {@link #getList()} 重新从映射构建。
+     * <p>候选列表是进程内存态：配置进程先 getList() 建出一份空表、随后才 load 映射时，
+     * 不清理就会一直显示空候选，必须由载入方显式清一次。
+     */
+    public static void clear() {
+        list = null;
+    }
+
     public static void remove(String id) {
         getList();
         for (int i = 0; i < list.size(); i++) {

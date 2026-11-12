@@ -14,6 +14,7 @@ import com.sesame.wu.data.task.ModelTask;
 import com.sesame.wu.data.task.TaskAttemptPolicy;
 import com.sesame.wu.data.task.TaskAward;
 import com.sesame.wu.data.task.TaskAttemptPolicy.Outcome;
+import com.sesame.wu.entity.AlipayAntMemberAdTaskList;
 import com.sesame.wu.entity.AlipayAntMemberTaskList;
 import com.sesame.wu.entity.AlipayMemberCreditSesameTaskList;
 import com.sesame.wu.entity.MemberBenefit;
@@ -26,6 +27,7 @@ import com.sesame.wu.model.task.antOrchard.AntOrchardRpcCall;
 import com.sesame.wu.util.*;
 import com.sesame.wu.util.idMap.AlchemyAutoBlacklistMap;
 import com.sesame.wu.util.idMap.AntFarmDoFarmTaskListMap;
+import com.sesame.wu.util.idMap.AntMemberAdTaskListMap;
 import com.sesame.wu.util.idMap.AntMemberTaskListMap;
 import com.sesame.wu.util.idMap.MemberBenefitIdMap;
 import com.sesame.wu.util.idMap.MemberCreditSesameTaskListMap;
@@ -67,8 +69,26 @@ public class AntMember extends ModelTask {
     /** 会员签到页任务最多翻多少页：只防服务端 pageNo 不生效时死循环。 */
     private static final int MAX_SIGN_PAGE = 8;
 
-    /** 当日任务列表未取到(风控/1009)：置当日标记，后续轮次不再请求，避免反复触发加重风控。 */
+    /**
+     * 当日任务列表「连续」取不到到上限：置当日标记，后续轮次不再请求，避免反复触发加重风控。
+     * <p>原先单次失败就置位，一次网络抖动或服务端繁忙(102)就让会员任务整天停摆；
+     * 改为累计到 {@link #MAX_FETCH_FAILURES} 次才停手，既给临时失败留重试机会，也不至于一直撞风控。
+     */
     private static final String FLAG_SIGN_PAGE_TASK_FAILED = "AntMember::signPageTaskListFailed";
+
+    /** 当日取数失败计数：连续失败到上限才落上面的标记，一次抖动不再废掉整天 */
+    private static final String INT_FLAG_SIGN_PAGE_FETCH_FAIL = "AntMember::signPageTaskListFetchFail";
+    private static final int MAX_FETCH_FAILURES = 3;
+
+    /**
+     * 可领任务列表独自的限流标记：与签到页列表分开。
+     * <p>两个接口各自限流，「可领任务」列表是浏览任务的另一来源，
+     * 不能因为签到页列表被限流就整体跳过（原先两者共用一个标记，一个挂两个都停）。
+     */
+    private static final String FLAG_QUERY_ALL_TASK_FAILED = "AntMember::queryAllStatusTaskListFailed";
+
+    /** 列表重拉上限：任务上报成功但服务端状态不前进时，最多再拉几遍，防止无界重拉刷风控 */
+    private static final int MAX_RECHECK_ROUNDS = 3;
 
     /**
      * 会员权益导航分类码，取值与顺序对齐 Sesame-AG 49dd3818 的
@@ -137,7 +157,9 @@ public class AntMember extends ModelTask {
         // 会员广告任务：独立开关 + 独立黑名单，与会员任务互不干扰（共用取数、各自过滤）。
         // 广告任务每个至少浏览 15 秒、收益只是积分，M 那边也是默认关闭。
         modelFields.addField(enableAdTask = new BooleanModelField("AntMemberAdTask", "会员广告任务", false));
-        modelFields.addField(AntMemberAdTaskList = new SelectModelField("AntMemberAdTaskList", "会员广告任务 | 黑名单列表", new LinkedHashSet<>(), AlipayAntMemberTaskList::getList));
+        // 广告任务的候选来自独立映射表：与会员任务共用一份时，
+        // 无论哪一方先保存都会把另一方的候选整份覆盖，广告下拉框里选不到真正的广告任务
+        modelFields.addField(AntMemberAdTaskList = new SelectModelField("AntMemberAdTaskList", "会员广告任务 | 黑名单列表", new LinkedHashSet<>(), AlipayAntMemberAdTaskList::getList));
         modelFields.addField(memberSign = new BooleanModelField("memberSign", "会员签到", false));
         // 签到页任务：默认开，对齐 Sesame-M 的既有行为（M 一直是启用状态）；
         // 独立成开关是为了万一它触发风控时能单独关掉，不影响「会员任务」的其它分支
@@ -185,6 +207,12 @@ public class AntMember extends ModelTask {
                 initMemberTaskListMap(AutoAntMemberTaskList.getValue(), AutoMemberCreditSesameTaskList.getValue(), AntMemberTask.getValue(), collectSesame.getValue());
                 Status.flagToday("BlackList::initMember");
             }
+            else if (AntMemberTaskListMap.getMap().isEmpty() && !Status.hasFlagToday("BlackList::initMemberRecover")) {
+                // 当天已初始化过、映射却为空：多半是初始化时取数失败。补拉一次，
+                // 否则配置页的会员任务候选一整天都是空的（用户看不到、也加不进黑名单）。
+                Status.flagToday("BlackList::initMemberRecover");
+                initMemberTaskListMap(AutoAntMemberTaskList.getValue(), AutoMemberCreditSesameTaskList.getValue(), AntMemberTask.getValue(), collectSesame.getValue());
+            }
             
             if (memberSign.getValue()) {
                 memberSign();
@@ -193,16 +221,14 @@ public class AntMember extends ModelTask {
             if (AntMemberTask.getValue()) {
                 queryPointCert(1, 8);
                 // 签到页任务（原先是注释状态，对齐 Sesame-M 重新启用）
-                // 先判断任务列表能否取到：风控(1009等)拿不到列表时，不再请求签到广告任务接口，避免加重风控。
-                // 子开关关闭时不做这个判断，保持原有行为。
-                boolean signPageTaskListOk = true;
+                // 两个列表各自限流、互不门控：「可领任务」列表是浏览任务的另一来源，
+                // 不能因为签到页列表取不到（风控/1009/空列表）就整体跳过，两个接口的
+                // 失败标记也已分开，各自停各自的。
                 if (memberSignPageTask.getValue()) {
-                    signPageTaskListOk = signPageTaskList();
+                    signPageTaskList();
                 }
-                if (signPageTaskListOk) {
-                    // 签到广告任务（sourceBusiness=signInAd）
-                    queryAllStatusTaskList();
-                }
+                // 签到广告任务（sourceBusiness=signInAd）
+                queryAllStatusTaskList();
                 // 会员任务阶段奖励：任务推进到阶段后单独可领，和上面的「领积分」是两条路
                 collectMemberTaskProcessAwards();
             }
@@ -285,6 +311,8 @@ public class AntMember extends ModelTask {
         try {
             //初始化AntMemberTaskListMap
             AntMemberTaskListMap.load();
+            // 广告任务的候选是另一份映射，这里一并载入，避免两个下拉框共用/互相覆盖
+            AntMemberAdTaskListMap.load();
             Set<String> blackList = new HashSet<>();
             //blackList.add("去淘金币逛一逛");
             // 可继续添加更多黑名单任务
@@ -318,7 +346,9 @@ public class AntMember extends ModelTask {
                 while (hasNextPage);
                 
                 jo = new JSONObject(AntMemberRpcCall.queryAllStatusTaskList());
-                if (MessageUtil.checkResultCode(TAG, jo)) {
+                // 该接口成功时没有 success/resultCode，只有 availableTaskList，
+                // 用通用 checkResultCode 会一律判失败，候选就永远登记不上（与运行期是同一个坑）
+                if (jo.has("availableTaskList")) {
                     JSONArray availableTaskList = jo.getJSONArray("availableTaskList");
                     for (int i = 0; i < availableTaskList.length(); i++) {
                         JSONObject task = availableTaskList.optJSONObject(i);
@@ -363,9 +393,16 @@ public class AntMember extends ModelTask {
                 // 既永远对不上任务、选不中，又把真正能做的会员任务挤出候选列表，还白打一轮 RPC。
                 // 会员任务名（含广告任务）改由 signPageTaskList 登记，见该方法内的 AntMemberTaskListMap.add。
 
-                //保存任务到配置文件
-                AntMemberTaskListMap.save();
-                Log.record("同步任务🉑会员任务列表");
+                //保存任务到配置文件。
+                // 空映射不落盘：这份文件是「已知任务名」的累积，映射为空只说明本次没取到列表
+                // （风控/网络失败），落盘会把磁盘上已有的任务名整份覆盖掉，配置页候选随之清空。
+                if (!AntMemberTaskListMap.getMap().isEmpty()) {
+                    AntMemberTaskListMap.save();
+                    Log.record("同步任务🉑会员任务列表");
+                }
+                if (!AntMemberAdTaskListMap.getMap().isEmpty()) {
+                    AntMemberAdTaskListMap.save();
+                }
                 
                 //自动按模块初始化设定调整黑名单和白名单
                 if (AutoAntMemberTaskList) {
@@ -598,12 +635,12 @@ public class AntMember extends ModelTask {
      * 只要这一轮有推进就重新拉一次，直到没有可做的为止。
      * <p>RPC 之间用 {@link #randomSleep(int, int)} 拉开随机间隔，模拟人工节奏、降低风控。
      *
-     * @return 是否成功取到任务列表；取不到（风控/1009/无列表）返回 false，调用方不应再发起其它任务 RPC
+     * @return 是否成功取到任务列表；取不到（风控/1009/无列表）返回 false
      */
     private boolean signPageTaskList() {
         boolean obtained = false;
         try {
-            // 当日已确认取不到列表(风控/1009)：本轮及后续轮次都不再请求，避免反复触发加重风控
+            // 当日已确认连续取不到列表(风控/1009)：本轮及后续轮次都不再请求，避免反复触发加重风控
             if (Status.hasFlagToday(FLAG_SIGN_PAGE_TASK_FAILED)) {
                 Log.i(TAG, "今日任务列表获取失败(风控)，跳过");
                 return false;
@@ -615,35 +652,50 @@ public class AntMember extends ModelTask {
             Set<Long> seenTaskIds = new HashSet<>();
             for (int page = 1; page <= MAX_SIGN_PAGE; page++) {
                 boolean hasNextPage = false;
+                // 本页重查次数：任务有推进才重查，但必须有上限——
+                // 服务端「上报成功但状态不前进」时会一直置 doubleCheck，无界重查既刷不出结果又加重风控
+                int recheck = 0;
                 while (true) {
                     JSONObject jo = new JSONObject(AntMemberRpcCall.signPageTaskList(page, session));
                     randomSleep(1200, 2200);
                     boolean doubleCheck = false;
                     if (!MessageUtil.checkResultCode(TAG + " signPageTaskList", jo)) {
                         if (!obtained) {
-                            Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+                            // 1009 是服务端限流：命中后通常持续数小时，重试只会延长风控窗口，当日直接停手；
+                            // 其它失败按「连续 N 次」记账，一次抖动不再废掉整天
+                            if (isRiskControl(jo)) {
+                                Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+                                Log.record("会员任务⏭️任务列表被限流(1009)，今日不再重试");
+                            } else {
+                                handleFetchFailure("接口返回失败");
+                            }
                         }
                         return false;
                     }
                     if (!jo.has("categoryTaskList")) {
-                        Log.i(TAG, "signPageTaskList 无 categoryTaskList 字段，今日不再重试");
+                        Log.i(TAG, "signPageTaskList 无 categoryTaskList 字段");
                         if (!obtained) {
-                            Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+                            handleFetchFailure("无 categoryTaskList 字段");
                         }
                         return false;
                     }
                     JSONArray categoryTaskList = jo.getJSONArray("categoryTaskList");
-                    // 首页就没有任务列表：说明今日取不到任务(风控/1009 时也表现为空)，打当日标记后不再重试。
-                    // 后续页为空只是分页到底，不能据此拉黑整天（否则会连带跳过本日的其它任务接口）。
+                    // 首页就没有任务列表：说明今日取不到任务(风控/1009 时也表现为空)，按失败记账。
+                    // 后续页为空只是分页到底，不能据此记账（否则会连带跳过本日的其它任务接口）。
                     if (categoryTaskList.length() == 0) {
                         if (page == 1) {
-                            Log.i(TAG, "signPageTaskList 任务列表为空，今日不再重试");
+                            Log.i(TAG, "signPageTaskList 任务列表为空");
                             if (!obtained) {
-                                Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+                                handleFetchFailure("任务列表为空");
                             }
                             return false;
                         }
                         break;
+                    }
+                    // 真正拿到任务才清失败计数：只有「连续」失败才按风控处理，零星失败不该累积。
+                    // 放在空列表判断之后，否则「每次都是空列表」会一直把计数清零、永远到不了上限。
+                    if (Status.getIntFlagToday(INT_FLAG_SIGN_PAGE_FETCH_FAIL) > 0) {
+                        Status.setIntFlagToday(INT_FLAG_SIGN_PAGE_FETCH_FAIL, 0);
                     }
                     obtained = true;
                     // 本页是否出现了没见过的任务 id：一个都没有说明分页到底了
@@ -664,13 +716,18 @@ public class AntMember extends ModelTask {
                             if (cfg == null) {
                                 continue;
                             }
-                            // 登记任务名到黑名单候选项：signPageTaskList 的任务(含广告任务)不在其它列表里，否则设置页搜不到
+                            // 登记任务名到黑名单候选项：signPageTaskList 的任务(含广告任务)不在其它列表里，否则设置页搜不到。
+                            // 广告任务与会员任务分开登记：两个下拉框各显示自己的候选，不能互相覆盖。
                             String taskName = cfg.optString("name", "");
                             if (taskName.isEmpty()) {
                                 taskName = cfg.optString("title", "");
                             }
                             if (!taskName.isEmpty()) {
-                                AntMemberTaskListMap.add(taskName, taskName);
+                                if (isAdTask(task)) {
+                                    AntMemberAdTaskListMap.add(taskName, taskName);
+                                } else {
+                                    AntMemberTaskListMap.add(taskName, taskName);
+                                }
                             }
                             // 分页去重键：旧结构 id，新结构 configId
                             if (cfg.has("id")) {
@@ -689,17 +746,29 @@ public class AntMember extends ModelTask {
                         // 所以这里一律按任务自身的 targetBusiness 挑出浏览类来处理。
                         JSONArray browseOnly = pickBrowseTask(taskList);
                         if (browseOnly.length() > 0) {
-                            // doBrowseTask 内部已按 applyTask / executeTask 逐步随机延迟
-                            doubleCheck = doBrowseTask(browseOnly) || doubleCheck;
+                            // 必须用 |= ：写成 doubleCheck = doBrowseTask(...) || doubleCheck 时，
+                            // 前一个分类推进成功后右侧被短路，本分类的任务就不再执行了
+                            doubleCheck |= doBrowseTask(browseOnly);
                         }
                         if (!Objects.equals("BROWSE", type)) {
                             ExtensionsHandle.handleAlphaRequest("antMember", "doMoreTask", category);
                             randomSleep(1500, 3000);
                         }
                     }
-                    AntMemberTaskListMap.save();
+                    // 空映射不落盘，否则会把磁盘上已有的任务名整份覆盖掉
+                    if (!AntMemberTaskListMap.getMap().isEmpty()) {
+                        AntMemberTaskListMap.save();
+                    }
+                    if (!AntMemberAdTaskListMap.getMap().isEmpty()) {
+                        AntMemberAdTaskListMap.save();
+                    }
                     if (doubleCheck) {
-                        // 本页仍有任务被推进：重查本页，直到没有新进展
+                        // 本页仍有任务被推进：重查本页，但最多几遍，防止无界重查
+                        if (++recheck > MAX_RECHECK_ROUNDS) {
+                            Log.i(TAG, "会员任务列表重拉达到上限，本轮停止");
+                            hasNextPage = anyNewTask;
+                            break;
+                        }
                         continue;
                     }
                     hasNextPage = anyNewTask;
@@ -714,10 +783,68 @@ public class AntMember extends ModelTask {
             Log.i(TAG, "signPageTaskList err:");
             Log.printStackTrace(TAG, t);
             if (!obtained) {
-                Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+                handleFetchFailure("请求异常");
             }
         }
         return obtained;
+    }
+
+    /**
+     * 取数失败的处置。
+     * <p>原实现「取不到列表就置当日标记」，一次网络抖动或服务端繁忙(102)就让会员任务
+     * 整天停摆；改为累计到 {@link #MAX_FETCH_FAILURES} 次才停手，
+     * 既给临时失败留重试机会，也避免一天之内反复撞风控。
+     */
+    private void handleFetchFailure(String reason) {
+        int failures = Status.getIntFlagToday(INT_FLAG_SIGN_PAGE_FETCH_FAIL) + 1;
+        Status.setIntFlagToday(INT_FLAG_SIGN_PAGE_FETCH_FAIL, failures);
+        if (failures >= MAX_FETCH_FAILURES) {
+            Status.flagToday(FLAG_SIGN_PAGE_TASK_FAILED);
+            Log.record("会员任务⏭️任务列表连续" + failures + "次获取失败(" + reason + ")，今日不再重试");
+        } else {
+            Log.i(TAG, "任务列表获取失败(" + reason + ")，第" + failures + "/" + MAX_FETCH_FAILURES + "次，稍后重试");
+        }
+    }
+
+    /**
+     * 服务端限流(1009「人气太旺」)判定：字段名各接口不统一，逐个兜一遍。
+     * <p>限流不是「今日没任务」，但重试只会延长风控窗口，命中即当日停手。
+     */
+    private static boolean isRiskControl(JSONObject jo) {
+        if (jo == null) {
+            return false;
+        }
+        String[] fields = {"error", "errorTip", "code", "resultCode"};
+        for (String field : fields) {
+            if ("1009".equals(jo.optString(field, ""))) {
+                return true;
+            }
+        }
+        String msg = jo.optString("errorMessage", "");
+        return msg.contains("人气太旺");
+    }
+
+    /**
+     * 广告任务判定：adTask=true 且无 targetBusiness。
+     * <p>运行期过滤（{@link #doBrowseTask(JSONObject, int, int)}）与候选项登记共用同一判据，
+     * 避免两处判据漂移：一处改了另一处没跟上，任务就会既登记错列表又跑错分支。
+     */
+    private static boolean isAdTask(JSONObject task) {
+        if (task == null || !task.optBoolean("adTask")) {
+            return false;
+        }
+        JSONObject cfg = task.optJSONObject("taskConfigInfo");
+        if (cfg == null) {
+            cfg = task.optJSONObject("simpleTaskConfig");
+        }
+        JSONArray tb = cfg == null ? null : cfg.optJSONArray("targetBusiness");
+        if (tb == null || tb.length() == 0) {
+            tb = task.optJSONArray("targetBusiness");
+        }
+        if (tb != null && tb.length() > 0) {
+            return false;
+        }
+        return task.optString("targetBusiness", "").isEmpty();
     }
     
     /**
@@ -807,10 +934,37 @@ public class AntMember extends ModelTask {
      * 查询所有状态任务列表（签到广告任务，sourceBusiness=signInAd）
      */
     private void queryAllStatusTaskList() {
+        queryAllStatusTaskList(0);
+    }
+
+    /**
+     * 查询所有状态任务列表（签到广告任务，sourceBusiness=signInAd）。
+     *
+     * <p>原实现「有推进就整段递归再查一次」，服务端上报成功但状态不前进时是无界递归，
+     * 会把限流窗口一直拉长；改为带重拉上限的递归（{@link #MAX_RECHECK_ROUNDS}）。
+     *
+     * @param recheck 已经重拉过的次数
+     */
+    private void queryAllStatusTaskList(int recheck) {
         try {
+            // 该列表被限流(1009)时当日不再请求。注意这里用的是**它自己**的标记：
+            // 原先与签到页列表共用一个标记，签到页被限流会连带把这条列表也停掉
+            if (Status.hasFlagToday(FLAG_QUERY_ALL_TASK_FAILED)) {
+                Log.i(TAG, "今日可领任务列表被限流，跳过");
+                return;
+            }
             JSONObject jo = new JSONObject(AntMemberRpcCall.queryAllStatusTaskList());
             randomSleep(1200, 2200);
-            if (!MessageUtil.checkResultCode(TAG, jo)) {
+            // 该接口成功时只返回 ariverRpcTraceId + availableTaskList，没有 success 也没有 resultCode，
+            // 用通用的 checkResultCode 会一律判失败（原先就是这样，可做列表永远取不到）。
+            // 故以业务字段为准：有 availableTaskList 即成功，否则再走通用判定。
+            if (!jo.has("availableTaskList") && !MessageUtil.checkResultCode(TAG, jo)) {
+                if (isRiskControl(jo)) {
+                    Status.flagToday(FLAG_QUERY_ALL_TASK_FAILED);
+                    Log.record("会员任务⏭️可领任务列表被限流(1009)，今日不再重试");
+                } else {
+                    Log.i(TAG, "queryAllStatusTaskList 接口返回失败: " + truncate(jo.toString(), 160));
+                }
                 return;
             }
             JSONArray availableTaskList = jo.optJSONArray("availableTaskList");
@@ -820,13 +974,39 @@ public class AntMember extends ModelTask {
                 return;
             }
             if (doBrowseTask(availableTaskList)) {
-                queryAllStatusTaskList();
+                // 有推进才重查；重拉上限防止「上报成功但状态不前进」时无界递归
+                if (recheck + 1 > MAX_RECHECK_ROUNDS) {
+                    Log.i(TAG, "可领任务列表重拉达到上限，本轮停止");
+                    return;
+                }
+                queryAllStatusTaskList(recheck + 1);
             }
         }
         catch (Throwable t) {
             Log.i(TAG, "queryAllStatusTaskList err:");
             Log.printStackTrace(TAG, t);
         }
+    }
+
+    /** 日志用的截断：失败响应可能整段回显请求参数，原样打印会把日志刷爆 */
+    private static String truncate(String text, int max) {
+        if (text == null) {
+            return "";
+        }
+        return text.length() <= max ? text : text.substring(0, max) + "...";
+    }
+
+    /**
+     * 跳过原因每日只记一次。
+     * <p>会员任务每轮都会扫一遍列表，同一任务的跳过原因若每轮都打印，
+     * 一天下来会把其它日志全冲掉；记一次足够用来排查「有任务却没做」。
+     */
+    private static void logSkipOnce(String flag, String message) {
+        if (Status.hasFlagToday(flag)) {
+            return;
+        }
+        Status.flagToday(flag);
+        Log.i(TAG, message);
     }
     
     // 生活记录
@@ -984,11 +1164,13 @@ public class AntMember extends ModelTask {
                     int periodTargetCount = Integer.parseInt(task.getJSONObject("extInfo").getString("PERIOD_TARGET_COUNT"));
                     int count = periodTargetCount > periodCurrentCount ? periodTargetCount - periodCurrentCount : 0;
                     if (count > 0) {
-                        doubleCheck = doubleCheck || doBrowseTask(task, periodTargetCount, periodTargetCount);
+                        // 必须用 |= ：写成 doubleCheck = doubleCheck || doBrowseTask(...) 时，
+                        // 前一个任务成功后右侧被短路，列表里后续任务不再执行
+                        doubleCheck |= doBrowseTask(task, periodTargetCount, periodTargetCount);
                     }
                 }
                 else {
-                    doubleCheck = doubleCheck || doBrowseTask(task, 1, 1);
+                    doubleCheck |= doBrowseTask(task, 1, 1);
                 }
             }
         }
@@ -1017,6 +1199,8 @@ public class AntMember extends ModelTask {
             }
             //黑名单任务跳过
             if (AntMemberTaskList.getValue().contains(name)) {
+                // 每日只记一次：排查「列表里有任务却没做」时够用，又不至于每轮刷屏
+                logSkipOnce("antmember::skipBlack::" + name, "会员任务⏭️跳过[" + name + "]#在黑名单");
                 return false;
             }
             Long id = config.has("id") ? config.optLong("id") : config.optLong("configId");
@@ -1032,15 +1216,17 @@ public class AntMember extends ModelTask {
                 }
             }
             if (targetBusinessArr == null || targetBusinessArr.length() == 0) {
-                // 广告任务(adTask=true)没有 targetBusiness，走广告任务申请->等待->完成流程
-                if (task.optBoolean("adTask")) {
+                // 广告任务(adTask=true)没有 targetBusiness，走广告任务申请->等待->完成流程。
+                // 判定统一走 isAdTask，与候选项登记用同一判据，避免两处漂移
+                if (isAdTask(task)) {
                     // 独立开关：默认关闭（每个广告至少 15 秒，收益只有积分）
                     if (!enableAdTask.getValue()) {
+                        logSkipOnce("antmember::skipAdOff::" + name, "会员广告任务⏭️跳过[" + name + "]#广告任务开关未开");
                         return false;
                     }
                     // 独立黑名单：做不了的广告任务可以在这里排除
                     if (AntMemberAdTaskList.getValue().contains(name)) {
-                        Log.member("会员广告任务⏭️跳过[" + name + "]#在黑名单中");
+                        logSkipOnce("antmember::skipAdBlack::" + name, "会员广告任务⏭️跳过[" + name + "]#在黑名单中");
                         return false;
                     }
                     return doAdTask(task, config, name, awardParamPoint);
@@ -1065,6 +1251,9 @@ public class AntMember extends ModelTask {
                 JSONObject jo = new JSONObject(AntMemberRpcCall.applyTask(name, id));
                 sleepWithJitter(300);
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
+                    // 失败原因原先完全被吞掉：只看到「列表里有任务却没收益」，无法判断是风控还是任务本身
+                    logSkipOnce("antmember::applyFail::" + name,
+                            "会员任务⏭️跳过[" + name + "]#申请失败: " + truncate(jo.toString(), 160));
                     continue;
                 }
                 String bizType;
@@ -1083,6 +1272,8 @@ public class AntMember extends ModelTask {
                 jo = new JSONObject(AntMemberRpcCall.executeTask(bizParam, bizSubType, bizType));
                 sleepWithJitter(300);
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
+                    logSkipOnce("antmember::execFail::" + name,
+                            "会员任务⏭️跳过[" + name + "]#上报失败: " + truncate(jo.toString(), 160));
                     continue;
                 }
                 String ex = left == right && left == 1 ? "" : "(" + (i + 1) + "/" + right + ")";
