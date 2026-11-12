@@ -15,7 +15,6 @@ import com.sesame.wu.util.StringUtil;
 import com.sesame.wu.util.idMap.UserIdMap;
 
 import java.security.SecureRandom;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.Random;
@@ -482,25 +481,12 @@ public class AntForestRpcCall {
         return ApplicationHook.requestString("alipay.antforest.forest.h5.startWhackMole", "[{\"source\":\"" + source + "\"}]");
     }
     
-    public static String settlementWhackMole(String token) throws JSONException {
-        // 改用传统 for 循环生成 1-20 的 moleIdList（替换原 1-15，按注释要求改到20）
-        List<Integer> moleIdList = new ArrayList<>();
-        for (int i = 1; i <= 20; i++) { // 按你注释要求改为 1-20
-            moleIdList.add(i);
-        }
-        
-        JSONObject param = new JSONObject();
-        param.put("moleIdList", new JSONArray(moleIdList));
-        param.put("settlementScene", "NORMAL");
-        param.put("source", "senlinguangchangdadishu");
-        param.put("token", token);
-        param.put("version", VERSION);
-        
-        return ApplicationHook.requestString(
-                "alipay.antforest.forest.h5.settlementWhackMole",
-                "[" + param + "]"
-        );
-    }
+    /*
+     * 注意：这里原本还有一个单参 settlementWhackMole(String token)，
+     * 它把 moleIdList 写死成 1..20 这些假 id 提交结算，服务端必然不认，
+     * 等于把「6秒拼手速」的结算全部作废，故整段删除。
+     * 结算统一走下面的 settlementWhackMole(token, moleIdList, source)，由调用方传入真正打中的 id。
+     */
     
     //兼容模式结算
     public static String oldsettlementWhackMole(String token, List<String> moleIdList, String source) {

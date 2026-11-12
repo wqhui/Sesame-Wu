@@ -16,6 +16,8 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.TimeZone;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 新版大富翁巡护工作流——掷骰子、事件确认、任务领骰子、保护证书兑换。
@@ -280,22 +282,26 @@ public class MonopolyPatrolWorkflow {
         if (!checkRes("查询巡护证书入口失败:", entry)) return;
         JSONObject mapDisplay = optJSON(entry, "displayInfo", "mapDisplay");
         String redirect = optString(optJSON(mapDisplay, "protectionGuideDisplay"), "redirectUrl");
-        if (redirect.isEmpty()) {
-            Log.record("森林巡护🦌 当前地图没有证书项目");
-            return;
+        // 为什么要绕开 optString 直接啃 JSON 文本：M 项目实测该链接字段用 optString 读会返回空串，
+        // 而证书链接以 URL 编码形式下发（projectId%3D<数字>），且真实入口是 lockedRedirectUrl，
+        // 所以先对 mapDisplay 整条 JSON 做正则（优先命中 lockedRedirectUrl），再退回旧的 redirectUrl 解析，
+        // 避免误取动物/栖息地等其它 projectId。
+        String projectId = parseCertificateProjectId(mapDisplay != null ? mapDisplay.toString() : "");
+        String pidSource = "lockedRedirectUrl 正则";
+        if (projectId.isEmpty()) {
+            projectId = projectIdFromRedirectUrl(redirect);
+            pidSource = "redirectUrl 参数";
         }
-        Uri uri = Uri.parse(redirect);
-        String projectId = uri.getQueryParameter("projectId");
-        if (projectId == null || projectId.isEmpty()) {
-            String url = uri.getQueryParameter("url");
-            if (url != null) {
-                projectId = Uri.parse(url).getQueryParameter("projectId");
+        if (projectId.isEmpty()) {
+            if (redirect.isEmpty()) {
+                Log.record("森林巡护🦌 当前地图没有证书项目");
+            } else {
+                Log.record(TAG + " 当前地图证书链接缺少 projectId");
             }
-        }
-        if (projectId == null || projectId.isEmpty()) {
-            Log.record(TAG + " 当前地图证书链接缺少 projectId");
             return;
         }
+        // 记下来源：这条日志能在现场区分"正则命中"和"退回旧解析"，是排查空串字段的唯一线索
+        Log.record("森林巡护🦌 证书兑换项目ID[" + projectId + "](来源:" + pidSource + ")");
 
         JSONObject before = parsePatrolResponse(AntForestPatrolRpcCall.queryCertificate(projectId));
         if (!checkRes("查询巡护证书资格失败:", before)) return;
@@ -348,6 +354,57 @@ public class MonopolyPatrolWorkflow {
             String mapCode = userInfo != null ? userInfo.optString("currentMapCode") : "";
             Log.record("森林巡护🦌 当前巡护地图[" + mapCode + "]");
         }
+    }
+
+    // ---- 证书 projectId 解析 ---------------------------------------------
+
+    /**
+     * 从地图条目的 JSON 文本里解析证书兑换的 projectId。
+     * <p>为什么要用正则而不是直接读字段：证书链接是 URL 编码下发的（{@code projectId%3D<数字>}），
+     * 而且该字段（保护引导 / lockedRedirectUrl）用 optString 读会返回空串，
+     * 只能对整条 JSON 文本匹配。匹配顺序上优先 lockedRedirectUrl，
+     * 是因为同一份 JSON 里动物、栖息地等入口也带 projectId，先命中证书入口才不会误兑。
+     */
+    private static String parseCertificateProjectId(String text) {
+        if (text == null || text.isEmpty()) {
+            return "";
+        }
+        Matcher m = Pattern.compile("lockedRedirectUrl\"\\s*:\\s*\"[^\"]*?projectId%3D(\\d+)").matcher(text);
+        if (m.find()) {
+            return m.group(1);
+        }
+        m = Pattern.compile("redirectUrl\"\\s*:\\s*\"[^\"]*?projectId%3D(\\d+)").matcher(text);
+        if (m.find()) {
+            return m.group(1);
+        }
+        m = Pattern.compile("projectId%3D(\\d+)").matcher(text);
+        if (m.find()) {
+            return m.group(1);
+        }
+        m = Pattern.compile("projectId=(\\d+)").matcher(text);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return "";
+    }
+
+    /**
+     * 旧取法的兜底：直接从 redirectUrl（可能再套一层 url 参数）里取 projectId。
+     * <p>正则拿不到时才用，保留原有行为，避免真遇到未编码链接时反而退化成"没有证书项目"。
+     */
+    private static String projectIdFromRedirectUrl(String redirect) {
+        if (redirect == null || redirect.isEmpty()) {
+            return "";
+        }
+        Uri uri = Uri.parse(redirect);
+        String projectId = uri.getQueryParameter("projectId");
+        if (projectId == null || projectId.isEmpty()) {
+            String url = uri.getQueryParameter("url");
+            if (url != null) {
+                projectId = Uri.parse(url).getQueryParameter("projectId");
+            }
+        }
+        return projectId == null ? "" : projectId;
     }
 
     // ---- JSON helpers ----------------------------------------------------
