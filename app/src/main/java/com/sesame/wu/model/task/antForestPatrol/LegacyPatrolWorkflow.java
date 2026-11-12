@@ -31,6 +31,20 @@ public class LegacyPatrolWorkflow {
     /** 今日步数兑换巡护次数达到上限标记 */
     private static final String FLAG_PATROL_CHANCE_LIMIT = "Forest::patrolChanceExchangeLimit";
 
+    /**
+     * 巡护外层轮次上限：每轮最多走一步 / 换一次图。
+     * <p>为什么需要：{@link #queryUserPatrol()} 的循环体里「掷骰」与「兑换步数」两条路都用 continue
+     * 回到循环头，原本没有任何终止条件 —— 服务端状态不前进（不扣次数、不换节点）时会一直重发，
+     * 整轮任务卡死且后面的模块全不执行。上限太小会把剩余步骤挤到下一轮才做，故放宽到 100。
+     */
+    private static final int MAX_PATROL_ROUNDS = 100;
+
+    /**
+     * 单次巡护前行的轮次上限：服务端恒回 GOING 而节点不推进时，
+     * {@link #patrolKeepGoing} 原本每条响应就重发一次，外层轮次上限挡不住单次调用内部的长跑。
+     */
+    private static final int MAX_PATROL_STEPS = 50;
+
     private LegacyPatrolWorkflow() {}
 
     // ---- 辅助函数 ---------------------------------------------------------
@@ -376,7 +390,13 @@ public class LegacyPatrolWorkflow {
     public static void queryUserPatrol() {
         boolean patrolChanceReplenishTried = false;
         try {
+            int loopCount = 0;
+            String lastState = null;
             while (!Thread.currentThread().isInterrupted()) {
+                if (++loopCount > MAX_PATROL_ROUNDS) {
+                    log("巡护⚖️循环超过上限，本轮停止");
+                    break;
+                }
                 JSONObject jo = unwrapResData(new JSONObject(AntForestRpcCall.queryUserPatrol()));
                 if (MessageUtil.checkResultCode(TAG, jo)) {
                     int currentPatrolId = optInt(jo.optJSONObject("userPatrol"), "patrolId", 0);
@@ -395,6 +415,20 @@ public class LegacyPatrolWorkflow {
                         log("巡护任务缺少userPatrol字段，跳过本轮");
                         break;
                     }
+                    // 本轮开局状态与上一轮完全相同：说明上一轮的走步 / 兑换 / 换图没让任何字段前进，
+                    // 再循环只是对同一状态空转，直接收手。chance 只取数值字段拼串，
+                    // 不直接 toString 整个对象（字段顺序不保证，同状态可能拼出不同串而漏判）
+                    JSONObject stateChance = userPatrol.optJSONObject("chance");
+                    String state = userPatrol.optInt("patrolId", 0) + "/"
+                            + userPatrol.optInt("currentNode", 0) + "/"
+                            + userPatrol.optString("currentStatus", "") + "/"
+                            + (stateChance == null ? "" : stateChance.optInt("leftChance", 0) + ","
+                            + stateChance.optInt("leftStep", 0) + "," + stateChance.optInt("usedStep", 0));
+                    if (state.equals(lastState)) {
+                        log("巡护⚖️状态未推进，本轮停止");
+                        break;
+                    }
+                    lastState = state;
                     int currentNode = userPatrol.getInt("currentNode");
                     String currentStatus = userPatrol.getString("currentStatus");
                     int patrolId = userPatrol.getInt("patrolId");
@@ -466,7 +500,16 @@ public class LegacyPatrolWorkflow {
     private static void patrolKeepGoing(JSONObject response, int patrolId) {
         JSONObject current = response;
         try {
+            // 服务端持续回 GOING、currentNode 却不推进时，这里原本每条响应就重发一次，
+            // 外层 queryUserPatrol 的轮次上限挡不住单次调用内部的长跑，故自己也要有上限
+            int loopCount = 0;
+            int lastNode = Integer.MIN_VALUE;
+            int unchanged = 0;
             while (!Thread.currentThread().isInterrupted()) {
+                if (++loopCount > MAX_PATROL_STEPS) {
+                    log("巡护⚖️前行次数超过上限，本轮停止");
+                    return;
+                }
                 JSONObject jo = current;
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
                     log(jo.optString("resultDesc", jo.optString("desc", "巡护失败")));
@@ -474,6 +517,19 @@ public class LegacyPatrolWorkflow {
                 }
                 logPatrolRewardPiece(jo.optJSONArray("events") != null
                     ? jo.optJSONArray("events").optJSONObject(0) : null);
+                // 连续多轮节点不变：巡护没有真正前进，再发也是同一响应。容忍一次抖动，连续 3 轮才停
+                int currentNode = optInt(jo.optJSONObject("userPatrol"), "currentNode", -1);
+                if (currentNode >= 0) {
+                    if (currentNode == lastNode) {
+                        if (++unchanged >= 3) {
+                            log("巡护⚖️节点连续未前进，本轮停止");
+                            return;
+                        }
+                    } else {
+                        unchanged = 0;
+                        lastNode = currentNode;
+                    }
+                }
                 current = buildNextPatrolKeepGoingResponse(jo, patrolId);
                 if (current == null) return;
             }

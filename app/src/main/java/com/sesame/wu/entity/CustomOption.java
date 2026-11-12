@@ -35,6 +35,24 @@ public class CustomOption extends IdAndName {
         return list;
     }
 
+    /**
+     * 庄园可雇佣的 NPC 小鸡。
+     * <p>为什么单列一张表：NPC 不是好友，选不到 AlipayUser 里，只能用它自己的活动批次 ID 当选项；
+     * id 必须与 {@code AntFarm.HireNpc} 的枚举名一一对应，改名会让已保存的勾选失效。
+     */
+    public static List<CustomOption> getAntFarmHireNpcOptions() {
+        List<CustomOption> list = new ArrayList<>();
+        list.add(new CustomOption("DA_BIAO_GE", "大表鸽"));
+        list.add(new CustomOption("HUANG_JIN_JI", "黄金鸡"));
+        list.add(new CustomOption("NONG_CHANG_XIAO_JI", "农场小鸡"));
+        // 以下四只暂不启用，参数已在 AntFarm.HireNpc 里备好
+        // list.add(new CustomOption("TAO_JIN_BI_XIAO_JI", "淘金币小鸡"));
+        // list.add(new CustomOption("DAO_DIAN_HONG_BAO_XIAO_JI", "到店红包小鸡"));
+        // list.add(new CustomOption("TONG_YONG_HONG_BAO_XIAO_JI", "通用红包小鸡"));
+        // list.add(new CustomOption("TONG_YONG_QUAN_BAO_XIAO_JI", "通用券包小鸡"));
+        return list;
+    }
+
     public static List<CustomOption> getAntFarmFamilyOptions() {
         List<CustomOption> list = new ArrayList<>();
         list.add(new CustomOption("familySign", "每日签到"));

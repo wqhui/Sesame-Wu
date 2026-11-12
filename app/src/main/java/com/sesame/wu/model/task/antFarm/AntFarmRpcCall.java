@@ -88,6 +88,16 @@ public class AntFarmRpcCall {
         return ApplicationHook.requestString("com.alipay.antfarm.sendBackAnimal", args1);
     }
 
+    /**
+     * 遣返自家农场的 NPC（和偷吃小鸡共用 RPC，参数不同）；{@code receiveNPCReward=true} 表示顺带领奖。
+     * <p>为什么不复用 {@link #sendBackAnimal(String, String, String, String)}：NPC 这条链路服务端认的是
+     * receiveNPCReward / sceneCode / sendType 这组字段，而好友小鸡那条要 sendType（方式）参与业务判断。
+     */
+    public static String sendBackNpcAnimal(String animalId, String currentFarmId, String masterFarmId, boolean receiveNPCReward) {
+        String args1 = "[{\"animalId\":\"" + animalId + "\",\"currentFarmId\":\"" + currentFarmId + "\"," + "\"masterFarmId\":\"" + masterFarmId + "\",\"receiveNPCReward\":" + receiveNPCReward + ",\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\"," + "\"sendType\":\"NORMAL\",\"source\":\"H5\",\"version\":\"" + VERSION + "\"}]";
+        return ApplicationHook.requestString("com.alipay.antfarm.sendBackAnimal", args1);
+    }
+
     public static String harvestProduce(String farmId) {
         String args1 = "[{\"canMock\":true,\"farmId\":\"" + farmId + "\",\"giftType\":\"\"," + "\"requestType" + "\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"H5\",\"version\":\"" + VERSION + "\"}]";
         return ApplicationHook.requestString("com.alipay.antfarm.harvestProduce", args1);
@@ -125,6 +135,15 @@ public class AntFarmRpcCall {
 
     public static String listFarmTask() {
         String args1 = "[{\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"H5\",\"version\":\"" + VERSION + "\"}]";
+        return ApplicationHook.requestString("com.alipay.antfarm.listFarmTask", args1);
+    }
+
+    /**
+     * 按场景码查询 NPC 任务列表：每只 NPC 用各自的 {@code taskSceneCode}，
+     * 不能复用无参 {@link #listFarmTask()} —— 那个只回饲料任务，拿不到 NPC 的任务。
+     */
+    public static String listNpcFarmTask(String taskSceneCode) {
+        String args1 = "[{\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"H5\",\"taskSceneCode\":\"" + taskSceneCode + "\",\"version\":\"" + VERSION + "\"}]";
         return ApplicationHook.requestString("com.alipay.antfarm.listFarmTask", args1);
     }
 
@@ -172,6 +191,15 @@ public class AntFarmRpcCall {
 
     public static String receiveFarmTaskAward(String taskId) {
         String args1 = "[{\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"H5\",\"taskId\":\"" + taskId + "\",\"version\":\"" + VERSION + "\"}]";
+        return ApplicationHook.requestString("com.alipay.antfarm.receiveFarmTaskAward", args1);
+    }
+
+    /**
+     * 领取 NPC 任务奖励：除 taskId 外还必须带任务所属场景码与奖励类型，
+     * 缺了这两个字段服务端只会回参数错误（NPC 场景的 awardType 是 NPC_ANIMAL_FOOD）。
+     */
+    public static String receiveNpcTaskAward(String taskId, String taskSceneCode, String awardType) {
+        String args1 = "[{\"awardType\":\"" + awardType + "\",\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"H5\"," + "\"taskId\":\"" + taskId + "\",\"taskSceneCode\":\"" + taskSceneCode + "\",\"version\":\"" + VERSION + "\"}]";
         return ApplicationHook.requestString("com.alipay.antfarm.receiveFarmTaskAward", args1);
     }
 
@@ -477,6 +505,16 @@ public class AntFarmRpcCall {
     */
     public static String hireAnimal(String farmId, String animalId) {
         return ApplicationHook.requestString("com.alipay.antfarm.hireAnimal", "[{\"friendFarmId\":\"" + farmId + "\"," + "\"hireActionType\":\"HIRE_IN_FRIEND_FARM\",\"hireAnimalId\":\"" + animalId + "\",\"requestType" + "\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"sendCardChat\":false," + "\"source" + "\":\"H5\",\"version\":\"" + VERSION + "\"}]");
+    }
+
+    /**
+     * 雇佣自家农场的 NPC：与 {@link #hireAnimal(String, String)} 同一个 RPC，
+     * 但动作改成 HIRE_IN_SELF_FARM 且必须带 isNpcAnimal=true（走好友那条会被当成雇佣好友而失败）。
+     */
+    public static String hireNpcAnimal(String animalId, String source) {
+        String src = (source == null || source.isEmpty()) ? "H5" : source;
+        String args1 = "[{\"hireActionType\":\"HIRE_IN_SELF_FARM\",\"hireAnimalId\":\"" + animalId + "\",\"isNpcAnimal\":true," + "\"requestType\":\"NORMAL\",\"sceneCode\":\"ANTFARM\",\"source\":\"" + src + "\",\"version\":\"" + VERSION + "\"}]";
+        return ApplicationHook.requestString("com.alipay.antfarm.hireAnimal", args1);
     }
 
     public static String drawGameCenterAward() {
