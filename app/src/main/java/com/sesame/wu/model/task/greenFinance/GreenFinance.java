@@ -77,27 +77,46 @@ public class GreenFinance extends ModelTask {
                 Log.i(TAG, jo.optString("resultDesc"));
                 return;
             }
-            JSONObject result = jo.getJSONObject("result");
-            if (!result.getBoolean("greenFinanceSigned")) {
+            JSONObject result = jo.optJSONObject("result");
+            if (result == null) {
+                Log.i(TAG + ".index", "响应缺少 result");
+                return;
+            }
+            if (!result.optBoolean("greenFinanceSigned", false)) {
                 Log.other("绿色经营📊未开通");
                 return;
             }
-            JSONObject mcaGreenLeafResult = result.getJSONObject("mcaGreenLeafResult");
-            JSONArray greenLeafList = mcaGreenLeafResult.getJSONArray("greenLeafList");
-            String currentCode = "";
-            JSONArray bsnIds = new JSONArray();
-            for (int i = 0; i < greenLeafList.length(); i++) {
-                JSONObject greenLeaf = greenLeafList.getJSONObject(i);
-                String code = greenLeaf.getString("code");
-                if (currentCode.equals(code) || bsnIds.length() == 0) {
-                    bsnIds.put(greenLeaf.getString("bsnId"));
-                } else {
-                    batchSelfCollect(bsnIds);
-                    bsnIds = new JSONArray();
+            // 缺字段只跳过收集：原先整块用 getJSONObject/getString 取值，任何一条结构异常都会
+            // 抛出去，把这一轮的叶子收集全部废掉（后面还有签到/打卡/捐助）
+            JSONObject mcaGreenLeafResult = result.optJSONObject("mcaGreenLeafResult");
+            JSONArray greenLeafList = mcaGreenLeafResult == null ? null : mcaGreenLeafResult.optJSONArray("greenLeafList");
+            if (greenLeafList != null) {
+                // 原实现按 currentCode 分组，但 currentCode 从未赋值，恒为空串：
+                // 第一条之后每条都走 else 分支，等于「一条一请求」且换组时把当前叶子丢掉，
+                // 结果只收了一半条目。改为 code 变化时先提交上一批，同 code 合并成一次请求。
+                JSONArray bsnIds = new JSONArray();
+                String currentCode = null;
+                for (int i = 0; i < greenLeafList.length(); i++) {
+                    JSONObject greenLeaf = greenLeafList.optJSONObject(i);
+                    if (greenLeaf == null) {
+                        continue;
+                    }
+                    String code = greenLeaf.optString("code", "");
+                    if (!code.equals(currentCode)) {
+                        if (bsnIds.length() > 0) {
+                            batchSelfCollect(bsnIds);
+                        }
+                        bsnIds = new JSONArray();
+                        currentCode = code;
+                    }
+                    String bsnId = greenLeaf.optString("bsnId", "");
+                    if (!bsnId.isEmpty()) {
+                        bsnIds.put(bsnId);
+                    }
                 }
-            }
-            if (bsnIds.length() > 0) {
-                batchSelfCollect(bsnIds);
+                if (bsnIds.length() > 0) {
+                    batchSelfCollect(bsnIds);
+                }
             }
         } catch (Throwable th) {
             Log.i(TAG, "index err:");
