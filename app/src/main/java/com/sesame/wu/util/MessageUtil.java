@@ -30,22 +30,64 @@ public class MessageUtil {
         return null;
     }
 
+    /** 滑块 / 验证码类文案：可恢复，用户手动处理即可继续 */
+    public static boolean isCaptchaMessage(String message) {
+        if (message == null) {
+            return false;
+        }
+        String lower = message.toLowerCase();
+        for (String keyword : new String[]{"滑块", "滑塊", "验证码", "驗證碼", "captcha"}) {
+            if (lower.contains(keyword.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 给失败日志加分类标记，便于在运行日志里搜索定位。
+     *
+     * <p>可恢复的一律用 ⚠️：限流、服务端繁忙、风控、滑块验证；
+     * 只有「稳定不可完成」才用 ❌，否则真问题会被大量临时失败淹掉。
+     */
+    private static String failureLabel(String tag, JSONObject jo, String errorText) {
+        if (isCaptchaMessage(errorText)) {
+            return "⚠️滑块验证[" + tag + "]#";
+        }
+        switch (TaskBlacklist.classify(jo)) {
+            case RETRYABLE:
+                return "⚠️限流[" + tag + "]#";
+            case BUSY:
+                return "⚠️繁忙[" + tag + "]#";
+            case HARD_BLOCK:
+                return "⚠️风控[" + tag + "]#";
+            case PERMANENT:
+                return "❌[" + tag + "]#";
+            default:
+                return "⚠️未知[" + tag + "]#";
+        }
+    }
+
     public static void printErrorMessage(String tag, JSONObject jo, String errorMessageField) {
         try {
             if (isUnsupportedRpc(jo)) {
                 // 400000040「不支持rpc调用」不代表任务做不了（调用方会转另一种实现方案）：
                 // 只写运行日志、不记模块错误，避免把预期失败当成错误刷屏
+                Log.record("⚠️不支持RPC[" + tag + "]#" + jo.optString(errorMessageField, ""));
                 Log.i(tag, jo.toString());
                 return;
             }
             if (isServerBusy(jo)) {
                 // 102 高频错误：只打一行 JSON，避免 memo + JSON 刷两条
+                Log.record("⚠️繁忙[" + tag + "]#" + jo.optString(errorMessageField, ""));
                 Log.i(tag, jo.toString());
                 return;
             }
-            String errMsg = tag + " error:";
-            Log.record(errMsg + jo.getString(errorMessageField));
-            Log.i(jo.getString(errorMessageField), jo.toString());
+            String errorText = jo.getString(errorMessageField);
+            // 按 TaskBlacklist 已有的分类打标记：只有「稳定不可完成」才算真错误，
+            // 限流 / 繁忙 / 风控 / 滑块都是可恢复的，打成错误会把真问题淹掉。
+            Log.record(failureLabel(tag, jo, errorText) + errorText);
+            Log.i(errorText, jo.toString());
         } catch (Throwable t) {
             Log.i(TAG, "printErrorMessage err:");
             Log.printStackTrace(TAG, t);

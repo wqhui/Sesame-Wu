@@ -218,10 +218,11 @@ public class Log {
     }
 
     public static void error(String s) {
+        final String msg = "❌ " + s;
         if (com.sesame.wu.data.AppConfig.INSTANCE.getEnableViewErrorLog()) {
-            errorLogger.i(withAccount(s));
+            errorLogger.i(withAccount(msg));
         }
-        i(s);
+        i(msg);
     }
 
     public static void printStackTrace(Throwable t) {
