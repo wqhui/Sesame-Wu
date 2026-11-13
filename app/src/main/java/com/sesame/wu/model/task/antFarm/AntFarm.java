@@ -884,7 +884,15 @@ public class AntFarm extends ModelTask {
             foodHaveEatten += (nowTime - animal.startEatTime) / 1000 * animal.consumeSpeed;
             consumeSpeed += animal.consumeSpeed;
         }
-        long nextFeedTime = nowTime + (long) ((foodInTrough - foodHaveEatten) / consumeSpeed) * 1000;
+        // consumeSpeed 为 0 时会除出 Infinity，转 long 后溢出成一个极远的时间点，
+        // 子任务被排到遥遥无期，蹲点投喂链路就此静默断掉。退化到 30 秒后重查。
+        long nextFeedTime;
+        if (consumeSpeed <= 0d) {
+            nextFeedTime = nowTime + 30_000L;
+        } else {
+            double remainMs = (foodInTrough - foodHaveEatten) / consumeSpeed * 1000;
+            nextFeedTime = nowTime + (remainMs > 0 ? (long) remainMs : 30_000L);
+        }
         String taskId = "FA|" + ownerFarmId;
         if (hasChildTask(taskId)) {
             removeChildTask(taskId);

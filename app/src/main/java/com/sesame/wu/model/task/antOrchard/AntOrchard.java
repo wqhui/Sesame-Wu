@@ -381,19 +381,22 @@ public class AntOrchard extends ModelTask {
                 // 候选入库：供「抽抽乐任务 | 黑名单列表」下拉勾选（含服务端返回的全部任务）
                 OrchardChouChouLeTaskListMap.add(title, title);
 
-                // 黑名单任务跳过（用户手动加入的、以及自动拉黑机制加入的）
-                if (Boolean.TRUE.equals(AutoOrchardChouChouLeTaskList.getValue())
-                        && OrchardChouChouLeTaskList.getValue().contains(title)) {
-                    Log.record("农场抽抽乐⏭️[" + title + "]在黑名单中，跳过");
-                    continue;
-                }
-
+                // 已完成的任务先领奖，再判断黑名单：
+                // 黑名单只表示「不再尝试完成」，不该阻止领取已经完成的奖励，
+                // 否则被拉黑但已被用户在真机上做完的任务会永远领不到奖。
                 if ("FINISHED".equals(taskStatus)) {
                     sleepWithJitter(executeInterval.getValue());
                     JSONObject recv = new JSONObject(AntOrchardRpcCall.receiveDrawTaskAward(sceneCode, taskType));
                     if (MessageUtil.checkResultCode(TAG, recv)) {
                         Log.farm("农场抽抽乐⚗领取奖励[" + title + "] +" + recv.optInt("incAwardCount") + "次机会");
                     }
+                }
+
+                // 黑名单任务跳过（用户手动加入的、以及自动拉黑机制加入的）
+                if (Boolean.TRUE.equals(AutoOrchardChouChouLeTaskList.getValue())
+                        && OrchardChouChouLeTaskList.getValue().contains(title)) {
+                    Log.record("农场抽抽乐⏭️[" + title + "]在黑名单中，跳过");
+                    continue;
                 }
                 else if ("TODO".equals(taskStatus)) {
                     // 浏览类任务等待时长
