@@ -4648,7 +4648,6 @@ public class AntForestV2 extends ModelTask {
             Collections.sort(list, new Comparator<JSONObject>() {
                 @Override
                 public int compare(JSONObject jsonObject1, JSONObject jsonObject2) {
-                    try {
                         // 比较器里抛异常会让 Collections.sort 直接失败（整轮道具使用中断）
                         JSONObject sortConfig1 = jsonObject1.optJSONObject("propConfigVO");
                         JSONObject sortConfig2 = jsonObject2.optJSONObject("propConfigVO");
@@ -4669,9 +4668,6 @@ public class AntForestV2 extends ModelTask {
                         } else {
                             return hasExpireTime1 ? -1 : 1;
                         }
-                    } catch (JSONException e) {
-                        throw new RuntimeException(e);
-                    }
                 }
             });
         } catch (Throwable th) {
