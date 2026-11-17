@@ -4,6 +4,7 @@ import static com.sesame.wu.model.normal.base.BaseModel.taskRpcRequest;
 
 import android.os.Build;
 
+import com.sesame.wu.model.base.TaskCommon;
 import com.sesame.wu.util.AccountSession;
 import com.sesame.wu.util.FileUtil;
 import com.sesame.wu.util.Status;
@@ -67,6 +68,10 @@ public abstract class ModelTask extends Model {
                     Log.i(TAG, "账号会话已切换，跳过本次执行");
                     return;
                 }
+                // 每轮执行前重算时间窗：一批任务可能跑很久（森林、农场动辄几分钟），
+                // IS_ENERGY_TIME 只在整批开始前算过一次，跨过窗口边界后仍是旧值，
+                // 会出现「暂停日志已打、子流程还在跑」。
+                TaskCommon.update();
                 task.run();
                 consecutiveFailures = 0;
             } catch (Exception e) {

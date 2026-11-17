@@ -196,6 +196,8 @@ public class AntForestV2 extends ModelTask {
     private BooleanModelField collectEnergy;
     private BooleanModelField expiredEnergy;
     private BooleanModelField energyRain;
+    /** 能量雨结算前的随机等待（毫秒范围），模拟真人看完动画 */
+    private StringModelField energyRainWait;
     private IntegerModelField advanceTime;
     private IntegerModelField tryCount;
     private IntegerModelField retryInterval;
@@ -368,13 +370,14 @@ public class AntForestV2 extends ModelTask {
         modelFields.addField(collectProp = new BooleanModelField("collectProp", "收集道具", false));
         modelFields.addField(whoYouWantToGiveTo = new SelectModelField("whoYouWantToGiveTo", "赠送道具好友列表", new LinkedHashSet<>(), AlipayUser::getList, "会赠送所有可送道具都给已选择的好友"));
         modelFields.addField(energyRain = new BooleanModelField("energyRain", "收集能量雨", false));
+        modelFields.addField(energyRainWait = new StringModelField("energyRainWait", "能量雨 | 结算等待(毫秒，如 6000-20000)", "6000-20000"));
         modelFields.addField(giveEnergyRainList = new SelectModelField("giveEnergyRainList", "赠送能量雨好友列表", new LinkedHashSet<>(), AlipayUser::getList));
         modelFields.addField(useEnergyRainLimit = new BooleanModelField("useEnergyRainLimit", "兑换使用限时能量雨卡", false));
         modelFields.addField(receiveForestTaskAward = new BooleanModelField("receiveForestTaskAward", "森林任务", false));
         modelFields.addField(AutoAntForestVitalityTaskList = new BooleanModelField("AutoAntForestVitalityTaskList", "活力值 | 自动黑白名单", true));
         modelFields.addField(AntForestVitalityTaskList = new SelectModelField("AntForestVitalityTaskList", "活力值 | 黑名单列表", new LinkedHashSet<>(), AlipayAntForestVitalityTaskList::getList));
         modelFields.addField(collectGiftBox = new BooleanModelField("collectGiftBox", "领取礼盒", false));
-        modelFields.addField(greenBehaviorStay = new StringModelField("greenBehaviorStay", "绿色行为 | 浏览停留(秒，如 30-35)", "30-35"));
+        modelFields.addField(greenBehaviorStay = new StringModelField("greenBehaviorStay", "绿色行为 | 浏览间隔(毫秒，如 30000-35000)", "30000-35000"));
         modelFields.addField(medicalHealth = new BooleanModelField("medicalHealth", "医疗健康", false));
         modelFields.addField(greenLife = new BooleanModelField("greenLife", "森林集市", false));
         modelFields.addField(marketBrowseTask = new BooleanModelField("marketBrowseTask", "绿植浏览", false));
@@ -2389,27 +2392,22 @@ public class AntForestV2 extends ModelTask {
      * 生成（医疗健康 0 秒、绿色租赁 0.2 秒、绿植浏览 1 秒、绿色行动 0 秒），
      * 这是最典型的脚本特征，比请求频率更容易触发风控。
      */
-    public static void browseDelay() {
-        // 本方法被静态方法（greenRent / sendEnergyByAction）调用，配置字段是实例字段，
-        // 这里通过 Model 取回当前实例再读
-        AntForestV2 self = Model.getModel(AntForestV2.class);
-        if (self == null) {
-            return;
-        }
-        String cfg = self.greenBehaviorStay.getValue();
-        int min = 30;
-        int max = 35;
+    /**
+     * 解析「最小-最大」形式的毫秒范围，返回区间内随机值；填 0 或空返回 0 表示不等待。
+     *
+     * <p>解析失败时回落到调用方给的默认区间，避免用户写错就完全不等待。
+     */
+    private static long parseRangeMs(String cfg, int defaultMin, int defaultMax) {
+        int min = defaultMin;
+        int max = defaultMax;
         if (cfg != null && !cfg.trim().isEmpty()) {
             String[] parts = cfg.trim().split("-");
             try {
                 min = Integer.parseInt(parts[0].trim());
-                if (parts.length > 1) {
-                    max = Integer.parseInt(parts[1].trim());
-                } else {
-                    max = min;
-                }
+                max = parts.length > 1 ? Integer.parseInt(parts[1].trim()) : min;
             } catch (Throwable ignored) {
-                // 解析失败按默认 30~35
+                min = defaultMin;
+                max = defaultMax;
             }
         }
         if (min < 0) {
@@ -2418,12 +2416,25 @@ public class AntForestV2 extends ModelTask {
         if (max < min) {
             max = min;
         }
-        if (max == 0) {
+        if (max <= 0) {
+            return 0;
+        }
+        return max == min ? min : RandomUtil.nextInt(min, max + 1);
+    }
+
+    public static void browseDelay() {
+        // 本方法被静态方法（greenRent / sendEnergyByAction）调用，配置字段是实例字段，
+        // 这里通过 Model 取回当前实例再读
+        AntForestV2 self = Model.getModel(AntForestV2.class);
+        if (self == null) {
             return;
         }
-        int sec = max == min ? min : RandomUtil.nextInt(min, max + 1);
-        Log.i(TAG, "绿色行为浏览等待 " + sec + " 秒");
-        TimeUtil.sleep(sec * 1000L);
+        long ms = parseRangeMs(self.greenBehaviorStay.getValue(), 30000, 35000);
+        if (ms <= 0) {
+            return;
+        }
+        Log.i(TAG, "绿色行为浏览等待 " + ms + " 毫秒");
+        TimeUtil.sleep(ms);
     }
 
     private static void sendEnergyByAction(String sourceType) {
@@ -3427,11 +3438,14 @@ public class AntForestV2 extends ModelTask {
             for (int i = 0; i < bubbleEnergyList.length(); i++) {
                 sum += bubbleEnergyList.getInt(i);
             }
-            // 结算参数里没有点击轨迹，开局到结算的时长是唯一能体现「不是机器」的特征，故随机化，
-            // 固定 5 秒每局完全一致反而像脚本
-            TimeUtil.sleep(5000L + (long) (Math.random() * 5000L));
             if (sum == 50) {
                 Status.flagToday("EnergyRain::PlayGame");
+            }
+            // 结算前等一下：服务端要求能量雨动画放完才算，秒结算是最明显的脚本特征
+            long rainWait = parseRangeMs(energyRainWait == null ? null : energyRainWait.getValue(), 6000, 20000);
+            if (rainWait > 0) {
+                Log.i(TAG, "能量雨结算等待 " + rainWait + " 毫秒");
+                TimeUtil.sleep(rainWait);
             }
             jo = new JSONObject(AntForestRpcCall.energyRainSettlement(sum, token));
             if (MessageUtil.checkResultCode(TAG, jo)) {

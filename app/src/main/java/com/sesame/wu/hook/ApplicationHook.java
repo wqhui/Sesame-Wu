@@ -375,7 +375,7 @@ public class ApplicationHook {
                                     int checkInterval = BaseModel.getCheckInterval().getValue();
                                     if (lastExecTime + 2000 > System.currentTimeMillis()) {
                                         Log.record("执行间隔较短，跳过执行");
-                                        execDelayedHandler(checkInterval);
+                                        execDelayedHandler(nextCheckDelay(checkInterval));
                                         return;
                                     }
                                     updateDay();
@@ -442,7 +442,7 @@ public class ApplicationHook {
                                         Log.printStackTrace(TAG, e);
                                     }
 
-                                    execDelayedHandler(checkInterval);
+                                    execDelayedHandler(nextCheckDelay(checkInterval));
                                     FileUtil.clearLog();
                                 } catch (Exception e) {
                                     Log.record("执行异常:");
@@ -1006,6 +1006,61 @@ public class ApplicationHook {
 
     private static void execHandler() {
         mainTask.startTask(false);
+    }
+
+    /**
+     * 只收能量时间窗内把执行间隔压到多少。
+     *
+     * <p>取值要权衡：压得太短轮数暴增，能量雨这类高频操作容易触发滑块；
+     * 压得太长又可能错过好友能量球。15 分钟在 9 小时窗口内约 36 轮，比较稳。
+     */
+    private static final long ENERGY_WINDOW_INTERVAL = 18 * 60 * 1000L;
+
+    /**
+     * 计算下一轮的实际排期延迟。
+     *
+     * <p>执行间隔默认 50 分钟，而「只收能量时间」窗口通常只有 31 分钟：
+     * 按原间隔排期很容易整段错过（上一轮在窗口前跑完，下一轮就到窗口之后了），
+     * 早上那一波能量收不到。
+     *
+     * <p>两个地方压短：当前正处在窗口内；或窗口还没开始但距开始已不足一个间隔。
+     */
+    private static long nextCheckDelay(long checkInterval) {
+        try {
+            if (checkInterval <= 0) {
+                return checkInterval;
+            }
+            java.util.List<String> ranges = BaseModel.getEnergyTime().getValue();
+            if (ranges == null || ranges.isEmpty()) {
+                return checkInterval;
+            }
+            long now = System.currentTimeMillis();
+            if (Boolean.TRUE.equals(TimeUtil.checkInTimeRange(now, ranges))) {
+                return Math.min(checkInterval, ENERGY_WINDOW_INTERVAL);
+            }
+            // 窗口尚未开始：若距开始不足一个间隔，也压到能赶上
+            for (String range : ranges) {
+                if (range == null) {
+                    continue;
+                }
+                int dash = range.indexOf('-');
+                String startStr = dash > 0 ? range.substring(0, dash).trim() : range.trim();
+                if (startStr.isEmpty()) {
+                    continue;
+                }
+                java.util.Calendar start = TimeUtil.getTodayCalendarByTimeStr(startStr);
+                if (start == null) {
+                    continue;
+                }
+                long startMillis = start.getTimeInMillis();
+                if (startMillis > now && startMillis - now < checkInterval) {
+                    return Math.max(startMillis - now, 30_000L);
+                }
+            }
+        } catch (Throwable t) {
+            Log.printStackTrace("nextCheckDelay err:", t);
+        }
+        return checkInterval;
     }
 
     private static void execDelayedHandler(long delayMillis) {
