@@ -452,6 +452,14 @@ public abstract class ModelTask extends Model {
                     Log.i("ChildModelTask", "账号会话已切换，跳过子任务[" + id + "]");
                     return;
                 }
+                // 子任务是在父任务执行期间排进来的，可能比「只收能量时间」窗口更早创建，
+                // 到点执行时已经进入窗口。父任务的 run() 开头有保底，但子任务走的是
+                // 线程池，不经过父任务那一层，所以这里必须自己再挡一次，
+                // 否则窗口内仍会看到饲料任务、喂食、兑奖这类子任务在跑。
+                if (TaskCommon.IS_ENERGY_TIME) {
+                    Log.i("ChildModelTask", "只收能量时间，跳过子任务[" + id + "]");
+                    return;
+                }
                 runnable.run();
             } finally {
                 AccountSession.unbindCurrentThread();
