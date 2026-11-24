@@ -145,6 +145,15 @@ public class AntMember extends ModelTask {
     /** 备用接口同轮待核对（见 TaskAlternative.verify） */
     private static final Map<String, String> pendingVerifyTasks = new LinkedHashMap<>();
 
+    /**
+     * 本轮已经尝试过的广告任务名。
+     *
+     * <p>广告任务有两个来源（签到页任务列表、「可领任务列表」），同一轮里两条链会给出同一批任务。
+     * 不去重就会对同一个广告任务重复「申请 → 干等浏览时长 → 完成」，白等一次 15 秒。
+     * 每轮 run() 开头清空：跨轮不共享，失败了下一轮该重试还是重试。
+     */
+    private final Set<String> adTaskTriedThisRun = new HashSet<>();
+
     /** 同轮核对配置（见 TaskAlternative.verify） */
     private static final TaskAlternative.VerifyConfig VERIFY_CFG = new TaskAlternative.VerifyConfig(
             "AntMember", "AntMemberTaskList", "会员任务", "游戏中心", "🎮完成", true,
@@ -204,6 +213,9 @@ public class AntMember extends ModelTask {
             return;
         }
         try {
+            // 新一轮开始：清掉「本轮已试」去重表。它只在同一轮内有效，
+            // 不清就会让上一轮试过的广告任务在这一轮被当成已试而跳过，等于永久不再重试。
+            adTaskTriedThisRun.clear();
             //初始任务列表
             if (!Status.hasFlagToday("BlackList::initMember")) {
                 initMemberTaskListMap(AutoAntMemberTaskList.getValue(), AutoMemberCreditSesameTaskList.getValue(), AntMemberTask.getValue(), collectSesame.getValue());
@@ -219,7 +231,14 @@ public class AntMember extends ModelTask {
             if (memberSign.getValue()) {
                 memberSign();
             }
-            
+
+            // 广告任务是在「会员任务」分支内部通过签到页/可领任务列表取到的：
+            // 只开「会员广告任务」不会执行任何东西。这条每天提示一次，让「为什么没跑」能自查
+            if (enableAdTask.getValue() && !AntMemberTask.getValue()) {
+                logSkipOnce("antmember::adWithoutMemberTask",
+                        labelFor(true) + "⏭️跳过#「会员任务」未开启，广告任务不会被查询执行");
+            }
+
             if (AntMemberTask.getValue()) {
                 queryPointCert(1, 8);
                 // 签到页任务（原先是注释状态，对齐 Sesame-M 重新启用）
@@ -792,6 +811,16 @@ public class AntMember extends ModelTask {
                             // 前一个分类推进成功后右侧被短路，本分类的任务就不再执行了
                             doubleCheck |= doBrowseTask(browseOnly);
                         }
+                        // 广告任务必须单独挑：pickBrowseTask 按「targetBusiness 首段是 BROWSE」筛选，
+                        // 而广告任务按定义（adTask=true 且无 targetBusiness）根本不可能命中它，
+                        // 所以只走 pickBrowseTask 时签到页里的广告任务被整批漏掉，
+                        // doAdTask / markAdTaskBlackList 永远不执行——表现为「广告任务没跑、黑名单一直空」。
+                        // pickBrowseTask 的判定保持原样，这里用同一份 isAdTask 判据另取一份，
+                        // 交给同一个 doBrowseTask 处理（开关、黑名单、浏览时长都在里面，不重复实现）。
+                        JSONArray adOnly = pickAdTask(taskList);
+                        if (adOnly.length() > 0) {
+                            doubleCheck |= doBrowseTask(adOnly, true);
+                        }
                         if (!Objects.equals("BROWSE", type)) {
                             ExtensionsHandle.handleAlphaRequest("antMember", "doMoreTask", category);
                             randomSleep(1500, 3000);
@@ -867,8 +896,20 @@ public class AntMember extends ModelTask {
     }
 
     /**
+     * 日志标签：广告任务用「会员广告任务」，其余用「会员任务」。
+     *
+     * <p>为什么需要：两类任务共用同一条执行/跳过代码，日志前缀写死成「会员任务」时，
+     * 广告任务的申请失败、完成失败在日志里全都冒充「会员任务」，用户看到「会员任务跳过」
+     * 却不知道到底是普通会员任务还是广告任务没做成，排查时无从下手。
+     * 广告路径固定传 true，会员路径传 false。
+     */
+    private static String labelFor(boolean adOnly) {
+        return adOnly ? "会员广告任务" : "会员任务";
+    }
+
+    /**
      * 广告任务判定：adTask=true 且无 targetBusiness。
-     * <p>运行期过滤（{@link #doBrowseTask(JSONObject, int, int)}）与候选项登记共用同一判据，
+     * <p>运行期过滤（{@link #doBrowseTask(JSONObject, int, int, boolean)}）与候选项登记共用同一判据，
      * 避免两处判据漂移：一处改了另一处没跟上，任务就会既登记错列表又跑错分支。
      */
     private static boolean isAdTask(JSONObject task) {
@@ -1246,7 +1287,39 @@ public class AntMember extends ModelTask {
         return picked;
     }
 
+    /**
+     * 从任意分类里挑出**广告任务**（{@code adTask=true} 且没有 targetBusiness）。
+     *
+     * <p>为什么不复用 {@link #pickBrowseTask}：它要求 targetBusiness 首段是 BROWSE，
+     * 而广告任务按定义就没有 targetBusiness（见 {@link #isAdTask}），两者互斥，
+     * 所以广告任务永远不会出现在 pickBrowseTask 的结果里。原先只有「可领任务列表」
+     * 这一条链能把广告任务送进 {@link #doBrowseTask}，签到页里的广告任务被整批漏掉。
+     *
+     * <p>判定统一调 {@link #isAdTask}，与运行期过滤、候选项登记同一判据，避免三处漂移。
+     */
+    private static JSONArray pickAdTask(JSONArray taskList) {
+        JSONArray picked = new JSONArray();
+        if (taskList == null) {
+            return picked;
+        }
+        for (int i = 0; i < taskList.length(); i++) {
+            JSONObject task = taskList.optJSONObject(i);
+            if (isAdTask(task)) {
+                picked.put(task);
+            }
+        }
+        return picked;
+    }
+
     private Boolean doBrowseTask(JSONArray taskList) {
+        return doBrowseTask(taskList, false);
+    }
+
+    /**
+     * @param adOnly 本批是否只装了广告任务（{@code pickAdTask} 挑出来的那批）。
+     *               仅用于日志前缀：混合列表里还得按任务自身判据 {@link #isAdTask} 逐个修正。
+     */
+    private Boolean doBrowseTask(JSONArray taskList, boolean adOnly) {
         boolean doubleCheck = false;
         try {
             for (int i = 0; i < taskList.length(); i++) {
@@ -1259,7 +1332,7 @@ public class AntMember extends ModelTask {
                     // 直接改用 optInt，缺字段按 0 计
                     JSONObject extInfo = task.optJSONObject("extInfo");
                     if (extInfo == null) {
-                        Log.record("会员任务 跳过[" + task.optString("title", "") + "]#缺少字段 extInfo");
+                        Log.record(labelFor(adOnly) + "⏭️跳过[" + task.optString("title", "") + "]#缺少字段 extInfo");
                         continue;
                     }
                     int periodCurrentCount = extInfo.optInt("PERIOD_CURRENT_COUNT", 0);
@@ -1268,11 +1341,11 @@ public class AntMember extends ModelTask {
                     if (count > 0) {
                         // 必须用 |= ：写成 doubleCheck = doubleCheck || doBrowseTask(...) 时，
                         // 前一个任务成功后右侧被短路，列表里后续任务不再执行
-                        doubleCheck |= doBrowseTask(task, periodTargetCount, periodTargetCount);
+                        doubleCheck |= doBrowseTask(task, periodTargetCount, periodTargetCount, adOnly);
                     }
                 }
                 else {
-                    doubleCheck |= doBrowseTask(task, 1, 1);
+                    doubleCheck |= doBrowseTask(task, 1, 1, adOnly);
                 }
             }
         }
@@ -1282,9 +1355,17 @@ public class AntMember extends ModelTask {
         }
         return doubleCheck;
     }
-    
-    private Boolean doBrowseTask(JSONObject task, int left, int right) {
+
+    /**
+     * @param adOnly 调用方是否明确只处理广告任务（{@code pickAdTask} 挑出来的那批）；
+     *               混合列表传 false，靠 {@link #isAdTask} 逐个修正标签
+     */
+    private Boolean doBrowseTask(JSONObject task, int left, int right, boolean adOnly) {
         boolean doubleCheck = false;
+        // 广告任务打「会员广告任务」前缀，会员任务打「会员任务」前缀。
+        // 为什么不能只按入口参数区分：「可领任务列表」那条链里两类任务是混着发下来的，
+        // 只按 adOnly 打标签，广告任务的失败/完成就会显示成「会员任务」，排查时根本分不出是谁。
+        String label = labelFor(adOnly);
         try {
             // 旧结构用 taskConfigInfo(name/id/awardParam/targetBusiness)，新结构改用 simpleTaskConfig(title/configId/stageVOList)，
             // 且 targetBusiness 提到 task 顶层；两种结构都要兼容，缺配置时跳过而不是抛异常
@@ -1292,17 +1373,21 @@ public class AntMember extends ModelTask {
             JSONObject simpleTaskConfig = task.optJSONObject("simpleTaskConfig");
             JSONObject config = taskConfigInfo != null ? taskConfigInfo : simpleTaskConfig;
             if (config == null) {
-                Log.record("会员任务⏭️跳过#缺少任务配置");
+                Log.record(label + "⏭️跳过#缺少任务配置");
                 return false;
             }
             String name = config.optString("name", "");
             if (name.isEmpty()) {
                 name = config.optString("title", "");
             }
+            // 拿到任务名后再按任务自身判据修正一次标签：广告任务无论从哪条链进来都算「会员广告任务」
+            if (isAdTask(task)) {
+                label = labelFor(true);
+            }
             //黑名单任务跳过
             if (AntMemberTaskList.getValue().contains(name)) {
                 // 每日只记一次：排查「列表里有任务却没做」时够用，又不至于每轮刷屏
-                logSkipOnce("antmember::skipBlack::" + name, "会员任务⏭️跳过[" + name + "]#在黑名单");
+                logSkipOnce("antmember::skipBlack::" + name, label + "⏭️跳过[" + name + "]#在黑名单");
                 return false;
             }
             Long id = config.has("id") ? config.optLong("id") : config.optLong("configId");
@@ -1323,17 +1408,17 @@ public class AntMember extends ModelTask {
                 if (isAdTask(task)) {
                     // 独立开关：默认关闭（每个广告至少 15 秒，收益只有积分）
                     if (!enableAdTask.getValue()) {
-                        logSkipOnce("antmember::skipAdOff::" + name, "会员广告任务⏭️跳过[" + name + "]#广告任务开关未开");
+                        logSkipOnce("antmember::skipAdOff::" + name, label + "⏭️跳过[" + name + "]#广告任务开关未开");
                         return false;
                     }
                     // 独立黑名单：做不了的广告任务可以在这里排除
                     if (AntMemberAdTaskList.getValue().contains(name)) {
-                        logSkipOnce("antmember::skipAdBlack::" + name, "会员广告任务⏭️跳过[" + name + "]#在黑名单中");
+                        logSkipOnce("antmember::skipAdBlack::" + name, label + "⏭️跳过[" + name + "]#在黑名单中");
                         return false;
                     }
                     return doAdTask(task, config, name, awardParamPoint);
                 }
-                Log.record("会员浏览任务[" + name + "]无 targetBusiness 配置，跳过");
+                Log.record(label + "⏭️跳过[" + name + "]#无 targetBusiness 配置");
                 return false;
             }
             String targetBusiness = targetBusinessArr.getString(0);
@@ -1344,7 +1429,7 @@ public class AntMember extends ModelTask {
             if (targetBusinessArray.length < 2 || !"BROWSE".equals(targetBusinessArray[0])) {
                 String bizType = targetBusinessArray.length > 0 ? targetBusinessArray[0] : "";
                 if (!Status.hasFlagToday("antmember::skipBizType::" + name)) {
-                    Log.record("会员任务⏭️跳过[" + name + "]#非浏览类任务(" + bizType + ")");
+                    Log.record(label + "⏭️跳过[" + name + "]#非浏览类任务(" + bizType + ")");
                     Status.flagToday("antmember::skipBizType::" + name);
                 }
                 return false;
@@ -1355,7 +1440,7 @@ public class AntMember extends ModelTask {
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
                     // 失败原因原先完全被吞掉：只看到「列表里有任务却没收益」，无法判断是风控还是任务本身
                     logSkipOnce("antmember::applyFail::" + name,
-                            "会员任务⏭️跳过[" + name + "]#申请失败: " + truncate(jo.toString(), 160));
+                            label + "⏭️跳过[" + name + "]#申请失败: " + truncate(jo.toString(), 160));
                     continue;
                 }
                 String bizType;
@@ -1375,11 +1460,11 @@ public class AntMember extends ModelTask {
                 sleepWithJitter(300);
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
                     logSkipOnce("antmember::execFail::" + name,
-                            "会员任务⏭️跳过[" + name + "]#上报失败: " + truncate(jo.toString(), 160));
+                            label + "⏭️跳过[" + name + "]#上报失败: " + truncate(jo.toString(), 160));
                     continue;
                 }
                 String ex = left == right && left == 1 ? "" : "(" + (i + 1) + "/" + right + ")";
-                Log.member("会员任务🎖️完成[" + name + ex + "]#获得[" + awardParamPoint + "积分]");
+                Log.member(label + "🎖️完成[" + name + ex + "]#获得[" + awardParamPoint + "积分]");
                 doubleCheck = true;
             }
         }
@@ -1392,16 +1477,24 @@ public class AntMember extends ModelTask {
 
     // 广告任务: 申请(applyAdTask) -> 等待浏览时长 -> 完成(taskFinish)
     private Boolean doAdTask(JSONObject task, JSONObject config, String name, String awardParamPoint) {
+        // 广告任务路径的日志统一用「会员广告任务」前缀，别让它在日志里冒充「会员任务」
+        String label = labelFor(true);
         try {
+            // 同一轮里签到页与「可领任务列表」会给出同一批广告任务，重复执行只会白等一次浏览时长。
+            // 只做同轮去重：失败了下一轮仍然会重试，不影响重试策略。
+            if (!adTaskTriedThisRun.add(name)) {
+                return false;
+            }
             JSONObject extMap = task.optJSONObject("lightsAdExtMap");
             if (extMap == null) {
-                Log.record("会员任务⏭️跳过[" + name + "]#广告任务缺少扩展参数");
+                // 结构缺参数重试也不会变，每轮刷一条没有信息量：每天记一次即可
+                logSkipOnce("antmember::adNoExt::" + name, label + "⏭️跳过[" + name + "]#广告任务缺少扩展参数");
                 return false;
             }
             String bizId = extMap.optString("bizId", "");
             String adId = extMap.optString("adId", "");
             if (bizId.isEmpty() || adId.isEmpty()) {
-                Log.record("会员任务⏭️跳过[" + name + "]#广告任务缺少bizId/adId");
+                logSkipOnce("antmember::adNoId::" + name, label + "⏭️跳过[" + name + "]#广告任务缺少bizId/adId");
                 return false;
             }
             int awardNum = 0;
@@ -1412,7 +1505,7 @@ public class AntMember extends ModelTask {
             }
             JSONObject applyJo = new JSONObject(AntMemberRpcCall.applyAdTask(bizId, adId, awardNum, extMap));
             if (!isAdTaskOk(applyJo)) {
-                Log.record("会员任务⏭️跳过[" + name + "]#广告任务申请失败");
+                Log.record(label + "⏭️跳过[" + name + "]#广告任务申请失败");
                 markAdTaskBlackList(applyJo, name, "申请");
                 return false;
             }
@@ -1421,11 +1514,11 @@ public class AntMember extends ModelTask {
             TimeUtil.sleep(Math.max(browseSeconds, 15) * 1000L);
             JSONObject finishJo = new JSONObject(AntMemberRpcCall.taskFinish(bizId));
             if (!isAdTaskOk(finishJo)) {
-                Log.record("会员任务⏭️跳过[" + name + "]#广告任务完成失败");
+                Log.record(label + "⏭️跳过[" + name + "]#广告任务完成失败");
                 markAdTaskBlackList(finishJo, name, "完成");
                 return false;
             }
-            Log.member("会员任务🎖️完成[" + name + "]#获得[" + awardNum + "积分]");
+            Log.member(label + "🎖️完成[" + name + "]#获得[" + awardNum + "积分]");
             return true;
         }
         catch (Throwable t) {

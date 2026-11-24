@@ -21,6 +21,7 @@ import com.sesame.wu.data.modelFieldExt.BooleanModelField;
 import com.sesame.wu.data.modelFieldExt.ChoiceModelField;
 import com.sesame.wu.data.modelFieldExt.IntegerModelField;
 import com.sesame.wu.data.modelFieldExt.SelectModelField;
+import com.sesame.wu.data.modelFieldExt.StringModelField;
 import com.sesame.wu.data.task.ModelTask;
 import com.sesame.wu.data.task.TaskAttemptPolicy;
 import com.sesame.wu.data.task.TaskAttemptPolicy.Outcome;
@@ -68,6 +69,14 @@ public class AntSports extends ModelTask {
     private IntegerModelField syncStepInterval;
     private IntegerModelField syncStepBatches;
     private BooleanModelField syncStepCatchUp;
+    /**
+     * 同步步数的时间范围（{@code HHmm-HHmm}）。
+     *
+     * <p>旧配置只有 earliestSyncStepTime / latestSyncStepTime 两个「整点」字段，
+     * 表达不了 23:30 这种时分；新字段用一条范围串直接复用
+     * {@link TimeUtil#checkInTimeRange(Long, String)} 的既有解析规则（4 位 HHmm 用 "-" 连接）。
+     */
+    private StringModelField syncStepTimeRange;
 
     /** 上次增加步数的时刻（当日分钟 + 1）；0 表示当天还没增加过。 */
     private static final String FLAG_LAST_SYNC_MINUTE = "sport::lastSyncMinute";
@@ -79,6 +88,13 @@ public class AntSports extends ModelTask {
      * 即便开了「落后时按进度补齐」，也要有个硬上限兜住，避免出现一次补出天量步数。
      */
     private static final int CATCH_UP_MAX_BATCHES = 4;
+    /**
+     * 同步步数时间范围的默认值。
+     *
+     * <p>语义等同于旧的两个整点字段的默认值（最早 0 点、最晚 23 点），
+     * 这样升级上来的用户在没动过新字段时，补步数的时段与升级前完全一致。
+     */
+    private static final String DEFAULT_SYNC_STEP_TIME_RANGE = "0000-2300";
     /** 气泡任务自递归上限：服务端回「成功」但状态不前进时原实现会无限加深调用栈 */
     private static final int MAX_SELF_RETRY = 3;
     /** 权益列表翻页上限：服务端恒回 hasMore=true 时原实现会无 sleep 空转 */
@@ -174,6 +190,14 @@ public class AntSports extends ModelTask {
         syncStepMax.setDescription("达到后不再补偿");
         modelFields.addField(earliestSyncStepTime = new IntegerModelField("earliestSyncStepTime", "同步步数 | 最早同步时间(24小时制)", 0, 0, 23));
         modelFields.addField(latestSyncStepTime = new IntegerModelField("latestSyncStepTime", "同步步数 | 最晚同步时间(24小时制)", 23, 0, 23));
+        // 时分范围：整点字段只能填 0~23，「23:30 之后不要补」这类需求表达不了。
+        // 默认值与旧的两个整点字段（0 点 ~ 23 点）语义一致，升级后行为不变。
+        modelFields.addField(syncStepTimeRange = new StringModelField("syncStepTimeRange", "同步步数 | 时间范围(HHmm-HHmm，如 0730-2330)", DEFAULT_SYNC_STEP_TIME_RANGE));
+        syncStepTimeRange.setDescription("支持时分；跨零点可写 2300-0100。留空或格式不对时回退到上面两个整点字段");
+        // 旧字段保留不删：老用户的配置里就存着它们，直接删掉会让「最早/最晚」瞬间回到默认值，
+        // 表现为「升级后补步数时间窗口莫名变大」——行为突变比留两个废弃项更难排查。
+        earliestSyncStepTime.setDescription("已由「时间范围」取代");
+        latestSyncStepTime.setDescription("已由「时间范围」取代");
         modelFields.addField(syncStepInterval = new IntegerModelField("syncStepInterval", "同步步数 | 累加间隔(分钟)", 60, 10, 180));
         syncStepInterval.setDescription("两次补偿的最小间隔");
         modelFields.addField(syncStepBatches = new IntegerModelField("syncStepBatches", "同步步数 | 分批次数", 12, 1, 60));
@@ -315,31 +339,21 @@ public class AntSports extends ModelTask {
         if (total <= 0) {
             return;                           // 未启用补偿，静默
         }
-        int startHour = earliestSyncStepTime.getValue();
-        int endHour = latestSyncStepTime.getValue();
         int intervalMin = Math.max(1, syncStepInterval.getValue());
         int cap = syncStepMax.getValue();
 
-        // 时间窗口：只在 [最早, 最晚] 之间增加；最晚早于最早时按跨零点窗口处理
-        int windowLen = endHour >= startHour ? endHour - startHour : endHour + 24 - startHour;
-        if (windowLen <= 0) {
-            windowLen = 1;
-        }
+        // 时间窗口：由「时间范围(HHmm-HHmm)」表达，精确到分钟。
+        // 旧的两个整点字段仍参与计算（见 resolveSyncStepRange 的迁移回退），只是不再是主配置。
+        String range = resolveSyncStepRange();
         String[] hms = Log.getFormatTime().split(":");
-        int nowMinutes = Integer.parseInt(hms[0]) * 60 + Integer.parseInt(hms[1]);
-        int startMinutes = startHour * 60;
-        int elapsed = nowMinutes - startMinutes;
-        if (elapsed < 0) {
-            elapsed += 24 * 60;
-            if (endHour >= startHour) {
-                Log.record("步数补偿⏭️未到最早同步时间[" + startHour + "点]");
-                return;                       // 不跨零点的窗口，还没到最早时间
-            }
+        int nowMinutes = hms.length > 1 ? parseIntQuietly(hms[0], 0) * 60 + parseIntQuietly(hms[1], 0) : 0;
+        int[] progress = syncStepProgress(range, nowMinutes);
+        if (progress == null) {
+            Log.record("步数补偿⏭️不在时间范围[" + range + "]内");
+            return;                           // 不在允许补步数的时间段
         }
-        if (elapsed > windowLen * 60) {
-            Log.record("步数补偿⏭️已过最晚同步时间[" + endHour + "点]");
-            return;                           // 已过最晚时间
-        }
+        int elapsed = progress[0];            // 距窗口开始过了多少分钟（跨零点已折算）
+        int windowMin = progress[1];          // 窗口总长（分钟），至少 1
 
         int forged = Status.getIntFlagToday("sport::forgedStep");
         int remain = total - forged;
@@ -351,7 +365,6 @@ public class AntSports extends ModelTask {
         // 节奏：窗口内任意时刻，只要距上次增加超过「累加间隔」就再加一次；
         // 当天还没增加过则立即增加（否则用户会觉得功能没生效）。
         // 不按窗口均分到固定时刻——那样触发时间是可预测的，反而更像脚本。
-        int windowMin = windowLen * 60;
         int batches = Math.max(1, syncStepBatches.getValue());
         int perBatch = (total + batches - 1) / batches;          // 一份多大
 
@@ -419,6 +432,131 @@ public class AntSports extends ModelTask {
         Status.setIntFlagToday(FLAG_LAST_SYNC_MINUTE, nowMinutes + 1);
         Toast.show("同步步数🏃🏻‍♂️[" + target + "步]");
         Log.other("步数补偿🏃🏻‍♂️[+" + batch + "步 → 共" + target + "步][" + (forged + batch) + "/" + total + "]");
+    }
+
+    /**
+     * 取本轮生效的补步数时间范围，归一化成 {@code HHmm-HHmm}。
+     *
+     * <p><b>为什么需要回退</b>：老配置里根本没有 {@code syncStepTimeRange} 这个 key，
+     * 读回来只会是字段默认值 {@code 0000-2300}。如果直接拿默认值当配置用，
+     * 那些把「最早/最晚」设成 8 点 ~ 22 点的老用户，升级后时间窗口会突然变成全天——
+     * 补步数的时间段变化，比留一个「配置迁移」更难解释。所以：
+     * <ol>
+     *   <li>新字段被设成非默认范围 → 用它；</li>
+     *   <li>否则看旧的两个整点字段是否被改过 → 用它们拼出等价范围；</li>
+     *   <li>都没改过 → 默认 {@code 0000-2300}（与旧默认一致）。</li>
+     * </ol>
+     */
+    private String resolveSyncStepRange() {
+        int[] parsed = parseSyncStepRange(syncStepTimeRange == null ? null : syncStepTimeRange.getValue());
+        // 默认值 "0000-2300" 与「用户显式填了 0000-2300」无法区分，按「没设过」处理：
+        // 显式填默认值时旧字段本来也只有 0 点 ~ 23 点，结果一致，不会出现行为偏差。
+        if (parsed != null && !(parsed[0] == 0 && parsed[1] == 23 * 60)) {
+            return toHhmm(parsed[0]) + "-" + toHhmm(parsed[1]);
+        }
+        Integer savedStartHour = earliestSyncStepTime.getValue();
+        Integer savedEndHour = latestSyncStepTime.getValue();
+        int startHour = Math.max(0, Math.min(23, savedStartHour == null ? 0 : savedStartHour));
+        int endHour = Math.max(0, Math.min(23, savedEndHour == null ? 23 : savedEndHour));
+        if (startHour != 0 || endHour != 23) {
+            // 旧语义：窗口是 [最早整点, 最晚整点)，这里换算成等价的分钟区间
+            return toHhmm(startHour * 60) + "-" + toHhmm(endHour * 60);
+        }
+        return DEFAULT_SYNC_STEP_TIME_RANGE;
+    }
+
+    /**
+     * 解析 {@code HHmm-HHmm} 为 {@code {开始分钟, 结束分钟}}；格式不合法返回 null。
+     *
+     * <p>容忍 {@code 07:30-23:30} 这种带冒号的写法——用户在输入框里很自然会这样敲，
+     * 直接判非法然后静默回退到旧字段，用户只会觉得「填了没用」。
+     */
+    private static int[] parseSyncStepRange(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String text = raw.trim().replace("：", ":").replace(":", "");
+        String[] parts = text.split("-");
+        if (parts.length != 2) {
+            return null;
+        }
+        int start = parseHhmm(parts[0]);
+        int end = parseHhmm(parts[1]);
+        if (start < 0 || end < 0) {
+            return null;
+        }
+        return new int[]{start, end};
+    }
+
+    /** 4 位 {@code HHmm} → 当日分钟；非法返回 -1。 */
+    private static int parseHhmm(String text) {
+        String s = text == null ? "" : text.trim();
+        if (s.length() != 4) {
+            return -1;
+        }
+        try {
+            int hour = Integer.parseInt(s.substring(0, 2));
+            int minute = Integer.parseInt(s.substring(2, 4));
+            if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+                return -1;
+            }
+            return hour * 60 + minute;
+        } catch (Throwable t) {
+            return -1;
+        }
+    }
+
+    /** 当日分钟 → 4 位 {@code HHmm}。 */
+    private static String toHhmm(int minutes) {
+        int m = ((minutes % (24 * 60)) + 24 * 60) % (24 * 60);
+        return String.format(java.util.Locale.US, "%02d%02d", m / 60, m % 60);
+    }
+
+    /**
+     * 判断当前时刻是否落在时间范围内，并算出「距窗口开始已过多少分钟」。
+     *
+     * <p>判定本身复用 {@link TimeUtil#checkInTimeRange(Long, String)}：HHmm 的解析与比较规则
+     * 全项目只有那一份，自己再写一套迟早会和服务端/其它模块的口径漂移。
+     * 跨零点（如 {@code 2300-0100}）不受该方法的支持（它按 min&lt;=max 比较），
+     * 所以这里拆成 {@code [开始,2359]} 与 {@code [0000,结束]} 两段分别判。
+     *
+     * @return {@code {已过分钟数, 窗口总分钟数}}；不在窗口内返回 {@code null}
+     */
+    private static int[] syncStepProgress(String range, int nowMinutes) {
+        int[] bounds = parseSyncStepRange(range);
+        if (bounds == null) {
+            return null;
+        }
+        int start = bounds[0];
+        int end = bounds[1];
+        boolean inWindow;
+        int elapsed;
+        int windowMin;
+        long now = System.currentTimeMillis();
+        // 统一用重新格式化后的串去比：入参可能带冒号（07:30-23:30），
+        // TimeUtil 只认 4 位纯数字，直接拿原串比会静默判成「不在窗口」
+        String normalized = toHhmm(start) + "-" + toHhmm(end);
+        if (start <= end) {
+            // 结束时刻按「含」处理：填 2330 就是到 23:30 为止还能补
+            inWindow = Boolean.TRUE.equals(TimeUtil.checkInTimeRange(now, normalized));
+            elapsed = nowMinutes - start;
+            windowMin = end - start;
+        } else {
+            String firstHalf = toHhmm(start) + "-2359";
+            String secondHalf = "0000-" + toHhmm(end);
+            inWindow = Boolean.TRUE.equals(TimeUtil.checkInTimeRange(now, firstHalf))
+                    || Boolean.TRUE.equals(TimeUtil.checkInTimeRange(now, secondHalf));
+            elapsed = nowMinutes - start;
+            if (elapsed < 0) {
+                elapsed += 24 * 60;
+            }
+            windowMin = end + 24 * 60 - start;
+        }
+        if (!inWindow) {
+            return null;
+        }
+        // 零长度窗口（开始=结束）只在那一分钟内成立：给 1 分钟，避免下面除零
+        return new int[]{Math.max(0, elapsed), Math.max(1, windowMin)};
     }
 
     /** 读服务端当前记录的真实步数；失败返回 -1。 */

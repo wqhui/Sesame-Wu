@@ -10,6 +10,7 @@ import com.sesame.wu.util.FileUtil;
 import com.sesame.wu.util.Status;
 import com.sesame.wu.util.idMap.UserIdMap;
 import lombok.Getter;
+import com.sesame.wu.data.ConfigV2;
 import com.sesame.wu.data.Model;
 import com.sesame.wu.data.ModelFields;
 import com.sesame.wu.data.ModelType;
@@ -68,9 +69,20 @@ public abstract class ModelTask extends Model {
                     Log.i(TAG, "账号会话已切换，跳过本次执行");
                     return;
                 }
-                // 每轮执行前重算时间窗：一批任务可能跑很久（森林、农场动辄几分钟），
-                // IS_ENERGY_TIME 只在整批开始前算过一次，跨过窗口边界后仍是旧值，
-                // 会出现「暂停日志已打、子流程还在跑」。
+                // 每轮任务执行前重载一次配置。
+                // 配置页跑在另一个进程里，改完只是落盘，本进程内存中的 ConfigV2 不会自己更新；
+                // 原先只有 initHandler（首启/切号）读过一次文件，所以「保存了却不生效」，
+                // 必须重启支付宝。每轮开头读一次，改完的开关下一轮就生效。
+                // uid 为空说明还没登录：此时读会落到「默认」配置文件，把账号配置覆盖成默认值。
+                String currentUid = UserIdMap.getCurrentUid();
+                if (!StringUtil.isEmpty(currentUid)) {
+                    ConfigV2.load(currentUid);
+                }
+                // 重算时间窗必须在重载配置之后：否则「只收能量时间」刚改完，
+                // 本轮仍按旧窗口算，会晚一轮才生效。
+                // 又因为一批任务可能跑很久（森林、农场动辄几分钟），IS_ENERGY_TIME
+                // 只在整批开始前算过一次，跨过窗口边界后仍是旧值，会出现
+                // 「暂停日志已打、子流程还在跑」，所以每轮都要重算。
                 TaskCommon.update();
                 task.run();
                 consecutiveFailures = 0;
