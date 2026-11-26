@@ -21,7 +21,7 @@ import com.sesame.wu.util.Log;
  * <p><b>按 templateId 存，不按标题</b>：这类任务标题是「玩寻道大千」式的动态文案，
  * 按标题存会随活动改版失效，而 templateId 是服务端稳定的任务标识。
  *
- * <p>参照 Sesame-AG 的 {@code TaskBlacklist.autoAddToBlacklist}（DataStore 持久化）。
+ * <p>与任务黑名单的自动拉黑同一思路，这里单独用 DataStore 持久化。
  */
 public class AlchemyAutoBlacklistMap {
 

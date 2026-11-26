@@ -25,7 +25,7 @@ public class Toast {
     }
 
     /**
-     * Sesame-AG 风格：自己创建主线程 Handler，不依赖 ApplicationHook.getMainHandler()，
+     * 自己创建主线程 Handler，不依赖 ApplicationHook.getMainHandler()，
      * 避免因 hook 初始化失败导致 mainHandler 为 null 而抛出 NullPointerException。
      */
     private static void displayToast(Context context, CharSequence message) {

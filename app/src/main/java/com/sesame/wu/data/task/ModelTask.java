@@ -388,6 +388,15 @@ public abstract class ModelTask extends Model {
         @Getter
         private Boolean isCancel = false;
 
+        /**
+         * 是否允许在「只收能量时间」内执行。
+         *
+         * <p>默认不允许：子任务是父任务执行期间排进来的，可能比窗口更早创建，
+         * 到点执行时已经进入窗口，父任务那层的保底挡不到它。
+         * 但蹲点收能量这类子任务恰恰要在窗口内跑，所以得单独放行。
+         */
+        private final boolean allowInEnergyWindow;
+
         /** 父任务执行时绑定的会话快照；子任务执行时用它判断账号是否已经切走。 */
         private final AccountSession.Snapshot ownerSnapshot = AccountSession.currentBoundSnapshot();
 
@@ -407,7 +416,12 @@ public abstract class ModelTask extends Model {
         }
 
         protected ChildModelTask(String id, long execTime) {
-            this(id, null, null, execTime);
+            this(id, null, null, execTime, false);
+        }
+
+        /** 允许在「只收能量时间」内执行的版本，供蹲点收能量等子任务使用。 */
+        protected ChildModelTask(String id, long execTime, boolean allowInEnergyWindow) {
+            this(id, null, null, execTime, allowInEnergyWindow);
         }
 
         /*protected ChildModelTask(String id, String group, Long time) {
@@ -423,6 +437,13 @@ public abstract class ModelTask extends Model {
         }
 
         public ChildModelTask(String id, String group, Runnable runnable, Long execTime) {
+            this(id, group, runnable, execTime, false);
+        }
+
+        /** 允许在「只收能量时间」内执行，仅用于蹲点收能量这类窗口内仍需工作的子任务。 */
+        protected ChildModelTask(String id, String group, Runnable runnable, Long execTime,
+                                 boolean allowInEnergyWindow) {
+            this.allowInEnergyWindow = allowInEnergyWindow;
             if (StringUtil.isEmpty(id)) {
                 id = toString();
             }
@@ -456,7 +477,7 @@ public abstract class ModelTask extends Model {
                 // 到点执行时已经进入窗口。父任务的 run() 开头有保底，但子任务走的是
                 // 线程池，不经过父任务那一层，所以这里必须自己再挡一次，
                 // 否则窗口内仍会看到饲料任务、喂食、兑奖这类子任务在跑。
-                if (TaskCommon.IS_ENERGY_TIME) {
+                if (!allowInEnergyWindow && TaskCommon.IS_ENERGY_TIME) {
                     Log.i("ChildModelTask", "只收能量时间，跳过子任务[" + id + "]");
                     return;
                 }

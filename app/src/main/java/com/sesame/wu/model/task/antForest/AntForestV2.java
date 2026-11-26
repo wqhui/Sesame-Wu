@@ -6363,7 +6363,8 @@ public class AntForestV2 extends ModelTask {
          * Instantiates a new Bubble timer task.
          */
         BubbleTimerTask(String ui, long bi, long pt, String un) {
-            super(AntForestV2.getBubbleTimerTid(ui, bi), pt - advanceTimeInt);
+            // 蹲点收能量正是「只收能量时间」该做的事，不能被窗口拦掉
+            super(AntForestV2.getBubbleTimerTid(ui, bi), pt - advanceTimeInt, true);
             userId = ui;
             bubbleId = bi;
             produceTime = pt;

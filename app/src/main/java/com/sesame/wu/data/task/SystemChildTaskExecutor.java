@@ -2,6 +2,7 @@ package com.sesame.wu.data.task;
 
 import android.os.Build;
 import android.os.Handler;
+import android.os.Looper;
 import com.sesame.wu.hook.ApplicationHook;
 import com.sesame.wu.util.Log;
 import com.sesame.wu.util.ThreadUtil;
@@ -16,7 +17,10 @@ public class SystemChildTaskExecutor implements ChildTaskExecutor {
     private final Map<String, ThreadPoolExecutor> groupChildTaskExecutorMap = new ConcurrentHashMap<>();
 
     public SystemChildTaskExecutor() {
-        handler = ApplicationHook.getMainHandler();
+        // 不在构造时缓存：初始化早期（Service 就绪但主线程 Handler 还没建）拿到的是 null，
+        // 缓存下来会一直是 null，之后所有投递都空指针。改成用的时候现取，取不到退回主线程 Handler。
+        Handler resolved = ApplicationHook.getMainHandler();
+        handler = resolved != null ? resolved : new Handler(Looper.getMainLooper());
     }
 
     @Override
