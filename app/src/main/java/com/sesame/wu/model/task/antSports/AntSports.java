@@ -61,20 +61,18 @@ public class AntSports extends ModelTask {
     private IntegerModelField donateCharityCoinAmount;
     private BooleanModelField coinExchangeDoubleCard;
     private IntegerModelField minExchangeCount;
-    private IntegerModelField earliestSyncStepTime;
     private IntegerModelField latestExchangeTime;
     private IntegerModelField syncStepCount;
     private IntegerModelField syncStepMax;
-    private IntegerModelField latestSyncStepTime;
     private IntegerModelField syncStepInterval;
     private IntegerModelField syncStepBatches;
     private BooleanModelField syncStepCatchUp;
     /**
      * 同步步数的时间范围（{@code HHmm-HHmm}）。
      *
-     * <p>旧配置只有 earliestSyncStepTime / latestSyncStepTime 两个「整点」字段，
-     * 表达不了 23:30 这种时分；新字段用一条范围串直接复用
-     * {@link TimeUtil#checkInTimeRange(Long, String)} 的既有解析规则（4 位 HHmm 用 "-" 连接）。
+     * <p>用一条范围串表达，直接复用
+     * {@link TimeUtil#checkInTimeRange(Long, String)} 的既有解析规则（4 位 HHmm 用 "-" 连接），
+     * 支持到分钟粒度，所以能表达 0730-2330 这种。
      */
     private StringModelField syncStepTimeRange;
 
@@ -184,26 +182,22 @@ public class AntSports extends ModelTask {
         // 配置值是「今日额外增加的步数」，不是要显示到的绝对值：真人自己走的步数会自然叠加。
         // 默认值与旧版一致（22000），保证升级后「可开箱步数」不缩水——
         // 走路功能按每天约 20 次开箱算，每次消耗 500~1100 步，需要 1 万~2.2 万步才够。
-        modelFields.addField(syncStepCount = new IntegerModelField("syncStepCount", "步数自动补偿", 22000, 0, 50000));
-        syncStepCount.setDescription("在真实步数上自动补足");
-        modelFields.addField(syncStepMax = new IntegerModelField("syncStepMax", "同步步数 | 单日上限", 23000, 10000, 100000));
-        syncStepMax.setDescription("达到后不再补偿");
-        modelFields.addField(earliestSyncStepTime = new IntegerModelField("earliestSyncStepTime", "同步步数 | 最早同步时间(24小时制)", 0, 0, 23));
-        modelFields.addField(latestSyncStepTime = new IntegerModelField("latestSyncStepTime", "同步步数 | 最晚同步时间(24小时制)", 23, 0, 23));
+        modelFields.addField(syncStepCount = new IntegerModelField("syncStepCount", "步数补偿 | 总量", 22000, 0, 50000));
+        syncStepCount.setDescription("今天一共补多少步");
+        modelFields.addField(syncStepMax = new IntegerModelField("syncStepMax", "步数补偿 | 单日上限", 23000, 10000, 100000));
+        syncStepMax.setDescription("当前步数达到此值就停");
         // 时分范围：整点字段只能填 0~23，「23:30 之后不要补」这类需求表达不了。
         // 默认值与旧的两个整点字段（0 点 ~ 23 点）语义一致，升级后行为不变。
-        modelFields.addField(syncStepTimeRange = new StringModelField("syncStepTimeRange", "同步步数 | 时间范围(HHmm-HHmm，如 0730-2330)", DEFAULT_SYNC_STEP_TIME_RANGE));
-        syncStepTimeRange.setDescription("支持时分；跨零点可写 2300-0100。留空或格式不对时回退到上面两个整点字段");
+        modelFields.addField(syncStepTimeRange = new StringModelField("syncStepTimeRange", "步数补偿 | 时间范围(HHmm-HHmm)", DEFAULT_SYNC_STEP_TIME_RANGE));
+        syncStepTimeRange.setDescription("在此时段内补，跨零点写 2300-0100");
         // 旧字段保留不删：老用户的配置里就存着它们，直接删掉会让「最早/最晚」瞬间回到默认值，
         // 表现为「升级后补步数时间窗口莫名变大」——行为突变比留两个废弃项更难排查。
-        earliestSyncStepTime.setDescription("已由「时间范围」取代");
-        latestSyncStepTime.setDescription("已由「时间范围」取代");
-        modelFields.addField(syncStepInterval = new IntegerModelField("syncStepInterval", "同步步数 | 累加间隔(分钟)", 60, 10, 180));
-        syncStepInterval.setDescription("两次补偿的最小间隔");
-        modelFields.addField(syncStepBatches = new IntegerModelField("syncStepBatches", "同步步数 | 分批次数", 12, 1, 60));
-        syncStepBatches.setDescription("补偿量分几次补完");
-        modelFields.addField(syncStepCatchUp = new BooleanModelField("syncStepCatchUp", "步数补偿 | 落后时按进度补齐", true));
-        syncStepCatchUp.setDescription("勾选：打开频率低时按时间进度一次补齐落下的步数；取消：每次固定只补一份");
+        modelFields.addField(syncStepInterval = new IntegerModelField("syncStepInterval", "步数补偿 | 累加间隔(分钟)", 60, 10, 180));
+        syncStepInterval.setDescription("两次补偿至少隔多久");
+        modelFields.addField(syncStepBatches = new IntegerModelField("syncStepBatches", "步数补偿 | 分批次数", 12, 1, 60));
+        syncStepBatches.setDescription("总量分几批加完");
+        modelFields.addField(syncStepCatchUp = new BooleanModelField("syncStepCatchUp", "步数补偿 | 按进度补齐", true));
+        syncStepCatchUp.setDescription("打开少时按时间进度一次补齐");
         modelFields.addField(latestExchangeTime = new IntegerModelField("latestExchangeTime", "行走捐 | 最晚捐步时间(24小时制)", 22, 0, 23));
         modelFields.addField(minExchangeCount = new IntegerModelField("minExchangeCount", "行走捐 | 最小捐步步数", 10));
         modelFields.addField(neverLand = new BooleanModelField("neverLand", "健康岛 | 开启", false));
@@ -229,11 +223,13 @@ public class AntSports extends ModelTask {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) {
                     int originStep = (Integer) param.getResult();
-                    int forged = Status.getIntFlagToday("sport::forgedStep");
-                    if (forged > 0) {
-                        // 叠加口径：显示 = 真实步数 + 今日已伪造累计。
-                        // 只加不覆盖，真人自己走的步数不会被抹掉，走了多少照样反映出来
-                        param.setResult(originStep + forged);
+                    // 直接覆盖成今天的目标值，而不是在原值上累加。
+                    // 原值可能已经被服务端同步过（同步回来的就是上一轮的目标值），
+                    // 再加一次补偿量会重复计算，表现为步数越滚越大。
+                    // 用「取较大值」保证自己走得多的时候不被压回去。
+                    int target = Status.getIntFlagToday("sport::targetStep");
+                    if (target > 0 && originStep < target) {
+                        param.setResult(target);
                     }
                 }
             });
@@ -382,8 +378,14 @@ public class AntSports extends ModelTask {
         }
         // 注意：服务端这个值【已经包含】之前累计增加的量，不能再加一次 forged，
         // 否则等于双倍累加、base 会提前撞到上限，只跑一两批就停。
-        if (base >= cap) {
-            Log.record("步数补偿⏭️已达单日上限[" + base + "/" + cap + "步]");
+        // 服务端推送在新版本可能一直失败，那样 base 永远停在原地、target 也就卡住不涨，
+        // 但 forged 仍在一轮轮累加，最后表现为「补到总量就停、实际只补了一批」。
+        // 所以取「服务端步数」和「上一轮目标」的较大者继续往前推：
+        // 推送成功时两者相等，推送失败时靠上一轮目标兜住。
+        int previousTarget = Status.getIntFlagToday("sport::targetStep");
+        int current = Math.max(base, previousTarget > 0 ? previousTarget : base);
+        if (current >= cap) {
+            Log.record("步数补偿⏭️已达单日上限[" + current + "/" + cap + "步]");
             return;                           // 已到上限 → 停止增加（注意：不是截断到上限）
         }
 
@@ -399,18 +401,21 @@ public class AntSports extends ModelTask {
             want = Math.max(perBatch, Math.min(expected - forged, maxCatchUp));
         }
         int batch = Math.min(remain, want + RandomUtil.nextInt(0, 101));
-        int target = base + batch;
+        // 再夹一层单日上限：最后一批可能正好跨过阈值，不夹就会超出用户设的上限
+        int target = Math.min(current + batch, cap);
         // 主动推送（RpcManager.a）只是「顺便告诉服务端」；真正让步数显示出来的是
-        // readDailyStep hook 里的 originStep + forged 叠加。两者必须解耦：
+        // readDailyStep hook 里按 targetStep 补齐。两者必须解耦：
         // 新版支付宝已移除 RpcManager.a，若把记账写在推送成功分支里，异常一抛就永远不记账，
         // forged 恒为 0，hook 也就什么都不加——表现为「步数补偿完全没效果」。
         // 当日已确认该接口不可用就不再试：避免每次运行都重试刷日志
+        boolean pushed = false;
         if (!Status.hasFlagToday(FLAG_PUSH_UNAVAILABLE)) {
             try {
                 ClassLoader classLoader = ApplicationHook.getClassLoader();
                 Class<?> rpcManagerClass = classLoader.loadClass("com.alibaba.health.pedometer.intergation.rpc.RpcManager");
                 Object rpcManager = XHelpers.callStaticMethod(rpcManagerClass, "a");
                 if ((Boolean) XHelpers.callMethod(rpcManager, "a", target, Boolean.FALSE, "system")) {
+                    pushed = true;
                     Log.i(TAG, "步数补偿主动推送成功[" + target + "步]");
                 } else {
                     Log.record("步数补偿⚠️主动推送被拒[" + target + "步]");
@@ -428,10 +433,15 @@ public class AntSports extends ModelTask {
         }
         // 无论推送结果如何都记账：hook 才是让步数生效的路径
         Status.setIntFlagToday("sport::forgedStep", forged + batch);
+        // 记下今天的目标值给显示层用：显示层只做「不足则补齐」，不再自己累加
+        Status.setIntFlagToday("sport::targetStep", target);
         // +1 作哨兵：0 表示当天还没触发过，避免与「零点触发」混淆
         Status.setIntFlagToday(FLAG_LAST_SYNC_MINUTE, nowMinutes + 1);
-        Toast.show("同步步数🏃🏻‍♂️[" + target + "步]");
-        Log.other("步数补偿🏃🏻‍♂️[+" + batch + "步 → 共" + target + "步][" + (forged + batch) + "/" + total + "]");
+        // 只有真正推给服务端成功才叫「同步」，否则只是本地记账，不能写成同步成功
+        String where = pushed ? "已同步" : "仅本地";
+        Toast.show("步数补偿🏃🏻‍♂️[" + target + "步][" + where + "]");
+        Log.other("步数补偿🏃🏻‍♂️[+" + batch + "步 → 共" + target + "步]["
+                + (forged + batch) + "/" + total + "][" + where + "]");
     }
 
     /**
@@ -449,18 +459,8 @@ public class AntSports extends ModelTask {
      */
     private String resolveSyncStepRange() {
         int[] parsed = parseSyncStepRange(syncStepTimeRange == null ? null : syncStepTimeRange.getValue());
-        // 默认值 "0000-2300" 与「用户显式填了 0000-2300」无法区分，按「没设过」处理：
-        // 显式填默认值时旧字段本来也只有 0 点 ~ 23 点，结果一致，不会出现行为偏差。
-        if (parsed != null && !(parsed[0] == 0 && parsed[1] == 23 * 60)) {
+        if (parsed != null) {
             return toHhmm(parsed[0]) + "-" + toHhmm(parsed[1]);
-        }
-        Integer savedStartHour = earliestSyncStepTime.getValue();
-        Integer savedEndHour = latestSyncStepTime.getValue();
-        int startHour = Math.max(0, Math.min(23, savedStartHour == null ? 0 : savedStartHour));
-        int endHour = Math.max(0, Math.min(23, savedEndHour == null ? 23 : savedEndHour));
-        if (startHour != 0 || endHour != 23) {
-            // 旧语义：窗口是 [最早整点, 最晚整点)，这里换算成等价的分钟区间
-            return toHhmm(startHour * 60) + "-" + toHhmm(endHour * 60);
         }
         return DEFAULT_SYNC_STEP_TIME_RANGE;
     }
