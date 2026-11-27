@@ -5,6 +5,7 @@ import org.json.JSONObject;
 
 import com.sesame.wu.hook.ApplicationHook;
 import com.sesame.wu.util.Log;
+import com.sesame.wu.util.MessageUtil;
 import com.sesame.wu.util.Status;
 import com.sesame.wu.util.TimeUtil;
 
@@ -144,7 +145,7 @@ public class GreenPlantBrowse {
         try {
             return new JSONObject(raw);
         } catch (Throwable t) {
-            Log.error("绿植浏览响应解析失败:" + (raw.length() > 200 ? raw.substring(0, 200) : raw));
+            Log.error("绿植浏览响应解析失败#响应=" + MessageUtil.briefResponse(raw));
             Log.printStackTrace(TAG, t);
             return null;
         }

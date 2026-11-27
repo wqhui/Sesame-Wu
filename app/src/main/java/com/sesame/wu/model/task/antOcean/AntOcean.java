@@ -1811,7 +1811,9 @@ public class AntOcean extends ModelTask {
             while (!ApplicationHook.isOffline() && !Thread.currentThread().isInterrupted()) {
                 JSONObject jo = new JSONObject(AntOceanRpcCall.queryNeedAppraiseFishList());
                 if (!MessageUtil.checkResultCode(TAG, jo)) {
-                    Log.error("AI翻牌列表查询失败");
+                    Log.error("AI翻牌列表查询失败#resultCode=" + jo.optString("resultCode")
+                            + " resultDesc=" + jo.optString("resultDesc")
+                            + " | 响应=" + MessageUtil.briefJson(jo));
                     return;
                 }
                 // 剩余翻牌奖励次数已用尽（字段缺失时按未知处理，不提前退出）
@@ -1845,7 +1847,9 @@ public class AntOcean extends ModelTask {
                     }
                     JSONObject result = new JSONObject(AntOceanRpcCall.fishAppraise(seasonId, imageId, targetUserId));
                     if (!MessageUtil.checkResultCode(TAG, result)) {
-                        Log.error("AI翻牌失败");
+                        Log.error("AI翻牌失败#resultCode=" + result.optString("resultCode")
+                                + " resultDesc=" + result.optString("resultDesc")
+                                + " | 响应=" + MessageUtil.briefJson(result));
                         return;
                     }
                     JSONArray rewardList = result.optJSONArray("appraiseRewardList");

@@ -22,6 +22,7 @@ import com.sesame.wu.data.task.ModelTask;
 import com.sesame.wu.entity.AreaCode;
 import com.sesame.wu.model.base.TaskCommon;
 import com.sesame.wu.util.Log;
+import com.sesame.wu.util.MessageUtil;
 import com.sesame.wu.util.Status;
 
 /**
@@ -160,7 +161,7 @@ public class YouthPrivilege extends ModelTask {
         try {
             JSONObject model = new JSONObject(YouthPrivilegeRpcCall.queryCheckInModel());
             if (!isYouthSuccess(model)) {
-                Log.error(TAG + " " + "青春特权签到模型查询失败:" + model);
+                Log.error(TAG + " " + "青春特权签到模型查询失败#响应=" + MessageUtil.briefJson(model));
                 return;
             }
             JSONObject checkInInfo = model.optJSONObject("studentCheckInInfo");
@@ -168,7 +169,7 @@ public class YouthPrivilege extends ModelTask {
             if (ACTION_CHECK_IN.equals(action)) {
                 JSONObject result = new JSONObject(YouthPrivilegeRpcCall.checkIn());
                 if (!isYouthSuccess(result)) {
-                    Log.error(TAG + " " + "青春特权签到执行失败:" + result);
+                    Log.error(TAG + " " + "青春特权签到执行失败#响应=" + MessageUtil.briefJson(result));
                     return;
                 }
                 confirmCheckIn();
@@ -190,7 +191,7 @@ public class YouthPrivilege extends ModelTask {
             pause(interval());
             JSONObject confirmation = new JSONObject(YouthPrivilegeRpcCall.queryCheckInModel());
             if (!isYouthSuccess(confirmation)) {
-                Log.error(TAG + " " + "青春特权签到回查失败:" + confirmation);
+                Log.error(TAG + " " + "青春特权签到回查失败#响应=" + MessageUtil.briefJson(confirmation));
                 return;
             }
             JSONObject checkInInfo = confirmation.optJSONObject("studentCheckInInfo");
@@ -200,7 +201,8 @@ public class YouthPrivilege extends ModelTask {
                 Log.member(PREFIX + "签到回查确认完成");
             } else {
                 Log.error(TAG + " " + "青春特权签到执行成功但未确认进展#action="
-                        + (action.isEmpty() ? "UNKNOWN" : action) + " raw=" + confirmation);
+                        + (action.isEmpty() ? "UNKNOWN" : action)
+                        + " | 响应=" + MessageUtil.briefJson(confirmation));
             }
         } catch (Throwable th) {
             Log.i(TAG, "confirmCheckIn err:");
@@ -224,7 +226,7 @@ public class YouthPrivilege extends ModelTask {
             for (int round = 0; round < 3; round++) {
                 JSONObject model = new JSONObject(YouthPrivilegeRpcCall.queryTaskModel());
                 if (!isYouthSuccess(model)) {
-                    Log.error(TAG + " " + "青春特权任务查询失败:" + model);
+                    Log.error(TAG + " " + "青春特权任务查询失败#响应=" + MessageUtil.briefJson(model));
                     return;
                 }
 
@@ -240,7 +242,7 @@ public class YouthPrivilege extends ModelTask {
                     String taskSource = task.optString("taskSource");
                     String taskType = task.optString("taskType");
                     if (taskCode.isEmpty() || taskSource.isEmpty() || taskType.isEmpty()) {
-                        Log.error(TAG + " " + "青春特权任务缺少服务端执行参数:" + task);
+                        Log.error(TAG + " " + "青春特权任务缺少服务端执行参数#任务=" + MessageUtil.briefJson(task));
                         continue;
                     }
                     if (!TASK_TYPE_BROWSER.equals(taskType)) {
@@ -290,7 +292,8 @@ public class YouthPrivilege extends ModelTask {
         if (isYouthSuccess(response)) {
             Log.member(PREFIX + "任务[" + action + "]已受理 code=" + taskCode);
         } else {
-            Log.error(TAG + " " + "青春特权任务[" + action + "]失败 code=" + taskCode + " raw=" + response);
+            Log.error(TAG + " " + "青春特权任务[" + action + "]失败 code=" + taskCode
+                    + " | 响应=" + MessageUtil.briefJson(response));
         }
     }
 
@@ -373,7 +376,8 @@ public class YouthPrivilege extends ModelTask {
             JSONObject response = new JSONObject(YouthPrivilegeRpcCall.triggerTrialPrize());
             if (!response.optBoolean("success")) {
                 Log.error(TAG + " " + "青春体验金领取失败, 本轮不重复触发 code=" + response.optString("resultCode")
-                        + " needRetry=" + response.opt("needRetry") + " raw=" + response);
+                        + " needRetry=" + response.opt("needRetry")
+                        + " | 响应=" + MessageUtil.briefJson(response));
             }
 
             pause(interval());
@@ -399,7 +403,8 @@ public class YouthPrivilege extends ModelTask {
                     YouthPrivilegeRpcCall.queryTrialPrizes(month, range[0], range[1]));
             JSONArray list = response.optJSONArray("result");
             if (!response.optBoolean("success") || list == null) {
-                Log.error(TAG + " " + "青春体验金查询失败 month=" + month + " raw=" + response);
+                Log.error(TAG + " " + "青春体验金查询失败 month=" + month
+                        + " | 响应=" + MessageUtil.briefJson(response));
                 return null;
             }
             List<JSONObject> awards = new ArrayList<>();
@@ -502,7 +507,7 @@ public class YouthPrivilege extends ModelTask {
             for (int round = 0; round < 3; round++) {
                 JSONObject response = new JSONObject(YouthPrivilegeRpcCall.queryYouth100(adCode));
                 if (!isYouthSuccess(response)) {
-                    Log.error(TAG + " " + "青春每月权益查询失败 raw=" + response);
+                    Log.error(TAG + " " + "青春每月权益查询失败#响应=" + MessageUtil.briefJson(response));
                     return;
                 }
                 boolean claimed = claimMonthlyItems(response);
@@ -572,7 +577,8 @@ public class YouthPrivilege extends ModelTask {
                             Log.member(PREFIX + "每月理财福利[" + item.optString("title", privilegeId) + "]已领取");
                             claimed = true;
                         } else {
-                            Log.error(TAG + " " + "青春每月权益领取失败 id=" + privilegeId + " raw=" + result);
+                            Log.error(TAG + " " + "青春每月权益领取失败 id=" + privilegeId
+                                    + " | 响应=" + MessageUtil.briefJson(result));
                         }
                     }
                     catch (Throwable th) {
@@ -610,7 +616,7 @@ public class YouthPrivilege extends ModelTask {
         try {
             JSONObject index = new JSONObject(YouthPrivilegeRpcCall.queryLotteryIndex());
             if (!isYouthSuccess(index)) {
-                Log.error(TAG + " " + "青春豆十连抽首页查询失败:" + index);
+                Log.error(TAG + " " + "青春豆十连抽首页查询失败#响应=" + MessageUtil.briefJson(index));
                 return;
             }
             String status = index.optString("multiDrawsLotteryStatus");
@@ -630,7 +636,7 @@ public class YouthPrivilege extends ModelTask {
             BigDecimal cost = toDecimal(index.optString("multiDrawsCost"));
             BigDecimal balance = toDecimal(index.optString("totalAmount"));
             if (cost == null || balance == null || cost.signum() <= 0 || balance.signum() < 0) {
-                Log.error(TAG + " " + "青春豆十连抽缺少有效成本或余额:" + index);
+                Log.error(TAG + " " + "青春豆十连抽缺少有效成本或余额#响应=" + MessageUtil.briefJson(index));
                 return;
             }
             if (balance.compareTo(cost) < 0) {
@@ -649,7 +655,7 @@ public class YouthPrivilege extends ModelTask {
             if (result != null && isYouthSuccess(result)) {
                 JSONArray prizes = result.optJSONArray("lotteryPrizeInfoList");
                 if (prizes == null) {
-                    Log.error(TAG + " " + "青春豆十连抽响应缺少实际奖励列表:" + result);
+                    Log.error(TAG + " " + "青春豆十连抽响应缺少实际奖励列表#响应=" + MessageUtil.briefJson(result));
                 }
                 for (int i = 0; i < (prizes == null ? 0 : prizes.length()); i++) {
                     JSONObject prize = prizes == null ? null : prizes.optJSONObject(i);
@@ -659,20 +665,20 @@ public class YouthPrivilege extends ModelTask {
                     Log.member(PREFIX + "十连抽🎁[" + prize.optString("title") + "] " + prize.optString("subTitle"));
                 }
             } else if (result != null) {
-                Log.error(TAG + " " + "青春豆十连抽失败，不立即重试:" + result);
+                Log.error(TAG + " " + "青春豆十连抽失败，不立即重试#响应=" + MessageUtil.briefJson(result));
             }
 
             pause(interval());
             JSONObject confirmed = new JSONObject(YouthPrivilegeRpcCall.queryLotteryIndex());
             if (!isYouthSuccess(confirmed)) {
-                Log.error(TAG + " " + "青春豆十连抽回查失败，保留待确认:" + confirmed);
+                Log.error(TAG + " " + "青春豆十连抽回查失败，保留待确认#响应=" + MessageUtil.briefJson(confirmed));
                 return;
             }
             if ("LIMIT".equals(confirmed.optString("multiDrawsLotteryStatus"))) {
                 Status.clearFlag(FLAG_MULTI_DRAWS_PENDING);
                 Log.member(PREFIX + "十连抽额度已确认消耗，剩余余额#" + confirmed.optString("totalAmount"));
             } else {
-                Log.error(TAG + " " + "青春豆十连抽额度尚未确认变化，不重复抽取:" + confirmed);
+                Log.error(TAG + " " + "青春豆十连抽额度尚未确认变化，不重复抽取#响应=" + MessageUtil.briefJson(confirmed));
             }
         } catch (Throwable th) {
             Log.i(TAG, "multiDraws err:");

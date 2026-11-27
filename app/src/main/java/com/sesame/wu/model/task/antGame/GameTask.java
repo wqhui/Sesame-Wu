@@ -7,6 +7,7 @@ import com.sesame.wu.hook.ApplicationHook;
 import com.sesame.wu.hook.AuthCodeHelper;
 import com.sesame.wu.model.base.TaskAlternative.LogSink;
 import com.sesame.wu.util.Log;
+import com.sesame.wu.util.MessageUtil;
 import com.sesame.wu.util.idMap.UserIdMap;
 
 import org.json.JSONObject;
@@ -202,7 +203,9 @@ public enum GameTask {
                     return this.cachedToken;
                 }
             } else {
-                Log.error("登录接口❌报错(" + gameType + " Code" + respCode + "):" + responseText);
+                // 失败响应必须原样带出来（截断）：只报 HTTP 码分不清是风控、token 失效还是接口变更
+                Log.error("登录接口❌报错(" + gameType + " Code" + respCode + ")#响应="
+                        + MessageUtil.briefResponse(responseText.toString()));
             }
         } catch (Exception e) {
             Log.error("登录过程🚨抛出异常(" + gameType + "):" + e.getMessage());
@@ -411,7 +414,8 @@ public enum GameTask {
             if (resJson.optInt("code") == 1) {
                 return new SingleReportResult(true, "");
             } else {
-                String message = "第 " + current + "/" + total + " 次上报业务失败 (HTTP " + respCode + "): " + responseText;
+                String message = "第 " + current + "/" + total + " 次上报业务失败 (HTTP " + respCode + ")#响应="
+                        + MessageUtil.briefResponse(responseText.toString());
                 Log.error("⚠️ " + message);
                 return new SingleReportResult(false, message);
             }

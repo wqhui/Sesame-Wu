@@ -287,14 +287,14 @@ public class AntOrchard extends ModelTask {
                     Log.record("农场抽抽乐⚗活动已关闭#code=" + entry.optString("code")
                             + " desc=" + entry.optString("desc") + "，停止后续请求");
                 } else {
-                    Log.error("农场抽抽乐⚗活动查询失败#" + entry);
+                    Log.error("农场抽抽乐⚗活动查询失败#响应=" + MessageUtil.briefJson(entry));
                 }
                 return;
             }
             String activityId = entry.optJSONObject("drawActivity") != null
                     ? entry.optJSONObject("drawActivity").optString("activityId") : "";
             if (activityId.isEmpty()) {
-                Log.error("农场抽抽乐⚗缺少 activityId#" + entry);
+                Log.error("农场抽抽乐⚗缺少 activityId#响应=" + MessageUtil.briefJson(entry));
                 return;
             }
 
@@ -304,7 +304,7 @@ public class AntOrchard extends ModelTask {
             // 同步余额
             JSONObject synced = new JSONObject(AntOrchardRpcCall.syncDrawBalance(activityId));
             if (!MessageUtil.checkResultCode(TAG, synced)) {
-                Log.error("农场抽抽乐⚗余额同步失败#" + synced);
+                Log.error("农场抽抽乐⚗余额同步失败#响应=" + MessageUtil.briefJson(synced));
                 return;
             }
             int balance = synced.optJSONObject("drawAsset") != null
@@ -317,7 +317,7 @@ public class AntOrchard extends ModelTask {
                 randomSleep(1000, 3000);
                 JSONObject response = new JSONObject(AntOrchardRpcCall.batchDraw(activityId, batch, userId));
                 if (!MessageUtil.checkResultCode(TAG, response)) {
-                    Log.error("农场抽抽乐⚗抽奖失败#" + response);
+                    Log.error("农场抽抽乐⚗抽奖失败#响应=" + MessageUtil.briefJson(response));
                     return;
                 }
                 JSONArray prizes = response.optJSONArray("drawResultList");
@@ -352,7 +352,7 @@ public class AntOrchard extends ModelTask {
         try {
             JSONObject jo = new JSONObject(AntOrchardRpcCall.listDrawTasks());
             if (!MessageUtil.checkResultCode(TAG, jo)) {
-                Log.error("农场抽抽乐⚗任务查询失败#" + jo);
+                Log.error("农场抽抽乐⚗任务查询失败#响应=" + MessageUtil.briefJson(jo));
                 return;
             }
             JSONArray taskInfoList = jo.optJSONArray("taskInfoList");
@@ -1371,12 +1371,12 @@ public class AntOrchard extends ModelTask {
         try {
             JSONObject jo = new JSONObject(raw);
             if (!isOrchardRpcSuccessResponse(jo)) {
-                Log.error("农场首页浮球🎮[" + source + "]查询失败#" + brief(raw));
+                Log.error("农场首页浮球🎮[" + source + "]查询失败#响应=" + MessageUtil.briefResponse(raw));
                 return null;
             }
             return jo;
         } catch (Throwable t) {
-            Log.error("农场首页浮球🎮[" + source + "]响应解析失败#" + brief(raw));
+            Log.error("农场首页浮球🎮[" + source + "]响应解析失败#响应=" + MessageUtil.briefResponse(raw));
             Log.printStackTrace(TAG, t);
             return null;
         }
@@ -1436,7 +1436,7 @@ public class AntOrchard extends ModelTask {
 
             // 契约不完整时不做：缺 appId/taskId/sceneCode 或时长非正，后续任何一步都会被服务端拒绝
             if (appId.isEmpty() || taskId.isEmpty() || sceneCode.isEmpty() || duration <= 0) {
-                Log.record("农场首页浮球🎮[" + source + "]任务契约不完整，跳过#" + brief(entry.toString()));
+                Log.record("农场首页浮球🎮[" + source + "]任务契约不完整，跳过#响应=" + MessageUtil.briefResponse(entry.toString()));
                 continue;
             }
             // 时长上限保护：避免异常契约把整个农场模块卡在超长等待里
@@ -1534,11 +1534,11 @@ public class AntOrchard extends ModelTask {
         try {
             jo = raw == null ? null : new JSONObject(raw);
         } catch (Throwable t) {
-            Log.error("农场首页浮球🎮[" + task.title + "]步骤[" + step + "]响应解析失败#" + brief(raw));
+            Log.error("农场首页浮球🎮[" + task.title + "]步骤[" + step + "]响应解析失败#响应=" + MessageUtil.briefResponse(raw));
             return false;
         }
         if (!isOrchardRpcSuccessResponse(jo)) {
-            Log.error("农场首页浮球🎮[" + task.title + "]步骤[" + step + "]失败#" + brief(raw));
+            Log.error("农场首页浮球🎮[" + task.title + "]步骤[" + step + "]失败#响应=" + MessageUtil.briefResponse(raw));
             return false;
         }
         Status.flagToday(flag, userId);
@@ -1574,21 +1574,21 @@ public class AntOrchard extends ModelTask {
         try {
             jo = raw == null ? null : new JSONObject(raw);
         } catch (Throwable t) {
-            Log.error("农场首页浮球🎮[" + task.title + "]完成响应解析失败#" + brief(raw));
+            Log.error("农场首页浮球🎮[" + task.title + "]完成响应解析失败#响应=" + MessageUtil.briefResponse(raw));
             Log.printStackTrace(TAG, t);
             return;
         }
         if (!isOrchardRpcSuccessResponse(jo)) {
             // 明确失败：撤回待确认标记，下一轮可重试
             Status.clearFlag(submittedFlag);
-            Log.error("农场首页浮球🎮[" + task.title + "]完成失败#" + brief(raw));
+            Log.error("农场首页浮球🎮[" + task.title + "]完成失败#响应=" + MessageUtil.briefResponse(raw));
             return;
         }
         JSONObject awardInfo = jo.optJSONObject("finishAwardResultVO");
         int award = awardInfo == null ? 0 : awardInfo.optInt("deltaAwardCount", 0);
         if (award <= 0) {
             // 请求已受理但没有业务发奖：保留待确认标记，避免重复领取
-            Log.record("农场首页浮球🎮[" + task.title + "]完成已受理但未取得发奖确认#" + brief(raw));
+            Log.record("农场首页浮球🎮[" + task.title + "]完成已受理但未取得发奖确认#响应=" + MessageUtil.briefResponse(raw));
             return;
         }
         Status.flagToday(doneFlag, userId);
@@ -1958,14 +1958,14 @@ public class AntOrchard extends ModelTask {
                 // 服务端常回 error 3000「系统出错，正在排查」⇒ 详情列表拿不到。
                 // 但调用点的判据 yebSceneActivityInfo.revenueNotReceived=true 本身就是「有未领收益」的证据，
                 // 故不再直接放弃，改为直接触发摇钱树（没收益时服务端会拒绝，不会误领）。
-                Log.record("摇钱树收益详情未获取，改走直接触发：" + brief(result));
+                Log.record("摇钱树收益详情未获取，改走直接触发：响应=" + MessageUtil.briefResponse(result));
                 triggerYebMoneyTreeOnce();
                 return;
             }
 
             JSONArray revenueList = jo.optJSONArray("yebRevenueDetailList");
             if (revenueList == null) {
-                Log.record("摇钱树收益详情结构异常：" + brief(result));
+                Log.record("摇钱树收益详情结构异常：响应=" + MessageUtil.briefResponse(result));
                 triggerYebMoneyTreeOnce();
                 return;
             }
@@ -1996,7 +1996,7 @@ public class AntOrchard extends ModelTask {
             JSONObject result = triggerJo.optJSONObject("result");
             boolean ok = result != null || MessageUtil.checkResultCode(TAG, triggerJo);
             if (!ok) {
-                Log.record("摇钱树触发未成功：" + brief(triggerResult));
+                Log.record("摇钱树触发未成功：响应=" + MessageUtil.briefResponse(triggerResult));
                 return;
             }
             // 只记「已受理」：金额是触发响应当次返回的值，不作为「已到账收益」上报
@@ -2007,14 +2007,6 @@ public class AntOrchard extends ModelTask {
             Log.i(TAG, "triggerYebMoneyTree err:");
             Log.printStackTrace(TAG, t);
         }
-    }
-
-    /** 截断长响应，避免服务端错误页把日志刷屏。 */
-    private static String brief(String s) {
-        if (s == null) {
-            return "";
-        }
-        return s.length() > 200 ? s.substring(0, 200) : s;
     }
 
     /**

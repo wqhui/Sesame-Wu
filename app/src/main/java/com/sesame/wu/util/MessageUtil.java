@@ -20,6 +20,48 @@ public class MessageUtil {
     private static final String TAG = MessageUtil.class.getSimpleName();
     private static final String UNKNOWN_TAG = "Unknown TAG";
 
+    /**
+     * 失败日志里响应体的最大长度。
+     *
+     * <p>为什么要截断：失败响应有时会把整段请求参数回显回来，一份就能刷掉几十行日志，
+     * 真正的原因反而被淹没；500 字足够看到错误码与原因，又不至于撑爆错误日志。
+     */
+    public static final int BRIEF_JSON_LIMIT = 500;
+
+    /**
+     * 失败日志用的响应体摘要：{@code jo.toString()} 截断到 {@link #BRIEF_JSON_LIMIT} 字。
+     *
+     * <p>只给「失败」路径用。失败时日志里没有原始响应就只能猜是限流、风控还是接口变了，
+     * 因此所有写进错误日志的失败都要带上它。
+     */
+    public static String briefJson(JSONObject jo) {
+        if (jo == null) {
+            return "null";
+        }
+        try {
+            return briefResponse(jo.toString());
+        } catch (Throwable t) {
+            // 序列化失败也要让失败日志留在原地，不能因为拼日志把原始错误吞掉
+            return "<响应序列化失败:" + t + ">";
+        }
+    }
+
+    /**
+     * 字符串版摘要：HTTP 文本响应、已序列化的 JSON 都走这里，规则与 {@link #briefJson} 一致。
+     */
+    public static String briefResponse(String raw) {
+        if (raw == null) {
+            return "null";
+        }
+        // 响应里可能带换行（HTTP 文本 / 格式化 JSON）：错误日志是按行解析的，
+        // 换行会把一条错误拆成好几行，反而更难定位
+        String oneLine = raw.replace('\n', ' ').replace('\r', ' ');
+        if (oneLine.length() <= BRIEF_JSON_LIMIT) {
+            return oneLine;
+        }
+        return oneLine.substring(0, BRIEF_JSON_LIMIT) + "…(共" + raw.length() + "字)";
+    }
+
     public static JSONObject newJSONObject(String str) {
         try {
             return new JSONObject(str);
@@ -86,7 +128,9 @@ public class MessageUtil {
             String errorText = jo.getString(errorMessageField);
             // 按 TaskBlacklist 已有的分类打标记：只有「稳定不可完成」才算真错误，
             // 限流 / 繁忙 / 风控 / 滑块都是可恢复的，打成错误会把真问题淹掉。
-            Log.record(failureLabel(tag, jo, errorText) + errorText);
+            // 失败行必须带上原始响应（截断）：只回一句 resultDesc 时，
+            // 分不清是限流、风控还是接口字段变了，只能靠这段响应判断。
+            Log.record(failureLabel(tag, jo, errorText) + errorText + " | 响应=" + briefJson(jo));
             Log.i(errorText, jo.toString());
         } catch (Throwable t) {
             Log.i(TAG, "printErrorMessage err:");

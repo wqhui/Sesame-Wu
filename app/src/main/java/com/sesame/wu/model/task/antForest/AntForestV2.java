@@ -996,7 +996,8 @@ public class AntForestV2 extends ModelTask {
         try {
             JSONObject pkObject = new JSONObject(AntForestRpcCall.queryTopEnergyChallengeRanking());
             if (!MessageUtil.checkResultCode(TAG + "获取PK排行榜失败:", pkObject)) {
-                Log.error("获取PK排行榜失败: " + pkObject.optString("resultDesc"));
+                Log.error("获取PK排行榜失败: " + pkObject.optString("resultDesc")
+                        + " | 响应=" + MessageUtil.briefJson(pkObject));
             } else {
                 if (!pkObject.optString("rankMemberStatus", "").equals("JOIN")) {
                     Log.record("未加入PK排行榜");
@@ -3626,7 +3627,8 @@ public class AntForestV2 extends ModelTask {
 
             // 验证请求是否成功
             if (!MessageUtil.checkResultCode(TAG, jo)) {
-                Log.error("queryGameList 失败: " + jo.optString("desc"));
+                Log.error("queryGameList 失败: " + jo.optString("desc")
+                        + " | 响应=" + MessageUtil.briefJson(jo));
                 return;
             }
 
@@ -5695,13 +5697,14 @@ public class AntForestV2 extends ModelTask {
                     forestReadReferer(null, null));
             JSONObject jo = StringUtil.isEmpty(raw) ? null : new JSONObject(raw);
             if (jo == null || jo.optInt("code") != 2000) {
-                Log.error("无纸阅读📖登录失败[" + (jo == null ? "空响应" : jo.optString("msg")) + "]");
+                Log.error("无纸阅读📖登录失败[" + (jo == null ? "空响应" : jo.optString("msg"))
+                        + "]#响应=" + MessageUtil.briefResponse(raw));
                 return null;
             }
             JSONObject data = jo.optJSONObject("data");
             String token = data == null ? "" : data.optString("token");
             if (StringUtil.isEmpty(token)) {
-                Log.error("无纸阅读📖登录失败，响应缺少 token");
+                Log.error("无纸阅读📖登录失败，响应缺少 token#响应=" + MessageUtil.briefJson(jo));
                 return null;
             }
             state.token = token;

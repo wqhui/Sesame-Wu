@@ -12,6 +12,7 @@ import java.util.Map;
 import com.sesame.wu.hook.ApplicationHook;
 import com.sesame.wu.model.task.antOrchard.AntOrchardRpcCall;
 import com.sesame.wu.util.Log;
+import com.sesame.wu.util.MessageUtil;
 import com.sesame.wu.util.TimeUtil;
 
 /**
@@ -139,8 +140,11 @@ public class GameCenterPlayRpcCall {
         while (remaining > 0) {
             int chunk = Math.min(firstChunk ? FIRST_CHUNK_SECONDS : CHUNK_SECONDS, remaining);
             TimeUtil.sleep(chunk * 1000L);
-            if (!isAccepted(submitPlayDuration(gameAppId, chunk, source))) {
-                Log.i(TAG, "游戏时长上报失败: appId=" + gameAppId + " chunk=" + chunk);
+            String raw = submitPlayDuration(gameAppId, chunk, source);
+            if (!isAccepted(raw)) {
+                // 调用方只会说「上报失败」，这里必须留下原始响应才能判断是限流还是接口变更
+                Log.error("游戏时长上报失败: appId=" + gameAppId + " chunk=" + chunk
+                        + " | 响应=" + MessageUtil.briefResponse(raw));
                 return false;
             }
             remaining -= chunk;

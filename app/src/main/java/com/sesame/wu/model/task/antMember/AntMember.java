@@ -2594,7 +2594,7 @@ public class AntMember extends ModelTask {
                     Log.member("芝麻信用💳[" + taskTitle + "]沿用进行中的记录#recordId=" + recordId);
                 } else if (toCompleteVO.has("todayFinish")) {
                     // 无可推的记录
-                    Log.error(TAG + "芝麻信用💳任务[" + taskTitle + "未获取到]recordId#" + toCompleteVO);
+                    Log.error(TAG + "芝麻信用💳任务[" + taskTitle + "未获取到]recordId#响应=" + MessageUtil.briefJson(toCompleteVO));
                     continue;
                 } else {
                     // 领取任务
@@ -2621,7 +2621,7 @@ public class AntMember extends ModelTask {
                             }
                         }
                         if (recordId == null || recordId.isEmpty()) {
-                            Log.error(TAG + "芝麻信用💳领取任务[" + taskTitle + "]失败#" + s);
+                            Log.error(TAG + "芝麻信用💳领取任务[" + taskTitle + "]失败#响应=" + MessageUtil.briefResponse(s));
                             continue;
                         }
                     }
@@ -2643,7 +2643,7 @@ public class AntMember extends ModelTask {
                 MessageUtil.checkResultCodeAndMarkTaskBlackList("MemberCreditSesameTaskList", taskTitle, responseObj);
 
                 if (!MessageUtil.checkResultCode(TAG, responseObj)) {
-                    Log.error("芝麻信用💳完成任务[" + taskTitle + "]taskFeedback未受理#" + s);
+                    Log.error("芝麻信用💳完成任务[" + taskTitle + "]taskFeedback未受理#响应=" + MessageUtil.briefResponse(s));
                     continue;
                 }
 
@@ -2846,7 +2846,7 @@ public class AntMember extends ModelTask {
                                     Log.member("收芝麻粒🙇🏻‍♂️领取[每日签到成功]#获得" + num + "粒");
                                 }
                                 else {
-                                    Log.error(".doSesameAlchemy#" + "签到失败:" + completeRes);
+                                    Log.error(".doSesameAlchemy#" + "签到失败 | 响应=" + MessageUtil.briefResponse(completeRes));
                                 }
                             }
                             catch (Throwable e) {
@@ -3005,7 +3005,7 @@ public class AntMember extends ModelTask {
             }
             JSONObject data = home.optJSONObject("data");
             if (data == null) {
-                Log.error("芝麻炼金⚗主页[data 缺失]#" + home);
+                Log.error("芝麻炼金⚗主页[data 缺失]#响应=" + MessageUtil.briefJson(home));
                 return;
             }
             int zmlBalance = data.optInt("zmlBalance", 0);
@@ -3014,7 +3014,7 @@ public class AntMember extends ModelTask {
             int currentLevel = data.optInt("currentLevel", 0);
 
             if (cost <= 0) {
-                Log.error("芝麻炼金⚗炼金[消耗为0，跳过]#" + home);
+                Log.error("芝麻炼金⚗炼金[消耗为0，跳过]#响应=" + MessageUtil.briefJson(home));
                 return;
             }
 
@@ -3030,7 +3030,9 @@ public class AntMember extends ModelTask {
                         // 服务端「盖帽值」（每日炼金上限）拦截：属正常终止条件，不是错误
                         Log.record("芝麻炼金⚗已达每日上限#" + resultView);
                     } else {
-                        Log.error("芝麻炼金⚗炼金失败#" + resultView);
+                        // 原始响应才是判断依据：resultView 有时只有一句「系统错误」
+                        Log.error("芝麻炼金⚗炼金失败#resultCode=" + alchemyJo.optString("resultCode")
+                                + " resultView=" + resultView + " | 响应=" + MessageUtil.briefJson(alchemyJo));
                     }
                     break;
                 }
@@ -3065,17 +3067,17 @@ public class AntMember extends ModelTask {
             randomSleep(1200, 2200);
             JSONObject jo = new JSONObject(AntMemberRpcCall.alchemyQueryCheckInTasks());
             if (!checkAlchemyRes(jo)) {
-                Log.error("芝麻炼金⚗签到查询异常#" + jo);
+                Log.error("芝麻炼金⚗签到查询异常#响应=" + MessageUtil.briefJson(jo));
                 return;
             }
             JSONObject data = jo.optJSONObject("data");
             if (data == null) {
-                Log.error("芝麻炼金⚗签到[data 缺失]#" + jo);
+                Log.error("芝麻炼金⚗签到[data 缺失]#响应=" + MessageUtil.briefJson(jo));
                 return;
             }
             JSONObject currentDay = data.optJSONObject("currentDateCheckInTaskVO");
             if (currentDay == null) {
-                Log.error("芝麻炼金⚗签到[currentDateCheckInTaskVO 缺失]#" + jo);
+                Log.error("芝麻炼金⚗签到[currentDateCheckInTaskVO 缺失]#响应=" + MessageUtil.briefJson(jo));
                 return;
             }
             String status = currentDay.optString("status");
@@ -3094,7 +3096,8 @@ public class AntMember extends ModelTask {
                     Log.member("芝麻炼金⚗[每日签到成功]#获得" + num + "粒");
                 }
                 else {
-                    Log.error("芝麻炼金⚗签到失败#" + completeRes);
+                    Log.error("芝麻炼金⚗签到失败#resultCode=" + completeJo.optString("resultCode")
+                            + " | 响应=" + MessageUtil.briefJson(completeJo));
                 }
             }
         }
@@ -3111,12 +3114,12 @@ public class AntMember extends ModelTask {
             randomSleep(1200, 2200);
             JSONObject jo = new JSONObject(AntMemberRpcCall.alchemyQueryTasks());
             if (!checkAlchemyRes(jo)) {
-                Log.error("芝麻炼金⚗攒粒任务查询异常#" + jo);
+                Log.error("芝麻炼金⚗攒粒任务查询异常#响应=" + MessageUtil.briefJson(jo));
                 return;
             }
             JSONObject data = jo.optJSONObject("data");
             if (data == null) {
-                Log.error("芝麻炼金⚗攒粒任务[data 缺失]#" + jo);
+                Log.error("芝麻炼金⚗攒粒任务[data 缺失]#响应=" + MessageUtil.briefJson(jo));
                 return;
             }
             processAlchemyTasks(data.optJSONArray("toCompleteVOS"));
@@ -3162,7 +3165,8 @@ public class AntMember extends ModelTask {
                         Log.member("芝麻炼金⚗[广告任务完成] " + title + "#获得" + task.optInt("rewardAmount", 0) + "粒");
                     }
                     else {
-                        Log.error("芝麻炼金⚗广告任务上报失败: " + title + " - " + adRes);
+                        Log.error("芝麻炼金⚗广告任务上报失败: " + title + " - resultCode=" + adJo.optString("resultCode")
+                                + " | 响应=" + MessageUtil.briefJson(adJo));
                     }
                     continue;
                 }
@@ -3190,7 +3194,7 @@ public class AntMember extends ModelTask {
                 String recordId = task.optString("recordId", "");
                 if (recordId.isEmpty()) {
                     if (templateId.trim().isEmpty()) {
-                        Log.error("芝麻炼金⚗攒粒任务[templateId 缺失]#" + task);
+                        Log.error("芝麻炼金⚗攒粒任务[templateId 缺失]#任务=" + MessageUtil.briefJson(task));
                         continue;
                     }
                     String joinRes = AntMemberRpcCall.joinSesameTask(templateId);
@@ -3201,7 +3205,9 @@ public class AntMember extends ModelTask {
                         } else {
                             // 注意：PROMISE_HAS_PROCESSING_TEMPLATE（上轮留下的进行中记录）属可恢复状态，
                             // 不在错误码白名单内，不会拉黑，下轮会重试
-                            Log.error("芝麻炼金⚗攒粒任务 join 失败: " + title + " - " + joinJo.optString("resultView", joinRes));
+                            Log.error("芝麻炼金⚗攒粒任务 join 失败: " + title + " - resultCode=" + joinJo.optString("resultCode")
+                                    + " resultView=" + joinJo.optString("resultView")
+                                    + " | 响应=" + MessageUtil.briefJson(joinJo));
                         }
                         continue;
                     }
@@ -3226,7 +3232,9 @@ public class AntMember extends ModelTask {
                         // 服务端按错误码明确判定做不了：已落盘跳过，日志按提示级别记而非 ERROR
                     }
                     else {
-                        Log.error("芝麻炼金⚗攒粒任务 finish 失败: " + title + " - " + finishRes);
+                        Log.error("芝麻炼金⚗攒粒任务 finish 失败: " + title + " - resultCode=" + finishJo.optString("resultCode")
+                                + " resultView=" + finishJo.optString("resultView")
+                                + " | 响应=" + MessageUtil.briefJson(finishJo));
                     }
                 }
             }
@@ -3254,7 +3262,11 @@ public class AntMember extends ModelTask {
                     Log.member("芝麻炼金⚗[一键收取成功]#收割完毕");
                 }
                 else {
-                    Log.error("芝麻炼金⚗[一键收取失败]#" + collectJo.optString("resultView"));
+                    // 只打 resultView 时只看到「系统错误，稍后再试」，分不清限流 / 风控 / 接口变更，
+                    // 故把错误码、原因文案和原始响应一起打出来（响应截断，避免刷爆日志）
+                    Log.error("芝麻炼金⚗[一键收取失败]#resultCode=" + collectJo.optString("resultCode")
+                            + " resultView=" + collectJo.optString("resultView")
+                            + " | 响应=" + MessageUtil.briefJson(collectJo));
                 }
             }
             else {
@@ -3276,7 +3288,8 @@ public class AntMember extends ModelTask {
             String awardRes = AntMemberRpcCall.alchemyClaimAward();
             JSONObject jo = new JSONObject(awardRes);
             if (!checkAlchemyRes(jo)) {
-                Log.error("芝麻炼金⚗[次日奖励失败]#" + awardRes);
+                Log.error("芝麻炼金⚗[次日奖励失败]#resultCode=" + jo.optString("resultCode")
+                        + " | 响应=" + MessageUtil.briefJson(jo));
                 Status.flagToday("AntMember::sesameAlchemyNextDayAward");
                 return;
             }
@@ -3317,7 +3330,7 @@ public class AntMember extends ModelTask {
             }
             JSONObject data = jo.optJSONObject("data");
             if (data == null) {
-                Log.error("芝麻炼金⚗限时任务[data 缺失]#" + jo);
+                Log.error("芝麻炼金⚗限时任务[data 缺失]#响应=" + MessageUtil.briefJson(jo));
                 return;
             }
             JSONObject vo = data.optJSONObject("timeLimitedTaskVO");
@@ -3330,7 +3343,7 @@ public class AntMember extends ModelTask {
             int state = vo.optInt("state", 0); // 1=可领取 2=未到时间
             boolean tomorrow = vo.optBoolean("tomorrow", false);
             if (templateId.isEmpty()) {
-                Log.error("芝麻炼金⚗限时任务[templateId 缺失]#" + vo);
+                Log.error("芝麻炼金⚗限时任务[templateId 缺失]#任务=" + MessageUtil.briefJson(vo));
                 return;
             }
             if (tomorrow) {
@@ -3349,7 +3362,8 @@ public class AntMember extends ModelTask {
                     Log.member("芝麻炼金⚗[领取成功] " + taskName + "#获得" + d.optInt("zmlNum", 0) + "粒");
                 }
                 else {
-                    Log.error("芝麻炼金⚗限时任务完成失败#" + res);
+                    Log.error("芝麻炼金⚗限时任务完成失败#resultCode=" + resJo.optString("resultCode")
+                            + " | 响应=" + MessageUtil.briefJson(resJo));
                 }
             }
             else {

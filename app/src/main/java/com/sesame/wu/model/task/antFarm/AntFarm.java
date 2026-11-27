@@ -2016,7 +2016,7 @@ public class AntFarm extends ModelTask {
                                 + "(已领" + task.optInt("alreadyReceiveStageAwardCount") + "次)");
                         claimed = true;
                     } else {
-                        Log.error("爱心鸡结号🐔领取[" + title + "]奖励失败:" + result);
+                        Log.error("爱心鸡结号🐔领取[" + title + "]奖励失败: 响应=" + MessageUtil.briefJson(result));
                     }
                     TimeUtil.sleep(500);
                 }
