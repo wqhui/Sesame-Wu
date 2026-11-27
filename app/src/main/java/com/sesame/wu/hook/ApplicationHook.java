@@ -528,13 +528,19 @@ public class ApplicationHook {
     private static boolean hookIfExists(String className, String methodName, int counter, Object... parameterTypesAndCallback) {
         boolean ok;
         if (XHelpers.findClassIfExists(className, classLoader) == null) {
-            Log.record("⚠️Hook 不可用（类不存在）：" + className + "#" + methodName);
+            // 这类失败直接决定功能可不可用，写错误日志并写清原因，
+            // 否则用户得先去开「查看运行日志」才能排查
+            Log.error("Hook 不可用（类不存在）：" + className + "#" + methodName);
             ok = false;
         } else {
             try {
                 XHelpers.findAndHookMethod(className, classLoader, methodName, parameterTypesAndCallback);
                 ok = true;
             } catch (Throwable t) {
+                boolean methodMissing = String.valueOf(t.getMessage()).contains("Method not found")
+                        || t.getCause() instanceof NoSuchMethodException;
+                Log.error("Hook 失败（" + (methodMissing ? "方法不存在" : t.getClass().getSimpleName())
+                        + "）：" + className + "#" + methodName);
                 Log.printStackTrace("Hook 失败：" + className + "#" + methodName, t);
                 ok = false;
             }
@@ -824,7 +830,10 @@ public class ApplicationHook {
             execHandler();
             return true;
         } catch (Throwable th) {
-            Log.i(TAG, "startHandler err:");
+            // 用错误级别并带版本号：加载失败时用户往往没开运行日志，
+            // 既看不到痕迹，也分不清装的是不是最新包
+            Log.error("Sesame-Wu 加载失败 [版本 " + modelVersion
+                    + " / 提交 " + BuildConfig.GIT_COMMIT_HASH + "]");
             Log.printStackTrace(TAG, th);
             Toast.show("Sesame-Wu 加载失败");
             return false;
