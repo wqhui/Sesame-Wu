@@ -356,7 +356,21 @@ public class ApplicationHook {
 
                         Log.i(TAG, "Service onCreate");
                         context = appService.getApplicationContext();
-                        System.load(LibraryUtil.getLibSesamePath(context));
+                        // 这个库提供的是水印、庄园任务加速之类的可选能力，加载不到不影响主流程。
+                        // 免 root 框架（模块被合并进宿主）下，模块 App 往往没有单独安装，
+                        // 取不到 native 目录会返回 null，直接 System.load 会抛异常并中断整个
+                        // Service.onCreate 钩子，导致主线程 Handler 和主任务都建不出来、
+                        // 模块完全没有反应。所以这里必须独立兜住。
+                        try {
+                            String libSesamePath = LibraryUtil.getLibSesamePath(context);
+                            if (libSesamePath != null) {
+                                System.load(libSesamePath);
+                            } else {
+                                Log.record("未取到 native 库路径，跳过加载（不影响主流程）");
+                            }
+                        } catch (Throwable t) {
+                            Log.record("加载 native 库失败，跳过（不影响主流程）：" + t);
+                        }
                         service = appService;
                         mainHandler = new Handler(Looper.getMainLooper());
                         mainTask = BaseTask.newInstance("MAIN_TASK", new Runnable() {
